@@ -1,0 +1,10 @@
+name: brave-fsd50k
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - ffmpeg
+  - pip
+  - pip:
+      - h5py
+      - acids-rave==2.3

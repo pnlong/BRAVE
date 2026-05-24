@@ -1,0 +1,6 @@
+# Example tag tokens (stripped lowercase, one per line). Replace with tokens from tag_frequencies.txt.
+water
+ocean
+waves
+birdsong
+rail transport
