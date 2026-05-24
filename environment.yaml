@@ -1,4 +1,4 @@
-name: brave-fsd50k
+name: brave
 channels:
   - conda-forge
 dependencies:
@@ -8,3 +8,4 @@ dependencies:
   - pip:
       - h5py
       - acids-rave==2.3
+      - tqdm

@@ -1,20 +1,26 @@
 #!/usr/bin/env python3
 """
-Build a flat folder of symlinked FLAC clips whose JSON matches a tag whitelist.
+Build a flat folder of symlinked WAV clips whose ground-truth labels match a whitelist.
 
-Whitelist: UTF-8 text, one stripped-lowercase tags-of-interest per non-empty line.
-A clip is included if any normalized tag from the clip JSON intersects the whitelist (exact match).
+Whitelist: UTF-8 text, one stripped-lowercase ontology class token per non-empty line.
+
+Labels come from official ``*.csv`` ``labels`` cells (comma-separated). A clip is kept
+when any normalized token intersects the whitelist (exact match).
+
+Default partition is ``dev_train`` (training split inside the official development set).
 """
 
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
-from paths import FSD50K_PARTITIONS, default_symlink_pool
-from tag_utils import iter_clip_tags_raw, normalize_tag
+from tqdm import tqdm
+
+from fsd50k_manifest import count_manifest_clips, iter_manifest_clips
+from paths import PARTITION_CHOICES, canonical_partition, default_symlink_pool, partitions_for
+from tag_utils import normalize_tag
 
 
 def parse_args() -> argparse.Namespace:
@@ -23,13 +29,19 @@ def parse_args() -> argparse.Namespace:
         "--whitelist",
         required=True,
         type=Path,
-        help="Plain text file with one strip+lower tag token per non-empty line.",
+        help="Plain text file with one strip+lower class token per non-empty line.",
     )
     parser.add_argument(
-        "--source",
+        "--partition",
+        choices=list(PARTITION_CHOICES),
+        default="dev_train",
+        help="Split manifest (dev_train/dev_val/eval or synonyms train/valid/test). Default: dev_train.",
+    )
+    parser.add_argument(
+        "--dataset-root",
         type=Path,
         default=None,
-        help="Partition root containing paired id.json / id.flac (default: FSD train).",
+        help="Directory containing official FSD50K.* folders (default: $BRAVE_STORAGE/FSD50K).",
     )
     parser.add_argument(
         "--output-dir",
@@ -43,9 +55,9 @@ def parse_args() -> argparse.Namespace:
         help="Replace existing symlinks in the output folder when names collide.",
     )
     parser.add_argument(
-        "--quiet-skip-errors",
+        "--no-progress",
         action="store_true",
-        help="Warn on malformed JSON rather than exiting.",
+        help="Disable tqdm progress bar (stderr); only prints final counters.",
     )
     return parser.parse_args()
 
@@ -62,71 +74,71 @@ def load_whitelist(path: Path) -> set[str]:
     return out
 
 
-def clip_normalized_tags(metadata: dict) -> set[str]:
-    tags: set[str] = set()
-    for raw in iter_clip_tags_raw(metadata):
-        nt = normalize_tag(raw)
-        if nt:
-            tags.add(nt)
-    return tags
-
-
 def main() -> None:
     args = parse_args()
-    src = args.source if args.source is not None else FSD50K_PARTITIONS["train"]
-    out_dir = args.output_dir if args.output_dir is not None else default_symlink_pool()
+    roots = partitions_for(args.dataset_root)
+    name = canonical_partition(args.partition)
+    part = roots[name]
 
-    if not src.is_dir():
-        print(f"error: source is not a directory: {src}", file=sys.stderr)
+    out_dir = args.output_dir if args.output_dir is not None else default_symlink_pool()
+    audio_dir = part.audio_dir
+
+    if not audio_dir.is_dir():
+        print(f"error: audio partition directory missing: {audio_dir}", file=sys.stderr)
+        sys.exit(1)
+    if not part.csv_path.is_file():
+        print(f"error: CSV manifest missing: {part.csv_path}", file=sys.stderr)
         sys.exit(1)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     whitelist = load_whitelist(args.whitelist)
 
     selected = 0
-    skipped_no_flac = 0
+    skipped_no_wav = 0
     skipped_no_match = 0
-    bad_json = 0
 
-    json_paths = sorted(src.glob("*.json"))
-    for jp in json_paths:
-        try:
-            with open(jp, encoding="utf-8") as f:
-                meta = json.load(f)
-            if not isinstance(meta, dict):
-                bad_json += 1
+    clip_iter = iter_manifest_clips(part)
+
+    if args.no_progress:
+        clip_iter_wrapped = clip_iter
+    else:
+        n_clips = count_manifest_clips(part)
+        clip_iter_wrapped = tqdm(
+            clip_iter,
+            total=n_clips,
+            desc=f"Subset {name}",
+            unit="clip",
+            smoothing=0.05,
+            file=sys.stderr,
+        )
+
+    for cid, labels in clip_iter_wrapped:
+        if not set(labels) & whitelist:
+            skipped_no_match += 1
+            continue
+        wav_path = audio_dir / f"{cid}.wav"
+        if not wav_path.is_file():
+            skipped_no_wav += 1
+            continue
+
+        link_path = out_dir / f"{cid}.wav"
+        abs_target = wav_path.resolve()
+
+        if link_path.exists() or link_path.is_symlink():
+            if args.overwrite:
+                link_path.unlink()
+            else:
+                print(
+                    f"# skip existing ({cid}.wav); use --overwrite to replace",
+                    file=sys.stderr,
+                )
                 continue
-            if not clip_normalized_tags(meta) & whitelist:
-                skipped_no_match += 1
-                continue
-            flac = jp.with_suffix(".flac")
-            if not flac.is_file():
-                skipped_no_flac += 1
-                continue
 
-            stem = jp.stem
-            link_path = out_dir / f"{stem}.flac"
-            abs_target = flac.resolve()
-
-            if link_path.exists() or link_path.is_symlink():
-                if args.overwrite:
-                    link_path.unlink()
-                else:
-                    print(
-                        f"# skip existing ({stem}.flac); use --overwrite to replace",
-                        file=sys.stderr,
-                    )
-                    continue
-
-            link_path.symlink_to(abs_target)
-            selected += 1
-        except (OSError, json.JSONDecodeError) as e:
-            bad_json += 1
-            if not args.quiet_skip_errors:
-                print(f"# bad json {jp}: {e}", file=sys.stderr)
+        link_path.symlink_to(abs_target)
+        selected += 1
 
     print(
-        f"# linked={selected} no_match={skipped_no_match} no_flac={skipped_no_flac} bad_meta={bad_json}",
+        f"# partition={name} linked={selected} no_match={skipped_no_match} no_wav={skipped_no_wav}",
         file=sys.stderr,
     )
     print(f"# output dir: {out_dir.resolve()}", file=sys.stderr)

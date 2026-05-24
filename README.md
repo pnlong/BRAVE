@@ -17,10 +17,28 @@ Check the [`evaluation`](https://github.com/fcaspe/BRAVE/tree/main/evaluation) d
 We use the **acids-rave** package for preprocessing the audio datasets and training the models.
 
 ```bash
-pip install h5py acids-rave==2.3 # may work with lower versions too.
-conda install ffmpeg
 git clone https://github.com/fcaspe/BRAVE
 cd BRAVE
+```
+
+### Option A: Conda env from `environment.yaml` (recommended)
+
+The repo ships [`environment.yaml`](./environment.yaml) with Python 3.11, **ffmpeg** (conda-forge), and **`pip`** deps `h5py` and **`acids-rave==2.3`**.
+
+With **conda** (or **mamba**/ **micromamba**—same `-f` flow):
+
+```bash
+conda env create -f environment.yaml
+conda activate brave
+```
+
+To refresh an existing env after the file changes: `conda env update -n brave -f environment.yaml --prune`.
+
+### Option B: Manual install
+
+```bash
+pip install h5py acids-rave==2.3 # may work with lower versions too.
+conda install ffmpeg
 ```
 
 ## Preparing Dataset

@@ -1,120 +1,178 @@
 # FSD50K exploration · BRAVE training
 
-Utilities and notes for auditing FSD50K tags under the IRCAM graft tree, assembling a whitelist-based training subset from **train**, and preprocessing it into a RAVE-compatible database for [BRAVE](https://github.com/fcaspe/BRAVE).
+Utilities for auditing **[FSD50K](https://annotator.freesound.org/fsd/release/fsd50k/)** class labels via the official **development / evaluation** release, assembling a whitelist-based WAV pool, and preprocessing it into a RAVE-compatible database for [BRAVE](https://github.com/fcaspe/BRAVE).
 
-## 1. Environment (micromamba)
+FSD50K is a clip-level weak-label corpus: **development** clips *may* omit some true labels but are accurate when present; the **evaluation** split is labelled exhaustively for the ontology subset used here. Canonical train/validation rows live in ``dev.csv`` (`split`), under the **development** audio tree; evaluation clips ship in separate folders (see §2).
 
-```bash
-cd BRAVE/fsd50k_exploration
-micromamba env create -f environment.yaml
-micromamba activate brave-fsd50k
+If you cite the dataset:
+
+```bibtex
+@article{fonseca2022FSD50K,
+  title={{FSD50K}: an open dataset of human-labeled sound events},
+  author={Fonseca, Eduardo and Favory, Xavier and Pons, Jordi and Font, Frederic and Serra, Xavier},
+  journal={IEEE/ACM Transactions on Audio, Speech, and Language Processing},
+  volume={30},
+  pages={829--852},
+  year={2022},
+  publisher={IEEE}
+}
 ```
 
-Packages mirror the upstream BRAVE install (`pip install h5py acids-rave==2.3`; see [../README.md](../README.md)). `ffmpeg` is installed via conda-forge here.
+## 1. Environment (conda / micromamba)
+
+Create the **`brave`** env from the repo root (shared with the rest of [BRAVE](../README.md)):
+
+```bash
+cd BRAVE
+micromamba env create -f environment.yaml   # or: conda env create -f environment.yaml
+micromamba activate brave                   # or: conda activate brave
+```
+
+Packages mirror the upstream BRAVE install (`pip install h5py acids-rave==2.3`; see [../README.md](../README.md)). `ffmpeg` is installed via conda-forge via [`environment.yaml`](../environment.yaml).
 
 ### GPU tip
 
 If `pip` installs a CPU-only PyTorch and you need CUDA on the cluster, install matching `pytorch` / `pytorch-cuda` from the [official PyTorch index](https://pytorch.org/) into this env first, then `pip check`.
 
-## 2. Paths
+## 2. Storage layout · dataset root
 
-### Read-only (graft) FSD partitions
+**Lab convention:** persistent large files live under **`BRAVE_STORAGE`**, defaults to **`/deepfreeze/pnlong/hai_lab/BRAVE`**.
 
-Declared in [`paths.py`](paths.py):
+Unpack the official archive so the tree looks like:
 
-| Partition | Path |
-|-----------|------|
-| `train` | `/graft1/datasets/kechen/fsd50k/fsd50k/train/mnt/audio_clip/processed_datasets/FSD50K/train` |
-| `valid` | `/graft1/datasets/kechen/fsd50k/fsd50k/valid/mnt/audio_clip/processed_datasets/FSD50K/valid` |
-| `test` | `/graft1/datasets/kechen/fsd50k/fsd50k/test/mnt/audio_clip/processed_datasets/FSD50K/test` |
-
-For **training**, build the FLAC pool from **`train`** only unless you knowingly pool partitions (holding out `valid`/`test` preserves cleaner evaluation splits).
-
-### Writable layout (Arrakis storage)
-
-Suggested base (once per machine):
-
-```bash
-mkdir -p /mnt/arrakis_data/pnlong/fsd50k_brave/{train_audio_symlinks,preprocessed,artifacts}
+```text
+{BRAVE_STORAGE}/FSD50K/
+├── FSD50K.dev_audio/      # WAV for all development clips (~40 966 stems)
+├── FSD50K.eval_audio/     # WAV for evaluation clips (~10 231 stems)
+├── FSD50K.ground_truth/
+│   ├── dev.csv            # fname, labels, mids, split  (train | val columns)
+│   └── eval.csv           # fname, labels, mids
+├── FSD50K.metadata/
+└── FSD50K.doc/
 ```
 
-| Path under `fsd50k_brave` | Purpose |
-|---------------------------|---------|
-| `train_audio_symlinks/` | Output of [`build_subset.py`](build_subset.py)—flat symlink farm into graft `*.flac` files |
-| `preprocessed/` | Output of **`rave preprocess`** — this folder is **`--db_path`** for `rave train` |
-| `artifacts/` | Optional—save `tag_frequencies.tsv`, whitelist copies, notes |
+To point scripts at another mount, export:
 
-[`paths.py`](paths.py) exposes `DATA_ROOT` and helpers so defaults match the layout above.
+```bash
+export BRAVE_STORAGE=/path/to/parent/of/FSD50K   # omit trailing slash quirks
+```
+
+or pass `--dataset-root /path/to/FSD50K` to `count_tags.py` / `build_subset.py`.
+
+**Writable artefacts** default to **`{BRAVE_STORAGE}/fsd50k_brave/`** (`paths.DATA_ROOT`): symlink farms, rave preprocess outputs, local notes.
+
+Suggested layout:
+
+```bash
+mkdir -p "${BRAVE_STORAGE:-/deepfreeze/pnlong/hai_lab/BRAVE}/fsd50k_brave/"{train_audio_symlinks,preprocessed,artifacts}
+```
+
+| Path | Purpose |
+|------|---------|
+| `fsd50k_brave/train_audio_symlinks/` | Flat symlinks emitted by [`build_subset.py`](build_subset.py) into official WAV |
+| `fsd50k_brave/preprocessed/` | Output of **`rave preprocess`** — pass as **`--db_path`** |
+| `fsd50k_brave/artifacts/` | Optional — `tag_frequencies.tsv`, whitelists, logs |
+
+Partitions are defined in [`paths.py`](paths.py):
+
+| Canonical | Official role | Audio dir | Rows |
+|-----------|---------------|-----------|------|
+| `dev_train` | Development · train rows | `FSD50K.dev_audio` | `dev.csv`, `split=train` |
+| `dev_val` | Development · validation rows | `FSD50K.dev_audio` | `dev.csv`, `split=val` |
+| `eval` | Evaluation set | `FSD50K.eval_audio` | all of `eval.csv` |
+
+**Splits still exist.** The official **development** release is partitioned into **`train`** and **`val`** rows in **`dev.csv`** (clips live under **`FSD50K.dev_audio`**). The **evaluation** clips are a separate corpus: **`eval.csv`** + **`FSD50K.eval_audio`**.
+
+The canonical flags **`dev_train`**, **`dev_val`**, **`eval`** mirror that layout. Scripts also accept the synonyms **`train`**, **`valid`**, **`test`** (same mapping as in [`paths.py`](paths.py)). In writing, **`eval`** is clearer than **`test`** for the evaluation corpus—there is only one official held-out set.
+
+When **training** BRAVE subsets, omit **`eval`** from your preprocessor pool unless you deliberately include it (evaluation is normally held out for benchmarking).
+
+Tokens in `labels` CSV cells are **ontology class strings** (`Electric_guitar,…`). Whitelists match the **strip+lowercase** form (e.g. `electric_guitar`). Inspect `{BRAVE_STORAGE}/FSD50K/FSD50K.ground_truth/vocabulary.csv` on disk for authoritative spellings (not shipped in-tree).
 
 ## 3. Tag mining
 
-Produce two columns per line (**tag**, then TAB, then **count**), lowercase tags, descending by count:
+Aggregate **per-label occurrences** among clips matching the manifest (each comma-separated token in `labels` counts once per clip):
 
 ```bash
 cd BRAVE/fsd50k_exploration
 mkdir -p artifacts
-python count_tags.py > artifacts/tag_frequencies.tsv 2> artifacts/count_tags.log
+python3 count_tags.py > artifacts/tag_frequencies.tsv 2> artifacts/count_tags.log
 
-# Narrow to partitions:
-python count_tags.py --partition train --partition valid
+# Narrow to splits:
+python3 count_tags.py --partition dev_train --partition dev_val
 
-# Sanity cap per partition:
-python count_tags.py --partition train --limit 500
+# Sanity cap **per canonical partition**
+python3 count_tags.py --partition dev_train --limit 500
 ```
 
-Stdout prints TAB-separated **`tag`** and **`count`** columns sorted by descending count. Scan stats (`# partitions= …`) land on stderr—capture with `2>…` alongside the redirects above.
+Stdout is TAB-separated **`tag` \t `count`**, descending by count. Diagnostics (`# partitions=`, `# clips_seen=` …) land on stderr.
 
-Tag extraction prefers `original_data["all_tags"]` and falls back to top-level `"all_tags"`, `"tag"`, or `"text"` lists (same logic used by subset building)—see [`tag_utils.py`](tag_utils.py).
+While scans run, **`tqdm`** renders a clip progress bar on **stderr** (stdout stays clean for `>` redirection). Use **`--no-progress`** when you capture stderr (`2>`) without bar noise.
+
+Parsing lives in [`fsd50k_manifest.py`](fsd50k_manifest.py).
 
 ## 4. Whitelist
 
-Plain UTF-8 file: **one strip+lowercase tag token per non-empty line** (authors follow that convention; scripts still lowercase/strip lines on load).
+Plain UTF-8: **one strip+lower ontology token per non-empty line** (comments are **not** supported — any non-empty line is parsed as a label token).
 
-A clip **`id`** is eligible when **any** normalized tag from its JSON intersects the whitelist (**exact equality**—no substring rules in v1).
+A clip **`id`** is eligible when **any** normalized CSV label token intersects the whitelist (**exact equality**).
+
+Sample whitelist file (`artifacts/my_whitelist.txt`):
+
+```text
+electric_guitar
+coin_(dropping)
+domestic_sounds_and_home_sounds
+```
 
 ## 5. Building the subset (symlinks)
 
-Write symlinks pointing from `/mnt/.../train_audio_symlinks/<id>.flac` back to graft sources:
+By default the subset pulls **development audio only** from **`FSD50K.dev_audio`**: **`--partition` defaults to `dev_train`**, so WAVs linked into `fsd50k_brave/train_audio_symlinks/` come from the **training** rows of **`dev.csv`**. Use **`dev_val`** for validation rows—still entirely under **`FSD50K.dev_audio`**.
+
+**Evaluation WAVs (`FSD50K.eval_audio`) are never mixed in unless you set `--partition eval`** (synonym **`test`**).
+
+Subset creation shows a **`tqdm`** clip counter on stderr; use **`--no-progress`** if you prefer quiet logs only.
 
 ```bash
-python build_subset.py --whitelist artifacts/my_whitelist.txt --overwrite
+python3 build_subset.py --whitelist artifacts/my_whitelist.txt --overwrite
 
-# Overrides (defaults: train graft + symlink pool dir from paths.DATA_ROOT):
-python build_subset.py --whitelist artifacts/my_whitelist.txt \
-    --source /graft1/datasets/kechen/fsd50k/fsd50k/train/mnt/audio_clip/processed_datasets/FSD50K/train \
-    --output-dir /mnt/arrakis_data/pnlong/fsd50k_brave/train_audio_symlinks \
-    --overwrite
+# Override split / locations (still dev_audio unless you switch partition to eval):
+python3 build_subset.py --whitelist artifacts/my_whitelist.txt \
+  --partition dev_train \
+  --dataset-root "${BRAVE_STORAGE:-/deepfreeze/pnlong/hai_lab/BRAVE}/FSD50K" \
+  --output-dir "${BRAVE_STORAGE:-/deepfreeze/pnlong/hai_lab/BRAVE}/fsd50k_brave/train_audio_symlinks" \
+  --overwrite
+
+# Optionally include evaluation audio instead (or rerun with a dedicated output-dir):
+python3 build_subset.py --whitelist artifacts/my_whitelist.txt \
+  --partition eval \
+  --output-dir "${BRAVE_STORAGE:-/deepfreeze/pnlong/hai_lab/BRAVE}/fsd50k_brave/eval_audio_symlinks" \
+  --overwrite
 ```
-
-See [`example_whitelist.txt`](example_whitelist.txt) for formatting.
-
-If `rave preprocess` ever refuses symlinked FLACs on your stack, rerun with copies instead (not automated here).
 
 ## 6. Preprocess + train (`db_path`)
 
-The preprocessed dataset path is chosen **only** on **`rave train --db_path`**; Gin never embeds filesystem paths for the database.
+The preprocessed database path is chosen **only** on **`rave train --db_path`**; Gin configs do not bake filesystem paths.
 
-Use [`configs/brave.gin`](../configs/brave.gin) like any other BRAVE run (44.1 kHz). Duplicate `*_fsd50k*.gin` configs are unnecessary unless you want different architecture hyperparameters (capacity, warmup, …).
+Use [`configs/brave.gin`](../configs/brave.gin) (44.1 kHz, mono matches official releases).
 
-From the **BRAVE** repo root (`cd .../BRAVE`):
+From the **BRAVE** repo root (`cd …/BRAVE`):
 
 ```bash
 rave preprocess \
-  --input_path /mnt/arrakis_data/pnlong/fsd50k_brave/train_audio_symlinks \
-  --output_path /mnt/arrakis_data/pnlong/fsd50k_brave/preprocessed \
+  --input_path "${BRAVE_STORAGE:-/deepfreeze/pnlong/hai_lab/BRAVE}/fsd50k_brave/train_audio_symlinks" \
+  --output_path "${BRAVE_STORAGE:-/deepfreeze/pnlong/hai_lab/BRAVE}/fsd50k_brave/preprocessed" \
   --channels 1
 
 rave train \
   --config ./configs/brave.gin \
   --name fsd50k_texture_run \
-  --db_path /mnt/arrakis_data/pnlong/fsd50k_brave/preprocessed
+  --db_path "${BRAVE_STORAGE:-/deepfreeze/pnlong/hai_lab/BRAVE}/fsd50k_brave/preprocessed"
 ```
-
-Confirm preprocessing/resampling behaviour with your acids-rave build if source FLAC sample rates vary.
 
 ## 7. Export (Minifusion)
 
-After checkpoints exist (typically long runs—defaults target ~1.5M-step schedules per upstream docs):
+After checkpoints exist:
 
 ```bash
 python ./scripts/export_brave_plugin.py --model path/to/epoch_XXXXX.ckpt --output_path ./exported_model.h5
@@ -124,17 +182,17 @@ Runs from the repo root documented in [BRAVE README](../README.md).
 
 ## 8. Note: sustain via reverb (Logic Pro · Minifusion)
 
-This appendix is **signal routing for listening experiments only**—it does **not** change training datasets or ML code.
+Listening-only appendix — unrelated to datasets or ML.
 
-Logic **channel strip inserts run top → bottom**. To audition “more sustained” material before neural timbre shaping, instantiate **your reverb (Space Designer / ChromaVerb / third-party convolution)** **above** Minifusion so incoming audio hits reverb **before** the BRAVE realtime plugin receives it.
+Logic **channel strip inserts run top → bottom**. Audition sustained material upstream of Minifusion by placing **reverb inserts above** Minifusion on the strip.
 
 Considerations:
 
-- Reverbs introduce **latency** and change **latency compensation / monitoring feel** versus a dry realtime chain; Eco/low-latency modes help playable monitoring.
-- If you want **some notes dry and others soaked**, a lone serial FX chain cannot express that cleanly—use parallel **aux/bus sends**, **wet/dry blend**, automation, transient detection, split buses between percussive and sustained sources, etc.
+- Reverbs introduce **latency** vs a dry realtime chain.
+- Uneven wet amounts need **parallel sends / blending / automation**.
 
 ---
 
 ### Optional loudness tooling
 
-[Loud_tool.py](../evaluation/scripts/loud_tool.py) can scan FLAC/WAV aggregates before preprocessing if you normalize levels manually.
+[`loud_tool.py`](../evaluation/scripts/loud_tool.py) can aggregate loudness scans before preprocessing if you normalize levels manually.
