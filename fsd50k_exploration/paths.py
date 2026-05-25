@@ -18,7 +18,7 @@ STORAGE_DIR = Path(os.environ.get("BRAVE_STORAGE", "/deepfreeze/pnlong/hai_lab/B
 FSD50K_ROOT = STORAGE_DIR / "FSD50K"
 
 DATA_ROOT = STORAGE_DIR / "fsd50k_brave"
-TRAIN_AUDIO_SYMLINKS = DATA_ROOT / "train_audio_symlinks"
+AUDIO_SUBSET_DIR = DATA_ROOT / "audio_subset"
 PREPROCESSED_DIR = DATA_ROOT / "preprocessed"
 ARTIFACTS_DIR = DATA_ROOT / "artifacts"
 
@@ -68,5 +68,6 @@ def partitions_for(fsd_root: Path | None = None) -> dict[str, FsdPartition]:
     }
 
 
-def default_symlink_pool() -> Path:
-    return TRAIN_AUDIO_SYMLINKS
+def default_subset_audio_dir() -> Path:
+    """Default **`build_subset --output-dir`**: flat staged WAV folder for ``rave preprocess``."""
+    return AUDIO_SUBSET_DIR
