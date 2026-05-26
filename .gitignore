@@ -169,3 +169,5 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+fsd50k_exploration/artifacts/exported_models/

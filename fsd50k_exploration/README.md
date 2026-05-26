@@ -1,6 +1,6 @@
 # FSD50K → BRAVE (Hai lab)
 
-Turn **official [FSD50K](https://annotator.freesound.org/fsd/release/fsd50k/)** (development set with **`dev.csv`** **`train`**/**`val`** rows, plus **`eval.csv`**) into a whitelist subset, **`rave preprocess`** LMDB, and **[BRAVE](https://github.com/fcaspe/BRAVE)** training. Helpers live in **`paths.py`**, **`fsd50k_manifest.py`**, **`count_tags.py`**, **`build_subset.py`**.
+Turn **official [FSD50K](https://annotator.freesound.org/fsd/release/fsd50k/)** (development set with **`dev.csv`** **`train`**/**`val`** rows, plus **`eval.csv`**) into a whitelist subset, **`rave preprocess`** LMDB, and **[BRAVE](https://github.com/fcaspe/BRAVE)** training. Helpers live in **`paths.py`**, **`fsd50k_manifest.py`**, **`count_tags.py`**, **`build_subset.py`**, **`subset_audio_stats.py`**.
 
 **Cite:**
 
@@ -73,12 +73,31 @@ domestic_sounds_and_home_sounds
 **`build_subset`** defaults **`--partition dev_train`** and **`audio_subset/`**. **`--method copy`** avoids symlinks on NAS (**`symlink`** is cheaper on POSIX disks). **`--workers`** defaults to **1**. Progress uses **`tqdm`** on stderr; **`--no-progress`** disables it.
 
 ```bash
-python3 build_subset.py --whitelist artifacts/my_whitelist.txt --overwrite
-python3 build_subset.py --whitelist artifacts/my_whitelist.txt --method copy --overwrite
+python3 build_subset.py --whitelist artifacts/whitelists/my_whitelist.txt --overwrite
+python3 build_subset.py --whitelist artifacts/whitelists/my_whitelist.txt --method copy --overwrite
 
-python3 build_subset.py --whitelist artifacts/my_whitelist.txt --partition eval \
+python3 build_subset.py --whitelist artifacts/whitelists/my_whitelist.txt --partition eval \
   --output-dir "${BRAVE_STORAGE:-/deepfreeze/pnlong/hai_lab/BRAVE}/fsd50k_brave/eval_audio_subset" \
   --method copy --overwrite
+```
+
+---
+
+## 2b. Subset durations + training chop stats
+
+**`subset_audio_stats.py`** scans the **same** manifest ∩ whitelist ∩ `*.wav` paths as **`build_subset`**, runs **`ffprobe`** on each file, and prints descriptive stats (distribution of raw durations, clips shorter than one RAVE **`num_signal`** window, estimated LMDB row count after non-lazy preprocess, total hours).
+
+It also totals **hours per whitelist tag**: each ontology token is treated like a separate “prompt” / class—the **full clip duration is added once per overlapping tag**, which matches intuition for “how many hours do we get when conditioning on label *X*?” on multi-labelled FSD50K rows.
+
+Training-time notes in the script output are distilled from **`acids-rave`**: causal conv padding (**`configs/brave.gin`** → **`cc.get_padding.mode = 'causal'`**), **`valid_signal_crop = False`**, **`RandomCrop`** on top of preprocess, default **`131072`** samples at **44100** Hz (**`≈ 2.97` s**) for both **`rave preprocess --num_signal`** and **`rave train --n_signal`**. Override **`--sample-rate`** / **`--n-signal`** if your run differs.
+
+```bash
+python3 subset_audio_stats.py --whitelist artifacts/whitelists/my_whitelist.txt
+# Only staged copies (recommended after ``build_subset``):
+python3 subset_audio_stats.py --whitelist artifacts/whitelists/my_whitelist.txt \
+  --wav-root "${BRAVE_STORAGE:-/deepfreeze/pnlong/hai_lab/BRAVE}/fsd50k_brave/audio_subset"
+
+python3 subset_audio_stats.py --help   # parallelism, eval split, optional TSV export
 ```
 
 ---
