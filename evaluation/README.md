@@ -16,7 +16,9 @@ pip install git+https://github.com/jorshi/neural-latency-eval #installs nas_eval
 All implementations are available at the `configs` directory of this repo. Just change the config model accordingly:
 
 ```bash
-rave train --config ./configs/SELECTED_MODEL.gin --gpu 0
+export PYTHONPATH="${PWD}/RAVE:${PYTHONPATH}"
+
+python RAVE/scripts/train.py --config=configs/SELECTED_MODEL.gin --gpu=0
 ```
 After 1.5M steps, the training script will write a checkpoint named `epoch_1500000.ckpt` in the corresponding directory. We use these checkpoints for all trained models.
 ## Fetching Datasets
@@ -37,20 +39,23 @@ Here we detail how to run the evaluation scripts we use for producing the result
 
 ### Running the models on audio files
 
-We use the standard `rave generate` to process directories with audio files.  
+Use vendored `RAVE/scripts/generate.py` to process directories with audio files.  
 Consider a checkpoint trained on the `drumset` dataset. To perform *resynthesis* just process the left-out drumset test set:
 
 ```bash
-rave generate --model path/to/my_drumset_model.ckpt \
-    --input ./experiments/test_audios/drumset \ # Perform resynthesis on test set
+export PYTHONPATH="${PWD}/../RAVE:${PYTHONPATH}"
 
+python ../RAVE/scripts/generate.py \
+    --model=path/to/my_drumset_model.ckpt \
+    --input=./experiments/test_audios/drumset
 ```
 
 To perform *timbre transfer*, point the generation to one of the other percussive test sets.
-```bash
-rave generate --model path/to/my_drumset_model.ckpt \
-    --input ./experiments/test_audios/beatbox \ # Perform voice to drumset transfer
 
+```bash
+python ../RAVE/scripts/generate.py \
+    --model=path/to/my_drumset_model.ckpt \
+    --input=./experiments/test_audios/beatbox
 ```
 
 ### Audio Quality (Using Frechet Audio Distance)

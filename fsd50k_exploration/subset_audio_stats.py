@@ -7,14 +7,14 @@ Reports:
 
 * Raw WAV length distribution (seconds / hours) on disk.
 * How many clips are **too short** for one full RAVE preprocess chunk given ``num_signal``.
-* Estimated **training examples per file** after non-lazy ``rave preprocess`` (non-overlapping
+* Estimated **training examples per file** after non-lazy preprocess (non-overlapping
   chunks; trailing samples shorter than ``num_signal`` are **dropped**, matching stock
   ``scripts/preprocess.py`` streaming chunking).
 * **Hours per ontology tag** (each row in ``--whitelist`` treated as one "prompt" / label):
   summed clip duration over all clips containing that token (multi-label clips contribute their
   full duration to **every** tag they hit—standard if each tag defines a conditioning class).
 
-Training-time behavior documented here matches **acids-rave** defaults used with
+Training-time behavior documented here matches vendored RAVE defaults used with
 ``configs/brave.gin`` (44100 Hz) unless you override ``--sample-rate``, ``--n-signal``.
 """
 
@@ -138,7 +138,7 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=131072,
         help="``--num_signal`` / ``--n_signal`` chunk length in samples "
-        "(acids-rave preprocess + train defaults).",
+        "(RAVE preprocess + train defaults).",
     )
     p.add_argument(
         "--workers",
@@ -281,12 +281,12 @@ def main() -> None:
     print("### RAVE preprocessing + training window (non-lazy pipeline)")
     print()
     print(
-        f"Stock **`rave preprocess --num_signal {n_signal}`** reads each file as a stream of "
+        f"Preprocess **`--num_signal {n_signal}`** reads each file as a stream of "
         f"exactly **`{n_signal}`** PCM samples per LMDB row; **`{chunk_sec:.6f}` s** at **{sr} Hz** "
         "(see `scripts/preprocess.py`: only full chunks are written; a partial tail **is discarded**)."
     )
     print(
-        f"Stock **`rave train --n_signal {n_signal}`** asks the loader for **`{n_signal}`** samples; "
+        f"Train **`--n_signal {n_signal}`** asks the loader for **`{n_signal}`** samples; "
         "with **non-lazy** LMDB entries of that length, `RandomCrop` in `rave.dataset.get_dataset` "
         "picks offset `0` (no shortening). Longer LMDB buffers would be random-cropped unless you "
         "change preprocessing."

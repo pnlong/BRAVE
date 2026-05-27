@@ -6,11 +6,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 BRAVE is a PyTorch implementation of a low-latency audio variational autoencoder for instrumental performance. It extends the [RAVE](https://github.com/acids-ircam/RAVE) framework with causal convolutions and a smaller, faster architecture optimized for real-time inference (< 10 ms latency). The model is configured entirely via Gin config files.
 
+Vendored RAVE lives in `RAVE/`. Run its scripts with `PYTHONPATH` set to that directory (scripts also insert the RAVE root on `sys.path`). Training logs to Weights & Biases.
+
 ## Setup
 
 ```bash
-pip install h5py acids-rave==2.3
-conda install ffmpeg
+conda env create -f environment.yaml
+conda activate brave
+# Install PyTorch/torchaudio for your CUDA stack first if needed
+wandb login
 ```
 
 For evaluation only:
@@ -21,14 +25,20 @@ pip install git+https://github.com/jorshi/neural-latency-eval
 
 ## Key Commands
 
+From the BRAVE repo root:
+
+```bash
+export PYTHONPATH="${PWD}/RAVE:${PYTHONPATH}"
+```
+
 **Preprocess audio dataset:**
 ```bash
-rave preprocess --input_path /audio/folder --output_path path/to/dataset/ --channels X
+python RAVE/scripts/preprocess.py --input_path=/audio/folder --output_path=/path/to/dataset/ --channels=1
 ```
 
 **Train a model** (specify a `.gin` config from `configs/`):
 ```bash
-rave train --config ./configs/brave.gin --name my_run --db_path path/to/dataset/
+python RAVE/scripts/train.py --config=configs/brave.gin --name=my_run --db_path=/path/to/dataset/
 ```
 Training runs for 1.5M steps; the checkpoint used for evaluation is `epoch_1500000.ckpt`.
 
@@ -39,12 +49,12 @@ python ./scripts/export_brave_plugin.py --model path/to/model.ckpt --output_path
 
 **Export to TorchScript** (for nn~, SuperCollider, RAVE VST):
 ```bash
-rave export --run path/to/model.ckpt
+python RAVE/scripts/export.py --run=path/to/model.ckpt
 ```
 
 **Run resynthesis / timbre transfer:**
 ```bash
-rave generate --model path/to/model.ckpt --input ./experiments/test_audios/drumset
+python RAVE/scripts/generate.py --model=path/to/model.ckpt --input=./experiments/test_audios/drumset
 ```
 
 ## Evaluation
@@ -74,7 +84,7 @@ source scripts/generate_drumset.sh   # or generate_beatbox_test_files.sh, etc.
 
 ## Architecture
 
-The codebase contains no custom Python source — it relies entirely on the `acids-rave` package (`rave`, `cached_conv`) and configures models via `.gin` files in `configs/`.
+Model code is in the vendored `RAVE/rave/` package (`rave`, `cached_conv`). BRAVE configures models via `.gin` files in `configs/`.
 
 All configs share the same structure:
 - **PQMF filterbank** (`CachedPQMF`): splits audio into `N_BAND=16` subbands; `attenuation` controls filter steepness (40 dB for BRAVE, 100 dB for heavier models)
@@ -91,4 +101,4 @@ All configs share the same structure:
 
 - Models must be trained and run at the **same sample rate as the training data** (default 44.1 kHz) for best results.
 - The Filosax dataset requires manual download permission from Zenodo before evaluation scripts will work.
-- `rave generate` writes output next to the input directory by default; check RAVE docs for `--output` flag behavior.
+- `generate.py` writes output to `--out_path` (default `generations`).

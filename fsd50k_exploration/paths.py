@@ -69,5 +69,5 @@ def partitions_for(fsd_root: Path | None = None) -> dict[str, FsdPartition]:
 
 
 def default_subset_audio_dir() -> Path:
-    """Default **`build_subset --output-dir`**: flat staged WAV folder for ``rave preprocess``."""
+    """Default **`build_subset --output-dir`**: flat staged WAV folder for RAVE preprocess."""
     return AUDIO_SUBSET_DIR

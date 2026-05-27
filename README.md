@@ -9,23 +9,23 @@
 
 This repo contains the official Pytorch implementaiton of **BRAVE** a low-latency audio variational autoencoder for instrumental performance. It also implements all of the [other models tested on the paper](https://github.com/fcaspe/BRAVE/tree/main/configs).
 
-Check the [`evaluation`](https://github.com/fcaspe/BRAVE/tree/main/evaluation) directory for info on replicating the results of the paper.
+Check the [`evaluation`](./evaluation) directory for info on replicating the results of the paper.
+
+Training and preprocessing use a **vendored copy of RAVE** in [`RAVE/`](./RAVE/). Run its scripts directly (no `acids-rave` PyPI package). Metrics are logged to **[Weights & Biases](https://wandb.ai)**.
 
 
 ## Install
-
-We use the **acids-rave** package for preprocessing the audio datasets and training the models.
 
 ```bash
 git clone https://github.com/fcaspe/BRAVE
 cd BRAVE
 ```
 
+Install **PyTorch** and **torchaudio** for your CUDA stack first ([PyTorch install picker](https://pytorch.org/)), then create the conda env.
+
 ### Option A: Conda env from `environment.yaml` (recommended)
 
-The repo ships [`environment.yaml`](./environment.yaml) with Python 3.11, **ffmpeg** (conda-forge), and **`pip`** deps `h5py` and **`acids-rave==2.3`**.
-
-With **conda** (or **mamba**/ **micromamba**—same `-f` flow):
+[`environment.yaml`](./environment.yaml) provides Python 3.11, **ffmpeg** (conda-forge), `h5py`, `tqdm`, and pip dependencies from [`RAVE/requirements.txt`](./RAVE/requirements.txt) (including `wandb`).
 
 ```bash
 conda env create -f environment.yaml
@@ -37,25 +37,57 @@ To refresh an existing env after the file changes: `conda env update -n brave -f
 ### Option B: Manual install
 
 ```bash
-pip install h5py acids-rave==2.3 # may work with lower versions too.
 conda install ffmpeg
+pip install h5py tqdm
+pip install -r RAVE/requirements.txt
 ```
+
+### Weights & Biases
+
+One-time login (or set `WANDB_API_KEY`):
+
+```bash
+wandb login
+```
+
+Training logs go to the project named by `--wandb_project` (default: `brave`). See [RAVE/docs/wandb_guide.md](./RAVE/docs/wandb_guide.md) for metric interpretation.
+
 
 ## Preparing Dataset
 
-We use the same `rave preprocess` tool as RAVE for dataset preparation. Also, RAVE datasets will work with this repo's models. [Check RAVE's info on dataset preparation](https://github.com/acids-ircam/RAVE?tab=readme-ov-file#dataset-preparation).
+Preprocess audio with the vendored RAVE script. RAVE LMDB datasets work with BRAVE models. See also [RAVE dataset preparation](https://github.com/acids-ircam/RAVE?tab=readme-ov-file#dataset-preparation).
+
+From the **BRAVE repo root**:
 
 ```bash
-rave preprocess --input_path /audio/folder --output_path path/to/preprocessed/dataset/ --channels X
+export PYTHONPATH="${PWD}/RAVE:${PYTHONPATH}"
+
+python RAVE/scripts/preprocess.py \
+  --input_path=/audio/folder \
+  --output_path=/path/to/preprocessed/dataset/ \
+  --channels=1
 ```
+
+Use `--workers=N` to limit FFmpeg parallelism during preprocess.
+
 
 ## Training
 
-We use the same `rave train` CLI for training. Make sure to specify with `--config` a path to one of the `.gin` configs provided in this repo. For instance, to train BRAVE:
+Train with a `.gin` config from [`configs/`](./configs/). Example — BRAVE:
 
 ```bash
-rave train --config ./configs/brave.gin --name my_brave_run --db_path path/to/preprocessed/dataset/
+export PYTHONPATH="${PWD}/RAVE:${PYTHONPATH}"
+
+python RAVE/scripts/train.py \
+  --config=configs/brave.gin \
+  --name=my_brave_run \
+  --db_path=/path/to/preprocessed/dataset/
 ```
+
+Optional W&B flags: `--wandb_project`, `--wandb_entity`, `--wandb_offline`.
+
+Checkpoints and run metadata are written under `--out_path` (default `runs/`). View scalars and validation audio on [wandb.ai](https://wandb.ai).
+
 
 ## Exporting BRAVE for Real-Time Inference
 
@@ -63,12 +95,13 @@ rave train --config ./configs/brave.gin --name my_brave_run --db_path path/to/pr
 
 The [Minifusion plugin](https://minifusion.live) can run BRAVE models at < 10 ms latency and low jitter (~3 ms).
 
-Use the `export_brave_plugin.py` utility to export a trained model. This requires a BRAVE checkpoint (`.ckpt`) created with `rave train`.  
+Use the `export_brave_plugin.py` utility to export a trained model. This requires a BRAVE checkpoint (`.ckpt`) from training above.  
 It does not work with models exported to TorchScript (`.ts`).
 
 ```bash
-python ./scripts/export_brave_plgin.py --model path/to/model_checkpoint.ckpt --output_path ./exported_model.h5
+python ./scripts/export_brave_plugin.py --model path/to/model_checkpoint.ckpt --output_path ./exported_model.h5
 ```
+
 **NOTE:** BRAVE works better when run at its original sampling rate. For best results, make sure that you run the plugin **at the same sample rate as the data used to train it**.
 
 ### Standard RAVE Export Method
@@ -81,10 +114,15 @@ BRAVE is compatible with many creative coding tools and plugins that use RAVE mo
  - And probably some more
 
 Please note these might show **higher latency** than the BRAVE Plugin due to a different audio buffering strategy.
- ```bash
-rave export --run path/to/model_checkpoint.ckpt
+
+```bash
+export PYTHONPATH="${PWD}/RAVE:${PYTHONPATH}"
+
+python RAVE/scripts/export.py --run=path/to/model_checkpoint.ckpt
 ```
-This will store a TorchScript `(.ts)` model next to the checkpoint file which you can load on your selected application.
+
+This stores a TorchScript `(.ts)` model next to the checkpoint file which you can load in your selected application. Use `--streaming` for realtime-safe cached convolutions (see [RAVE README](./RAVE/README.md)).
+
 
 ## Cite Us
 

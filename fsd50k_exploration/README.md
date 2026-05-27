@@ -1,6 +1,6 @@
 # FSD50K → BRAVE (Hai lab)
 
-Turn **official [FSD50K](https://annotator.freesound.org/fsd/release/fsd50k/)** (development set with **`dev.csv`** **`train`**/**`val`** rows, plus **`eval.csv`**) into a whitelist subset, **`rave preprocess`** LMDB, and **[BRAVE](https://github.com/fcaspe/BRAVE)** training. Helpers live in **`paths.py`**, **`fsd50k_manifest.py`**, **`count_tags.py`**, **`build_subset.py`**, **`subset_audio_stats.py`**.
+Turn **official [FSD50K](https://annotator.freesound.org/fsd/release/fsd50k/)** (development set with **`dev.csv`** **`train`**/**`val`** rows, plus **`eval.csv`**) into a whitelist subset, vendored **`RAVE/scripts/preprocess.py`** LMDB, and **[BRAVE](https://github.com/fcaspe/BRAVE)** training. Helpers live in **`paths.py`**, **`fsd50k_manifest.py`**, **`count_tags.py`**, **`build_subset.py`**, **`subset_audio_stats.py`**.
 
 **Cite:**
 
@@ -35,8 +35,8 @@ Official tree (unpack the MTG release under **`$BRAVE_STORAGE/FSD50K/`**):
 
 | Dir | Role |
 |-----|------|
-| **`audio_subset/`** | `build_subset` output → **`rave preprocess --input_path`** (`paths.AUDIO_SUBSET_DIR`) |
-| **`preprocessed/`** | LMDB → **`rave train --db_path`** |
+| **`audio_subset/`** | `build_subset` output → preprocess **`--input_path`** (`paths.AUDIO_SUBSET_DIR`) |
+| **`preprocessed/`** | LMDB → train **`--db_path`** |
 | **`artifacts/`** | Logs, **`tag_frequencies.tsv`**, whitelists |
 
 ```bash
@@ -89,7 +89,7 @@ python3 build_subset.py --whitelist artifacts/whitelists/my_whitelist.txt --part
 
 It also totals **hours per whitelist tag**: each ontology token is treated like a separate “prompt” / class—the **full clip duration is added once per overlapping tag**, which matches intuition for “how many hours do we get when conditioning on label *X*?” on multi-labelled FSD50K rows.
 
-Training-time notes in the script output are distilled from **`acids-rave`**: causal conv padding (**`configs/brave.gin`** → **`cc.get_padding.mode = 'causal'`**), **`valid_signal_crop = False`**, **`RandomCrop`** on top of preprocess, default **`131072`** samples at **44100** Hz (**`≈ 2.97` s**) for both **`rave preprocess --num_signal`** and **`rave train --n_signal`**. Override **`--sample-rate`** / **`--n-signal`** if your run differs.
+Training-time notes in the script output match vendored RAVE: causal conv padding (**`configs/brave.gin`** → **`cc.get_padding.mode = 'causal'`**), **`valid_signal_crop = False`**, **`RandomCrop`** on top of preprocess, default **`131072`** samples at **44100** Hz (**`≈ 2.97` s**) for both preprocess **`--num_signal`** and train **`--n_signal`**. Override **`--sample-rate`** / **`--n-signal`** if your run differs.
 
 ```bash
 python3 subset_audio_stats.py --whitelist artifacts/whitelists/my_whitelist.txt
@@ -104,23 +104,25 @@ python3 subset_audio_stats.py --help   # parallelism, eval split, optional TSV e
 
 ## 3. Preprocess + train
 
-Run from **`BRAVE/`**. Config: **`configs/brave.gin`** (44.1 kHz mono aligns with official WAV).
+Run from **`BRAVE/`**. Config: **`configs/brave.gin`** (44.1 kHz mono aligns with official WAV). Log in to W&B once (`wandb login`) before training.
 
 ```bash
-rave preprocess \
-  --input_path "${BRAVE_STORAGE:-/deepfreeze/pnlong/hai_lab/BRAVE}/fsd50k_brave/audio_subset" \
-  --output_path "${BRAVE_STORAGE:-/deepfreeze/pnlong/hai_lab/BRAVE}/fsd50k_brave/preprocessed" \
-  --channels 1
+export PYTHONPATH="${PWD}/RAVE:${PYTHONPATH}"
 
-rave train \
-  --config ./configs/brave.gin \
-  --name my_run \
-  --db_path "${BRAVE_STORAGE:-/deepfreeze/pnlong/hai_lab/BRAVE}/fsd50k_brave/preprocessed"
+python RAVE/scripts/preprocess.py \
+  --input_path="${BRAVE_STORAGE:-/deepfreeze/pnlong/hai_lab/BRAVE}/fsd50k_brave/audio_subset" \
+  --output_path="${BRAVE_STORAGE:-/deepfreeze/pnlong/hai_lab/BRAVE}/fsd50k_brave/preprocessed" \
+  --channels=1
+
+python RAVE/scripts/train.py \
+  --config=configs/brave.gin \
+  --name=my_run \
+  --db_path="${BRAVE_STORAGE:-/deepfreeze/pnlong/hai_lab/BRAVE}/fsd50k_brave/preprocessed"
 ```
 
-**`rave preprocess`** decodes WAV → LMDB; add **`--lazy`** only if you want RAVE-style on-the-fly decode from originals (see [RAVE README](https://github.com/acids-ircam/RAVE?tab=readme-ov-file#dataset-preparation)).
+Preprocess decodes WAV → LMDB; add **`--lazy`** only for on-the-fly decode from originals (see [RAVE README](../RAVE/README.md)).
 
-**Parallelism.** Stock **`acids-rave`** forks about **logical CPU count** subprocesses for FFmpeg during preprocess unless limited. **`brave`** patches **`~/micromamba/envs/brave/lib/python3.11/site-packages/scripts/preprocess.py`** to add **`--workers`** (re‑apply whenever you reinstall/upgrade **`acids-rave`**; resolve with **`python -c 'import scripts.preprocess as m; print(m.__file__)'`**). **`rave train`** has its own **`--workers`** (PyTorch **`DataLoader` parallelism**, default **8**) plus **`--gpu`**. **`cannot unpack … NoneType`** in preprocess ⇒ **`ffmpeg`/`ffprobe`** failed on some staged WAV/path.
+**Parallelism.** Preprocess supports **`--workers`** (FFmpeg pool; default uses all CPUs). Train has **`--workers`** (PyTorch **`DataLoader`**, default **8**) and **`--gpu`**. Metrics go to Weights & Biases (`--wandb_project`, default **`brave`**). **`cannot unpack … NoneType`** in preprocess ⇒ **`ffmpeg`/`ffprobe`** failed on some staged WAV/path.
 
 ---
 

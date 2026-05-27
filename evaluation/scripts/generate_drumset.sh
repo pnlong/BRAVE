@@ -5,8 +5,12 @@ tar -xf lhnas-drumset-raw-v3.tar.gz
 # Get dataset info
 python scripts/loud_tool.py dataset/drumset/
 
-# Preprocess the dataset
-rave preprocess --input_path dataset/drumset/train --output_path dataset/drumset/data
+# Preprocess the dataset (run from evaluation/; BRAVE root is parent)
+BRAVE_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+export PYTHONPATH="${BRAVE_ROOT}/RAVE:${PYTHONPATH}"
+python "${BRAVE_ROOT}/RAVE/scripts/preprocess.py" \
+  --input_path=dataset/drumset/train \
+  --output_path=dataset/drumset/data
 
 mkdir -p experiments/test_audios/
 mv dataset/drumset/test experiments/test_audios/drumset
