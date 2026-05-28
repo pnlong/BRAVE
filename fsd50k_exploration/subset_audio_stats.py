@@ -6,10 +6,12 @@ Summarize durations for FSD50K clips selected by the same whitelist + partition 
 Reports:
 
 * Raw WAV length distribution (seconds / hours) on disk.
-* How many clips are **too short** for one full RAVE preprocess chunk given ``num_signal``.
-* Estimated **training examples per file** after non-lazy preprocess (non-overlapping
-  chunks; trailing samples shorter than ``num_signal`` are **dropped**, matching stock
-  ``scripts/preprocess.py`` streaming chunking).
+* How many clips are **too short** for one full non-lazy preprocess chunk (``2 * num_signal``
+  samples per LMDB row).
+* Estimated **LMDB rows** after non-lazy preprocess (non-overlapping chunks of
+  ``2 * num_signal`` samples; trailing samples are **dropped**). With vendored
+  ``--concat_short`` (default), short clips are packed before chunking—this script reports
+  **stock** per-file math unless you re-run after packing.
 * **Hours per ontology tag** (each row in ``--whitelist`` treated as one "prompt" / label):
   summed clip duration over all clips containing that token (multi-label clips contribute their
   full duration to **every** tag they hit—standard if each tag defines a conditioning class).
@@ -85,10 +87,11 @@ def percentile(sorted_vals: list[float], p: float) -> float:
 
 
 def expected_preprocess_chunks(duration_sec: float, sample_rate: int, num_signal: int) -> int:
+    """Non-lazy LMDB rows (``2 * num_signal`` samples per row)."""
     if duration_sec <= 0:
         return 0
     n_samples = int(math.floor(duration_sec * sample_rate))
-    return n_samples // num_signal
+    return n_samples // (2 * num_signal)
 
 
 def _worker_duration(payload: tuple[str, str]) -> tuple[str, float | None]:
@@ -186,7 +189,8 @@ def main() -> None:
 
     n_signal = args.n_signal
     sr = args.sample_rate
-    chunk_sec = n_signal / sr
+    chunk_sec = (2 * n_signal) / sr
+    train_window_sec = n_signal / sr
 
     if not clips:
         print("No matching clips with WAV files found (check whitelist / wav-root / partition).")
@@ -281,15 +285,14 @@ def main() -> None:
     print("### RAVE preprocessing + training window (non-lazy pipeline)")
     print()
     print(
-        f"Preprocess **`--num_signal {n_signal}`** reads each file as a stream of "
-        f"exactly **`{n_signal}`** PCM samples per LMDB row; **`{chunk_sec:.6f}` s** at **{sr} Hz** "
-        "(see `scripts/preprocess.py`: only full chunks are written; a partial tail **is discarded**)."
+        f"Preprocess **`--num_signal {n_signal}`** writes LMDB rows of **`{2 * n_signal}`** "
+        f"samples (**`{chunk_sec:.6f}` s** at **{sr} Hz**); only full rows are kept "
+        "(see `scripts/preprocess.py`). Short files can be packed with **`--concat_short`** "
+        "(default on)."
     )
     print(
-        f"Train **`--n_signal {n_signal}`** asks the loader for **`{n_signal}`** samples; "
-        "with **non-lazy** LMDB entries of that length, `RandomCrop` in `rave.dataset.get_dataset` "
-        "picks offset `0` (no shortening). Longer LMDB buffers would be random-cropped unless you "
-        "change preprocessing."
+        f"Train **`--n_signal {n_signal}`** crops **`{train_window_sec:.6f}` s** from each "
+        f"**`{2 * n_signal}`**-sample LMDB buffer via `RandomCrop` in `rave.dataset.get_dataset`."
     )
     print(
         f"- **`brave.gin`**: `SAMPLING_RATE = 44100` Hz (match `--sample-rate` for chunk math); "
@@ -301,10 +304,14 @@ def main() -> None:
     print(f"| Chop metric | Value |")
     print(f"| --- | --- |")
     print(f"| `num_signal` / `n_signal` (samples) | {n_signal} |")
-    print(f"| Chunk duration at {sr} Hz | `{chunk_sec:.6f}` s |")
-    print(f"| Clips shorter than one chunk (< `{chunk_sec:.6f}` s) | {short_clips} |")
-    print(f"| Sum of floor(duration×sr)//num_signal over clips | `{chunks_total}` LMDB rows |")
-    print(f"| Approx training hours if each row trained once | `~{(chunks_total * chunk_sec) / 3600:.4f}` h |")
+    print(f"| LMDB row duration (2×num_signal) | `{chunk_sec:.6f}` s |")
+    print(f"| Train crop (num_signal) | `{train_window_sec:.6f}` s |")
+    print(f"| Clips shorter than one LMDB row (< `{chunk_sec:.6f}` s) | {short_clips} |")
+    print(f"| Sum of floor(duration×sr)//(2×num_signal) over clips | `{chunks_total}` LMDB rows |")
+    print(
+        f"| Approx train hours (one crop/row) | "
+        f"`~{(chunks_total * train_window_sec) / 3600:.4f}` h |"
+    )
     print()
 
     print("### Hours per whitelist tag (ontology token / pseudo-prompt)")

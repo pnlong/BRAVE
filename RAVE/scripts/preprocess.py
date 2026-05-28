@@ -11,7 +11,7 @@ import subprocess
 from datetime import timedelta
 from functools import partial
 from itertools import repeat
-from typing import Callable, Iterable, Sequence, Tuple
+from typing import Callable, Iterable, List, Sequence, Tuple, Union
 
 import lmdb
 import numpy as np
@@ -21,6 +21,19 @@ import math
 from absl import app, flags
 from tqdm import tqdm
 from udls.generated import AudioExample
+
+from rave.preprocess_plan import (
+    AudioPack,
+    AudioProbe,
+    PreprocessStats,
+    build_preprocess_plan,
+    compute_discarded_seconds,
+    count_plan_chunks,
+    iter_long_file_chunks,
+    iter_pack_chunks,
+    min_samples_for_mode,
+    print_preprocess_summary,
+)
 
 torch.set_grad_enabled(False)
 
@@ -57,50 +70,34 @@ flags.DEFINE_bool('dyndb',
 flags.DEFINE_integer('workers',
                      default=0,
                      help='Preprocessor worker processes (0=all logical CPU cores)')
-
-
-def float_array_to_int16_bytes(x):
-    return np.floor(x * (2**15 - 1)).astype(np.int16).tobytes()
+flags.DEFINE_bool('concat_short',
+                  default=True,
+                  help='Concatenate short files until one full preprocess chunk')
+flags.DEFINE_integer('concat_seed',
+                     default=42,
+                     help='RNG seed for shuffling short files before packing')
+flags.DEFINE_bool('pad_short_remainder',
+                  default=False,
+                  help='Zero-pad the final undersized short-file pack to one chunk')
 
 
 def load_audio_chunk(path: str, n_signal: int,
-                     sr: int, channels: int = 1) -> Iterable[np.ndarray]:
-
+                     sr: int, channels: int = 1) -> Iterable[bytes]:
     _, input_channels = get_audio_channels(path)
-    channel_map = range(channels)
-    if input_channels < channels:
-        channel_map = (math.ceil(channels / input_channels) * list(range(input_channels)))[:channels]
-
-    processes = []
-    for i in range(channels): 
-        process = subprocess.Popen(
-            [
-                'ffmpeg', '-hide_banner', '-loglevel', 'panic', '-i', path, 
-                '-ar', str(sr),
-                '-f', 's16le',
-                '-filter_complex', 'channelmap=%d-0'%channel_map[i],
-                '-'
-            ],
-            stdout=subprocess.PIPE,
-        )
-        processes.append(process)
-    
-    chunk = [p.stdout.read(n_signal * 4) for p in processes]
-    while len(chunk[0]) == n_signal * 4:
-        yield b''.join(chunk)
-        chunk = [p.stdout.read(n_signal * 4) for p in processes]
-    process.stdout.close()
+    if input_channels is None:
+        return
+    yield from iter_long_file_chunks(path, n_signal, sr, channels, input_channels)
 
 
 def expected_preprocess_chunks(duration_sec: float, sr: int, num_signal: int) -> int:
-    """Full LMDB rows from one file (s16le read size is num_signal * 4 bytes)."""
+    """Full LMDB rows from one file (non-lazy)."""
     if duration_sec <= 0:
         return 0
     samples = int(math.floor(duration_sec * sr))
     return samples // (2 * num_signal)
 
 
-def get_audio_length(path: str) -> float:
+def get_audio_length(path: str):
     process = subprocess.Popen(
         [
             'ffprobe', '-i', path, '-v', 'error', '-show_entries',
@@ -110,16 +107,18 @@ def get_audio_length(path: str) -> float:
         stderr=subprocess.PIPE,
     )
     stdout, _ = process.communicate()
-    if process.returncode: return None
+    if process.returncode:
+        return None
     try:
         stdout = stdout.decode().split('\n')[1].split('=')[-1]
         length = float(stdout)
         _, channels = get_audio_channels(path)
         return path, float(length), int(channels)
-    except:
+    except Exception:
         return None
 
-def get_audio_channels(path: str) -> int:
+
+def get_audio_channels(path: str):
     process = subprocess.Popen(
         [
             'ffprobe', '-i', path, '-v', 'error', '-show_entries',
@@ -129,13 +128,14 @@ def get_audio_channels(path: str) -> int:
         stderr=subprocess.PIPE,
     )
     stdout, _ = process.communicate()
-    if process.returncode: return None
+    if process.returncode:
+        return None
     try:
         stdout = stdout.decode().split('\n')[1].split('=')[-1]
         channels = int(stdout)
         return path, int(channels)
-    except:
-        return None 
+    except Exception:
+        return None
 
 
 def flatten(iterator: Iterable):
@@ -143,13 +143,17 @@ def flatten(iterator: Iterable):
         for sub_elm in elm:
             yield sub_elm
 
+
 def get_metadata(audio_samples, channels: int = 1):
     audio = np.frombuffer(audio_samples, dtype=np.int16)
     audio = audio.astype(float) / (2**15 - 1)
     audio = audio.reshape(channels, -1)
     peak_amplitude = np.amax(np.abs(audio))
     rms_amplitude = np.sqrt(np.mean(audio**2))
-    return {'peak': peak_amplitude, 'rms_amplitude': rms_amplitude}
+    return {
+        'peak': str(peak_amplitude),
+        'rms': str(rms_amplitude),
+    }
 
 
 def process_audio_array(audio: Tuple[int, bytes],
@@ -158,13 +162,14 @@ def process_audio_array(audio: Tuple[int, bytes],
     audio_id, audio_samples = audio
     buffers = {}
     buffers['waveform'] = AudioExample.AudioBuffer(
-        shape=(channels, int(len(audio_samples) / channels)),
+        shape=(channels, int(len(audio_samples) / (2 * channels))),
         sampling_rate=FLAGS.sampling_rate,
         data=audio_samples,
         precision=AudioExample.Precision.INT16,
     )
 
-    ae = AudioExample(buffers=buffers)
+    meta = get_metadata(audio_samples, channels)
+    ae = AudioExample(buffers=buffers, metadata=meta)
     key = f'{audio_id:08d}'
     with env.begin(write=True) as txn:
         txn.put(
@@ -174,16 +179,47 @@ def process_audio_array(audio: Tuple[int, bytes],
     return audio_id
 
 
-def process_audio_file(audio: Tuple[int, Tuple[str, float]],
-                       env: lmdb.Environment) -> int:
-    audio_id, (path, length, channels) = audio
-    ae = AudioExample(metadata={'path': path, 'length': str(length), 'channels': str(channels)})
+WorkItem = Tuple[str, Union[AudioProbe, AudioPack]]
+
+
+def load_work_chunks(item: WorkItem, n_signal: int, sr: int, channels: int) -> Iterable[bytes]:
+    kind, data = item
+    if kind == 'long':
+        probe: AudioProbe = data
+        yield from iter_long_file_chunks(
+            probe.path, n_signal, sr, channels, probe.channels)
+    elif kind == 'pack':
+        pack: AudioPack = data
+        yield from iter_pack_chunks(pack, n_signal, sr, channels)
+
+
+def process_lazy_entry(entry: Tuple[int, WorkItem], env: lmdb.Environment) -> float:
+    audio_id, (kind, data) = entry
+    if kind == 'long':
+        probe: AudioProbe = data
+        meta = {
+            'path': probe.path,
+            'length': str(probe.length_sec),
+            'channels': str(probe.channels),
+        }
+        length = probe.length_sec
+    else:
+        pack: AudioPack = data
+        combined = sum(m.length_sec for m in pack.members)
+        if pack.pad_samples:
+            combined += pack.pad_samples / FLAGS.sampling_rate
+        meta = {
+            'paths': ','.join(p.path for p in pack.members),
+            'lengths': ','.join(str(p.length_sec) for p in pack.members),
+            'length': str(combined),
+            'channels': str(pack.channels),
+            'packed': 'true',
+        }
+        length = combined
+    ae = AudioExample(metadata=meta)
     key = f'{audio_id:08d}'
     with env.begin(write=True) as txn:
-        txn.put(
-            key.encode(),
-            ae.SerializeToString(),
-        )
+        txn.put(key.encode(), ae.SerializeToString())
     return length
 
 
@@ -223,6 +259,12 @@ def search_for_audios(path_list: Sequence[str], extensions: Sequence[str]):
     return audios
 
 
+def build_work_items(plan, concat_short: bool) -> List[WorkItem]:
+    items: List[WorkItem] = [('long', p) for p in plan.long_files]
+    items.extend(('pack', pack) for pack in plan.packs)
+    return items
+
+
 def main(argv):
     if FLAGS.lazy and os.name in ["nt", "posix"]:
         while (answer := input(
@@ -233,58 +275,96 @@ def main(argv):
             print("Aborting...")
             exit()
 
-
-    chunk_load = partial(load_audio_chunk,
-                         n_signal=FLAGS.num_signal,
-                         sr=FLAGS.sampling_rate,
-                         channels=FLAGS.channels)
-
     output_dir = os.path.join(*os.path.split(FLAGS.output_path)[:-1])
     if not os.path.isdir(output_dir):
         os.makedirs(output_dir)
 
-    # create database
     env = lmdb.open(
         FLAGS.output_path,
         map_size=FLAGS.max_db_size * 1024**3,
         map_async=not FLAGS.dyndb,
         writemap=not FLAGS.dyndb,
     )
-    pool = multiprocessing.Pool(processes=max(1, FLAGS.workers) if FLAGS.workers > 0 else None)
+    pool = multiprocessing.Pool(
+        processes=max(1, FLAGS.workers) if FLAGS.workers > 0 else None)
 
-
-    # search for audio files
     audios = search_for_audios(FLAGS.input_path, FLAGS.ext)
-    audios = map(str, audios)
-    audios = map(os.path.abspath, audios)
-    audios = [*audios]
+    audios = [os.path.abspath(str(p)) for p in audios]
     if len(audios) == 0:
-        print("No valid file found in %s. Aborting"%FLAGS.input_path)
+        print("No valid file found in %s. Aborting" % FLAGS.input_path)
         pool.close()
         env.close()
         return
 
-    chunk_seconds = (FLAGS.num_signal * 2) / FLAGS.sampling_rate
+    min_samples = min_samples_for_mode(FLAGS.num_signal, FLAGS.lazy)
+    chunk_seconds = min_samples / FLAGS.sampling_rate
+
+    probe_results = list(
+        tqdm(
+            pool.imap(get_audio_length, audios),
+            total=len(audios),
+            desc="ffprobe",
+            unit="file",
+        ))
+    probe_failures = sum(1 for r in probe_results if r is None)
+    probes = []
+    file_lengths = []
+    for result in probe_results:
+        if result is None:
+            continue
+        path, length, channels = result
+        probes.append(AudioProbe(path=path, length_sec=length, channels=channels))
+        file_lengths.append(length)
+
+    plan = build_preprocess_plan(
+        probes,
+        FLAGS.sampling_rate,
+        FLAGS.num_signal,
+        lazy=FLAGS.lazy,
+        concat_short=FLAGS.concat_short,
+        concat_seed=FLAGS.concat_seed,
+        pad_short_remainder=FLAGS.pad_short_remainder,
+    )
+
+    work_items = build_work_items(plan, FLAGS.concat_short)
+    total_chunks = count_plan_chunks(
+        plan, FLAGS.sampling_rate, FLAGS.num_signal, FLAGS.lazy)
+
+    tail_sec, remainder_sec = compute_discarded_seconds(
+        probes,
+        plan,
+        FLAGS.sampling_rate,
+        FLAGS.num_signal,
+        FLAGS.lazy,
+        FLAGS.concat_short,
+    )
+
+    stats = PreprocessStats(
+        input_files=len(probes),
+        probe_failures=probe_failures,
+        total_input_sec=sum(file_lengths),
+        short_files=plan.short_file_count,
+        concat_packs=len(plan.packs),
+        files_in_packs=sum(len(p.members) for p in plan.packs),
+        tail_discarded_sec=tail_sec,
+        remainder_discarded_sec=remainder_sec,
+        discarded_sec=tail_sec + remainder_sec,
+        file_lengths_sec=file_lengths,
+    )
+
+    if probe_failures:
+        print(f"ffprobe failed on {probe_failures} file(s).")
+
+    n_seconds = 0.0
+    chunk_load = partial(
+        load_work_chunks,
+        n_signal=FLAGS.num_signal,
+        sr=FLAGS.sampling_rate,
+        channels=FLAGS.channels,
+    )
 
     if not FLAGS.lazy:
-        probe_results = list(
-            tqdm(
-                pool.imap(get_audio_length, audios),
-                total=len(audios),
-                desc="ffprobe",
-                unit="file",
-            ))
-        probe_failures = sum(1 for r in probe_results if r is None)
-        total_chunks = 0
-        for result in probe_results:
-            if result is not None:
-                _, length, _ = result
-                total_chunks += expected_preprocess_chunks(
-                    length, FLAGS.sampling_rate, FLAGS.num_signal)
-        if probe_failures:
-            print(f"ffprobe failed on {probe_failures} file(s); chunk total is a lower bound.")
-
-        chunks = flatmap(pool, chunk_load, audios)
+        chunks = flatmap(pool, chunk_load, work_items)
         chunks = enumerate(chunks)
 
         processed_samples = map(
@@ -298,8 +378,9 @@ def main(argv):
             desc="preprocess",
             unit="chunk",
         )
-        n_seconds = 0
+        last_id = -1
         for audio_id in pbar:
+            last_id = audio_id
             n_seconds = chunk_seconds * (audio_id + 1)
             pbar.set_description(
                 f'preprocess ({timedelta(seconds=n_seconds)} audio)')
@@ -307,30 +388,36 @@ def main(argv):
                 pbar.total = audio_id + 1
                 pbar.refresh()
         pbar.close()
+        stats.chunks_written = last_id + 1 if last_id >= 0 else 0
+        stats.stored_sec = stats.chunks_written * chunk_seconds
     else:
-        audio_lengths = pool.imap_unordered(get_audio_length, audios)
-        audio_lengths = filter(lambda x: x is not None, audio_lengths)
-        audio_lengths = enumerate(audio_lengths)
-        processed_samples = map(partial(process_audio_file, env=env),
-                                audio_lengths)
+        lazy_entries = enumerate(work_items)
+        processed = map(partial(process_lazy_entry, env=env), lazy_entries)
         pbar = tqdm(
-            processed_samples,
-            total=len(audios),
+            processed,
+            total=len(work_items),
             desc="preprocess",
-            unit="file",
+            unit="entry",
         )
-        n_seconds = 0
+        n_seconds = 0.0
         for length in pbar:
             n_seconds += length
             pbar.set_description(
                 f'preprocess ({timedelta(seconds=n_seconds)} audio)')
         pbar.close()
+        stats.chunks_written = len(work_items)
+        stats.stored_sec = n_seconds
 
-    with open(os.path.join(
-            FLAGS.output_path,
-            'metadata.yaml',
-    ), 'w') as metadata:
-        yaml.safe_dump({'lazy': FLAGS.lazy, 'channels': FLAGS.channels, 'n_seconds': n_seconds, 'sr': FLAGS.sampling_rate}, metadata)
+    print_preprocess_summary(
+        stats, FLAGS.sampling_rate, FLAGS.num_signal, FLAGS.lazy)
+
+    with open(os.path.join(FLAGS.output_path, 'metadata.yaml'), 'w') as metadata:
+        yaml.safe_dump({
+            'lazy': FLAGS.lazy,
+            'channels': FLAGS.channels,
+            'n_seconds': n_seconds,
+            'sr': FLAGS.sampling_rate,
+        }, metadata)
     pool.close()
     env.close()
 

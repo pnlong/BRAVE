@@ -82,6 +82,26 @@ flags.DEFINE_string('wandb_entity',
 flags.DEFINE_bool('wandb_offline',
                   default=False,
                   help='Log to W&B in offline mode')
+flags.DEFINE_bool(
+    'reject_silent',
+    default=None,
+    help='Enable RMS gate on train loader (default: gin maybe_reject_silent.enabled)',
+)
+flags.DEFINE_bool(
+    'noreject_silent',
+    default=False,
+    help='Disable RMS gate even if enabled in gin',
+)
+flags.DEFINE_float(
+    'reject_silent_rms_db',
+    default=None,
+    help='Override gin rms_db_threshold for silent rejection',
+)
+flags.DEFINE_integer(
+    'reject_silent_max_tries',
+    default=None,
+    help='Override gin max_tries for silent rejection',
+)
 
 
 class EMA(pl.Callback):
@@ -175,6 +195,17 @@ def main(argv):
                                        rand_pitch=FLAGS.rand_pitch,
                                        n_channels=n_channels)
     train, val = rave.dataset.split_dataset(dataset, 98)
+
+    reject_kwargs = {}
+    if FLAGS.noreject_silent:
+        reject_kwargs['enabled'] = False
+    elif FLAGS.reject_silent is not None:
+        reject_kwargs['enabled'] = FLAGS.reject_silent
+    if FLAGS.reject_silent_rms_db is not None:
+        reject_kwargs['rms_db_threshold'] = FLAGS.reject_silent_rms_db
+    if FLAGS.reject_silent_max_tries is not None:
+        reject_kwargs['max_tries'] = FLAGS.reject_silent_max_tries
+    train = rave.dataset.maybe_reject_silent(train, **reject_kwargs)
 
     # get data-loader
     num_workers = FLAGS.workers

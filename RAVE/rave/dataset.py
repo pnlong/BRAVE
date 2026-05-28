@@ -3,8 +3,8 @@ import logging
 import math
 import os
 import subprocess
-from random import random
-from typing import Dict, Iterable, Optional, Sequence, Union, Callable
+from random import Random, random
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Union, Callable
 
 import gin
 import lmdb
@@ -141,14 +141,29 @@ class LazyAudioDataset(data.Dataset):
         with self.env.begin() as txn:
             ae = AudioExample.FromString(txn.get(key))
 
-        audio = extract_audio(
-            ae.metadata['path'],
-            self._n_signal,
-            self._sampling_rate,
-            index * self._n_signal,
-            int(ae.metadata['channels']),
-            self._n_channels
-        )
+        start_sample = index * self._n_signal
+        channels = int(ae.metadata['channels'])
+        if ae.metadata.get('packed') == 'true':
+            paths = ae.metadata['paths'].split(',')
+            lengths = [float(x) for x in ae.metadata['lengths'].split(',')]
+            audio = extract_audio_packed(
+                paths,
+                lengths,
+                self._n_signal,
+                self._sampling_rate,
+                start_sample,
+                channels,
+                self._n_channels,
+            )
+        else:
+            audio = extract_audio(
+                ae.metadata['path'],
+                self._n_signal,
+                self._sampling_rate,
+                start_sample,
+                channels,
+                self._n_channels,
+            )
 
         if self._transforms is not None:
             audio = self._transforms(audio)
@@ -298,8 +313,103 @@ def random_phase_mangle(x, min_f, max_f, amp, sr):
     b, a = pole_to_z_filter(angle, amp)
     return lfilter(b, a, x)
 
+def _packed_file_offsets(lengths_sec: Sequence[float], sr: int) -> List[int]:
+    offsets = [0]
+    for length in lengths_sec:
+        offsets.append(offsets[-1] + int(math.floor(length * sr)))
+    return offsets
+
+
+def resolve_packed_position(
+    lengths_sec: Sequence[float],
+    sr: int,
+    start_sample: int,
+) -> Tuple[int, int]:
+    offsets = _packed_file_offsets(lengths_sec, sr)
+    total = offsets[-1]
+    if start_sample >= total and total > 0:
+        start_sample = start_sample % total
+    for i in range(len(lengths_sec)):
+        if start_sample < offsets[i + 1]:
+            return i, start_sample - offsets[i]
+    return len(lengths_sec) - 1, 0
+
+
+def extract_audio_packed(
+    paths: Sequence[str],
+    lengths_sec: Sequence[float],
+    n_signal: int,
+    sr: int,
+    start_sample: int,
+    input_channels: int,
+    channels: int,
+) -> np.ndarray:
+    file_idx, offset = resolve_packed_position(lengths_sec, sr, start_sample)
+    return extract_audio(
+        paths[file_idx],
+        n_signal,
+        sr,
+        offset,
+        input_channels,
+        channels,
+    )
+
+
+def rms_dbfs(x: np.ndarray) -> float:
+    rms = np.sqrt(np.mean(x.astype(np.float64)**2))
+    if rms < 1e-12:
+        return float('-inf')
+    return float(20.0 * np.log10(rms))
+
+
+class RejectSilentDataset(data.Dataset):
+    """Resample dataset indices when the cropped training window is too quiet."""
+
+    def __init__(
+        self,
+        dataset: data.Dataset,
+        rms_db_threshold: float = -50.0,
+        max_tries: int = 8,
+        seed: int = 42,
+    ) -> None:
+        super().__init__()
+        self._dataset = dataset
+        self._rms_db_threshold = rms_db_threshold
+        self._max_tries = max(1, max_tries)
+        self._rng = Random(seed)
+
+    def __len__(self) -> int:
+        return len(self._dataset)
+
+    def __getitem__(self, index: int):
+        last = None
+        for attempt in range(self._max_tries):
+            idx = index if attempt == 0 else self._rng.randint(0, len(self._dataset) - 1)
+            sample = self._dataset[idx]
+            last = sample
+            if rms_dbfs(sample) >= self._rms_db_threshold:
+                return sample
+        return last
+
+
+@gin.configurable
+def maybe_reject_silent(
+    dataset: data.Dataset,
+    enabled: bool = False,
+    rms_db_threshold: float = -50.0,
+    max_tries: int = 8,
+) -> data.Dataset:
+    if not enabled:
+        return dataset
+    return RejectSilentDataset(
+        dataset,
+        rms_db_threshold=rms_db_threshold,
+        max_tries=max_tries,
+    )
+
+
 def extract_audio(path: str, n_signal: int, sr: int,
-                  start_sample: int, input_channels: int, channels: int) -> Iterable[np.ndarray]:
+                  start_sample: int, input_channels: int, channels: int) -> np.ndarray:
     # channel mapping
     channel_map = range(channels)
     if input_channels < channels:

@@ -32,6 +32,11 @@ core.MultiScaleSTFT:
 
 dataset.split_dataset.max_residual = 1000
 
+# Training data quality gate (RMS dBFS on cropped window)
+dataset.maybe_reject_silent.enabled = True
+dataset.maybe_reject_silent.rms_db_threshold = -50.0
+dataset.maybe_reject_silent.max_tries = 8
+
 # CONVOLUTION CONFIGURATION
 cc.Conv1d.bias = False
 cc.ConvTranspose1d.bias = False
