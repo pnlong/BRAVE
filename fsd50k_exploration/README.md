@@ -1,6 +1,6 @@
 # FSD50K → BRAVE (Hai lab)
 
-Turn **official [FSD50K](https://annotator.freesound.org/fsd/release/fsd50k/)** (development set with **`dev.csv`** **`train`**/**`val`** rows, plus **`eval.csv`**) into a whitelist subset, vendored **`RAVE/scripts/preprocess.py`** LMDB, and **[BRAVE](https://github.com/fcaspe/BRAVE)** training. Helpers live in **`paths.py`**, **`fsd50k_manifest.py`**, **`count_tags.py`**, **`build_subset.py`**, **`subset_audio_stats.py`**.
+Turn **official [FSD50K](https://annotator.freesound.org/fsd/release/fsd50k/)** (development set with **`dev.csv`** **`train`**/**`val`** rows, plus **`eval.csv`**) into a whitelist subset, vendored **`RAVE/scripts/preprocess.py`** LMDB, and **[BRAVE](https://github.com/fcaspe/BRAVE)** training. Helpers live in **`paths.py`**, **`fsd50k_manifest.py`**, **`count_tags.py`**, **`build_subset.py`**, **`subset_audio_stats.py`**, **`sample_tag_audio.py`**.
 
 **Cite:**
 
@@ -44,6 +44,27 @@ mkdir -p "${BRAVE_STORAGE:-/deepfreeze/pnlong/hai_lab/BRAVE}/fsd50k_brave/"{audi
 ```
 
 **Partitions (`--partition`):** **`dev_train`**, **`dev_val`**, **`eval`** (synonyms **`train`**, **`valid`**, **`test`**). **`eval`** = held-out corpus—omit from train pools unless intentional. Tokens in **`labels`** CSV cells are ontology names; whitelist lines are **strip + lowercase** (see **`…/ground_truth/vocabulary.csv`**).
+
+---
+
+## Listen by tag (copy samples locally)
+
+**`sample_tag_audio.py`** — sample **N** random clips with a given ontology tag and **symlink** them (default) under `artifacts/listen_samples/` (gitignored). Use `--no-symlink` to copy. A `manifest.tsv` lists clip ids and labels.
+
+```bash
+cd BRAVE/fsd50k_exploration
+
+python3 sample_tag_audio.py --tag water -n 8 --seed 42
+python3 sample_tag_audio.py --tag rain -n 12 --partition dev_val --overwrite
+
+# Staged subset only:
+python3 sample_tag_audio.py --tag water -n 8 \
+  --wav-root "${BRAVE_STORAGE:-/deepfreeze/pnlong/hai_lab/BRAVE}/fsd50k_brave/audio_subset"
+
+python3 sample_tag_audio.py --help
+```
+
+Default output: `artifacts/listen_samples/<tag>_<partition>_n<N>_seed<S>/` with files `001_<clip_id>.wav`, …
 
 ---
 

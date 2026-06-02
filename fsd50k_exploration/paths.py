@@ -21,6 +21,8 @@ DATA_ROOT = STORAGE_DIR / "fsd50k_brave"
 AUDIO_SUBSET_DIR = DATA_ROOT / "audio_subset"
 PREPROCESSED_DIR = DATA_ROOT / "preprocessed"
 ARTIFACTS_DIR = DATA_ROOT / "artifacts"
+# Local tag listening samples (``sample_tag_audio.py``); gitignored under BRAVE/.gitignore
+LISTEN_SAMPLES_DIR = Path(__file__).resolve().parent / "artifacts" / "listen_samples"
 
 CANON_PARTITION_KEYS: tuple[str, ...] = ("dev_train", "dev_val", "eval")
 
@@ -71,3 +73,8 @@ def partitions_for(fsd_root: Path | None = None) -> dict[str, FsdPartition]:
 def default_subset_audio_dir() -> Path:
     """Default **`build_subset --output-dir`**: flat staged WAV folder for RAVE preprocess."""
     return AUDIO_SUBSET_DIR
+
+
+def default_listen_samples_dir() -> Path:
+    """Default **`sample_tag_audio --output-dir` parent**: per-run subfolders inside listen_samples."""
+    return LISTEN_SAMPLES_DIR

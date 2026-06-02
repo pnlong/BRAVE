@@ -171,3 +171,4 @@ cython_debug/
 .pypirc
 
 fsd50k_exploration/artifacts/exported_models/
+fsd50k_exploration/artifacts/listen_samples/
