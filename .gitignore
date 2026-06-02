@@ -172,3 +172,5 @@ cython_debug/
 
 fsd50k_exploration/artifacts/exported_models/
 fsd50k_exploration/artifacts/listen_samples/
+latent_exploration/artifacts/
+tap_samples/

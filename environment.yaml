@@ -8,4 +8,5 @@ dependencies:
   - pip:
       - h5py
       - tqdm
+      - seaborn
       - -r RAVE/requirements.txt

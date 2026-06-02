@@ -222,6 +222,7 @@ class RAVE(pl.LightningModule):
 
         self.register_buffer("receptive_field", torch.tensor([0, 0]).long())
         self.audio_monitor_epochs = audio_monitor_epochs
+        self._latent_mask = None
 
     def configure_optimizers(self):
         gen_p = list(self.encoder.parameters())
@@ -268,6 +269,44 @@ class RAVE(pl.LightningModule):
         z = self.encode(x, return_mb=False)
         z = self.encoder.reparametrize(z)[0]
         return self.decode(z)
+
+    def set_latent_mask(self, mask: Optional[torch.Tensor]) -> None:
+        """Set runtime latent mask; shape [L,T], [1,L,T], or [B,L,T] with values 0/1."""
+        self._latent_mask = mask
+
+    def clear_latent_mask(self) -> None:
+        self._latent_mask = None
+
+    def _apply_latent_mask(self, z: torch.Tensor) -> torch.Tensor:
+        mask = getattr(self, "_latent_mask", None)
+        if mask is None:
+            return z
+        m = mask.to(device=z.device, dtype=z.dtype)
+        if m.dim() == 2:
+            m = m.unsqueeze(0)
+        return z * m
+
+    def encode_to_latent(self, x: torch.Tensor, use_mean: bool = False) -> torch.Tensor:
+        z_raw = self.encode(x, return_mb=False)
+        if use_mean and isinstance(self.encoder, blocks.VariationalEncoder):
+            return z_raw.chunk(2, dim=1)[0]
+        return self.encoder.reparametrize(z_raw)[0]
+
+    def reconstruct_from_latent(self, z: torch.Tensor) -> torch.Tensor:
+        return self.decode(self._apply_latent_mask(z))
+
+    def forward_with_mask(
+        self, x: torch.Tensor, mask: Optional[torch.Tensor] = None
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if mask is not None:
+            self.set_latent_mask(mask)
+        try:
+            z = self.encode_to_latent(x)
+            z_masked = self._apply_latent_mask(z)
+            return self.decode(z_masked), z_masked
+        finally:
+            if mask is not None:
+                self.clear_latent_mask()
 
     def on_train_batch_end(self, outputs, batch, batch_idx) -> None:
         self.lr_schedulers().step()
