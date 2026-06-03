@@ -49,7 +49,7 @@ python ./scripts/export_brave_plugin.py --model path/to/model.ckpt --output_path
 
 ## Fader Networks training
 
-Load **both** `configs/brave.gin` and `configs/brave_fader.gin`. Providers live in `RAVE/rave/fader/providers/`. See [`scratchpaper/fader_future_work.md`](scratchpaper/fader_future_work.md) and [`docs/fader_host_controls.md`](docs/fader_host_controls.md).
+Fader training uses standalone `configs/brave_fader.gin` (includes base `brave.gin`). Providers live in `RAVE/rave/fader/providers/`. See [`scratchpaper/fader_future_work.md`](scratchpaper/fader_future_work.md) and [`docs/fader_host_controls.md`](docs/fader_host_controls.md).
 
 **Precompute attribute stats (train split only by default):**
 ```bash
@@ -60,7 +60,7 @@ python RAVE/scripts/precompute_descriptors.py \
 **Train FaderRAVE:**
 ```bash
 python RAVE/scripts/train.py --name brave_fader_run \
-  --config configs/brave.gin --config configs/brave_fader.gin \
+  --config configs/brave_fader.gin \
   --db_path /path/to/lmdb --batch 8 --gpu -1
 ```
 
@@ -92,7 +92,7 @@ python RAVE/scripts/train_prior.py --model runs/brave_fader_run --fader \
 python RAVE/scripts/build_lmdb_index_manifest.py --input_path .../audio_subset --db_path .../preprocessed
 python RAVE/scripts/build_attribute_sidecar.py --db_path .../preprocessed --scheme water_scene
 ```
-Use `configs/brave_fader_fsd50k_water.gin.example` (copy to `.gin`).
+Use `configs/brave_fader_fsd50k_water.gin.example` (copy to `.gin`; includes `brave_fader.gin`).
 
 **Export Fader TorchScript (128+D concat):**
 ```bash

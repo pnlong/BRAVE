@@ -39,9 +39,4 @@ from .discriminator import *
 from .model import RAVE, BetaWarmupCallback
 from .pqmf import *
 from .balancer import *
-
-
-@gin.configurable
-def build_training_model(n_channels: int = 0):
-    """Gin factory for training module; override with FaderRAVE in brave_fader.gin."""
-    return RAVE(n_channels=n_channels)
+from .training import build_training_model

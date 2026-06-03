@@ -55,7 +55,7 @@ flowchart TD
 
 ## Configuration (gin)
 
-Load after base RAVE config, e.g. [`BRAVE/configs/brave_fader.gin`](../../../configs/brave_fader.gin):
+Use standalone [`BRAVE/configs/brave_fader.gin`](../../../configs/brave_fader.gin) (includes `brave.gin`):
 
 - `continuous_attributes` / `discrete_attributes` — names and concat order
 - `DECODER_LATENT_SIZE` = `128 + D_total`

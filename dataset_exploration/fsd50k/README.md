@@ -165,8 +165,7 @@ python RAVE/scripts/precompute_descriptors.py \
   --db_path=.../water/preprocessed --discrete_attributes water_scene
 
 # Copy configs/brave_fader_fsd50k_water.gin.example → brave_fader_fsd50k_water.gin
-python RAVE/scripts/train.py --config configs/brave.gin \
-  --config configs/brave_fader_fsd50k_water.gin \
+python RAVE/scripts/train.py --config configs/brave_fader_fsd50k_water.gin \
   --db_path=.../water/preprocessed --name water_fader
 ```
 

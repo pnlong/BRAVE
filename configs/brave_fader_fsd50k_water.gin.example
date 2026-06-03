@@ -1,7 +1,9 @@
-# BRAVE Fader + FSD50K water subset with water_scene (3-class discrete).
-# Copy to brave_fader_fsd50k_water.gin and load after configs/brave.gin:
-#   python RAVE/scripts/train.py --config configs/brave.gin \
-#     --config configs/brave_fader_fsd50k_water.gin --db_path .../water/preprocessed
+# FSD50K water_scene overrides (standalone: includes brave_fader.gin → brave.gin).
+# Copy to brave_fader_fsd50k_water.gin:
+#   python RAVE/scripts/train.py --config configs/brave_fader_fsd50k_water.gin \
+#     --db_path .../water/preprocessed --name water_fader
+
+include "brave_fader.gin"
 
 CONTINUOUS_ATTRIBUTES = ["centroid", "rms", "bandwidth", "sharpness", "booming"]
 DISCRETE_ATTRIBUTES = ["water_scene"]

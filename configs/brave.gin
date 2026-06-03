@@ -2,6 +2,7 @@
 from __gin__ import dynamic_registration
 
 import rave
+import rave.training
 from rave import pqmf
 from rave import core
 from rave import blocks
