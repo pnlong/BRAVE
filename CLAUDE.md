@@ -47,6 +47,68 @@ Training runs for 1.5M steps; the checkpoint used for evaluation is `epoch_15000
 python ./scripts/export_brave_plugin.py --model path/to/model.ckpt --output_path ./exported_model.h5
 ```
 
+## Fader Networks training
+
+Load **both** `configs/brave.gin` and `configs/brave_fader.gin`. Providers live in `RAVE/rave/fader/providers/`. See [`scratchpaper/fader_future_work.md`](scratchpaper/fader_future_work.md) and [`docs/fader_host_controls.md`](docs/fader_host_controls.md).
+
+**Precompute attribute stats (train split only by default):**
+```bash
+python RAVE/scripts/precompute_descriptors.py \
+  --db_path /path/to/lmdb --n_signal 131072 --train_only
+```
+
+**Train FaderRAVE:**
+```bash
+python RAVE/scripts/train.py --name brave_fader_run \
+  --config configs/brave.gin --config configs/brave_fader.gin \
+  --db_path /path/to/lmdb --batch 8 --gpu -1
+```
+
+Writes `attribute_stats.yaml` beside the LMDB. Swap continuous/discrete attributes via gin lists + `attribute_sidecar.yaml` without editing dataset code.
+
+**Fader inference (latent exploration):**
+```bash
+python latent_exploration/mask_reconstruct.py \
+  --model runs/brave_fader_run --input clip.wav \
+  --db-path /path/to/lmdb --attr-mode extract
+```
+
+**Eval attribute swap:**
+```bash
+python RAVE/scripts/eval_fader_attributes.py \
+  --model runs/brave_fader_run --db_path /path/to/lmdb
+```
+
+**Prior on 128-D content z (after Fader training):**
+```bash
+python RAVE/scripts/train_prior.py --model runs/brave_fader_run --fader \
+  --db_path /path/to/lmdb --name fader_prior
+```
+
+**Dataset exploration:** `dataset_exploration/fsd50k/`, `dataset_exploration/tabla_ismir21/` (see each README).
+
+**FSD50k water + `water_scene` sidecar:**
+```bash
+python RAVE/scripts/build_lmdb_index_manifest.py --input_path .../audio_subset --db_path .../preprocessed
+python RAVE/scripts/build_attribute_sidecar.py --db_path .../preprocessed --scheme water_scene
+```
+Use `configs/brave_fader_fsd50k_water.gin.example` (copy to `.gin`).
+
+**Export Fader TorchScript (128+D concat):**
+```bash
+python RAVE/scripts/export_fader_ts.py \
+  --model runs/brave_fader_run --db_path /path/to/lmdb \
+  --output_path exports/fader.ts
+```
+Also writes `fader_host_controls.json` beside the `.ts`.
+
+**Subjective swap listening assets:**
+```bash
+python RAVE/scripts/generate_attribute_swap_pairs.py \
+  --model runs/brave_fader_run --db_path /path/to/lmdb --output_dir listening/swap_pairs
+```
+See [`docs/fader_listening_protocol.md`](docs/fader_listening_protocol.md).
+
 **Export to TorchScript** (for nn~, SuperCollider, RAVE VST):
 ```bash
 python RAVE/scripts/export.py --run=path/to/model.ckpt

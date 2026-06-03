@@ -15,14 +15,24 @@ if str(_SCRIPT_DIR) not in sys.path:
 
 from load_model import (
     apply_latent_mask,
+    build_constant_attr,
     compression_ratio,
+    extract_normalized_attributes,
     has_pca,
+    is_fader_model,
     load_audio,
+    load_model,
     load_rave,
     pca_display_dims,
     save_audio,
 )
-from latent_viz import DEFAULT_PCA_FIDELITY, plot_mel_and_latent, plot_mel_latent_and_pca
+from latent_viz import (
+    DEFAULT_PCA_FIDELITY,
+    plot_latent_distribution_histograms,
+    plot_mel_and_latent,
+    plot_mel_latent_and_pca,
+    print_latent_distributions,
+)
 from masks import MASK_STYLES, build_mask, default_mask_width
 from paths import RECONSTRUCTIONS_DIR
 
@@ -61,6 +71,53 @@ def _mask_overlay_panels(mask_style: str, mask_space: str) -> tuple[bool, bool]:
     return True, False
 
 
+MASK_SPACES = ("vae", "pca")
+ATTR_MODES = ("extract", "zeros", "swap", "constant")
+
+
+def _parse_attr_constant(spec: str) -> dict[str, float]:
+    """Parse name=value,name2=value2 into dict."""
+    out: dict[str, float] = {}
+    if not spec.strip():
+        return out
+    for part in spec.split(","):
+        if "=" not in part:
+            continue
+        k, v = part.split("=", 1)
+        out[k.strip()] = float(v.strip())
+    return out
+
+
+def _resolve_attributes(
+    model,
+    x: torch.Tensor,
+    *,
+    attr_mode: str,
+    swap_x: torch.Tensor | None,
+    attr_constant: dict[str, float],
+    time_frames: int,
+) -> torch.Tensor | None:
+    """Return attr_norm [1,D,T] for Fader decode, or None for vanilla RAVE."""
+    if not is_fader_model(model):
+        return None
+
+    if attr_mode == "zeros":
+        d = model.num_attributes
+        return torch.zeros(1, d, time_frames, device=x.device)
+
+    if attr_mode == "constant":
+        return build_constant_attr(
+            model, attr_constant, time_frames=time_frames, device=x.device)
+
+    if attr_mode == "swap":
+        if swap_x is None:
+            raise ValueError("--attr-mode swap requires --swap-input")
+        return extract_normalized_attributes(model, swap_x)
+
+    # --- Default: extract from input audio ---
+    return extract_normalized_attributes(model, x)
+
+
 def run_reconstruction(
     model_path: str | Path,
     input_path: str | Path,
@@ -75,18 +132,32 @@ def run_reconstruction(
     pca_fidelity: float = DEFAULT_PCA_FIDELITY,
     save_wavs: bool = True,
     save_plot: bool = True,
+    clip_outliers: bool = False,
+    clip_percentiles: tuple[float, float] = (2.0, 98.0),
+    stats_path: str | Path | None = None,
+    db_path: str | Path | None = None,
+    attr_mode: str = "extract",
+    swap_input: str | Path | None = None,
+    attr_constant: str = "",
 ) -> Path:
     """Encode → optional mask → decode; save reconstruction WAVs and mel/latent PNG."""
     if mask_space not in MASK_SPACES:
         raise ValueError(f"unknown mask_space {mask_space!r}; choose from {MASK_SPACES}")
 
+    if attr_mode not in ATTR_MODES:
+        raise ValueError(f"unknown attr_mode {attr_mode!r}; choose from {ATTR_MODES}")
+
     input_path = Path(input_path)
     if not input_path.is_file():
         raise FileNotFoundError(f"input audio not found: {input_path}")
 
-    model = load_rave(model_path, use_gpu=use_gpu)
+    model = load_model(
+        model_path, use_gpu=use_gpu, stats_path=stats_path, db_path=db_path)
     device = next(model.parameters()).device
     x = load_audio(input_path, model, device=device)
+    swap_x = None
+    if swap_input:
+        swap_x = load_audio(swap_input, model, device=device)
 
     with torch.no_grad():
         z = model.encode_to_latent(x[None], use_mean=(latent_mode == "mean"))
@@ -101,7 +172,18 @@ def run_reconstruction(
         z_out, z_pca_masked = apply_latent_mask(
             model, z, mask, mask_space=mask_space
         )
-        y = model.decode(z_out)
+        attr_norm = _resolve_attributes(
+            model,
+            x,
+            attr_mode=attr_mode,
+            swap_x=swap_x,
+            attr_constant=_parse_attr_constant(attr_constant),
+            time_frames=time_frames,
+        )
+        if attr_norm is not None:
+            y = model.decode(z_out, attr=attr_norm)
+        else:
+            y = model.decode(z_out)
 
     if output_dir:
         out_dir = Path(output_dir)
@@ -129,7 +211,27 @@ def run_reconstruction(
     if mask_style != "none":
         print(f"mask style: {mask_style} (space: {mask_space})")
 
+    vae_dist_label = "VAE latent (post-mask)" if mask_style != "none" else "VAE latent"
+    pca_dist_label = "PCA latent (post-mask)" if mask_style != "none" else "PCA latent"
+    print_latent_distributions(
+        z_out,
+        z_pca_masked if has_pca(model) else None,
+        vae_label=vae_dist_label,
+        pca_label=pca_dist_label,
+    )
+
     if save_plot:
+        hist_path = out_dir / f"{input_path.stem}_latent_hist.png"
+        plot_latent_distribution_histograms(
+            z_out,
+            hist_path,
+            z_pca_masked if has_pca(model) else None,
+            vae_label=vae_dist_label,
+            pca_label=pca_dist_label,
+            clip_percentiles=clip_percentiles,
+        )
+        print(f"saved latent histogram: {hist_path}")
+
         ratio = compression_ratio(model)
         plot_suffix = "latents" if mask_style == "none" else "mask_plot"
         plot_path = out_dir / f"{input_path.stem}_{plot_suffix}.png"
@@ -173,6 +275,8 @@ def run_reconstruction(
                 pca_fidelity=pca_fidelity,
                 mask_on_vae=mask_on_vae,
                 mask_on_pca=mask_on_pca,
+                clip_outliers=clip_outliers,
+                clip_percentiles=clip_percentiles,
                 **mask_kw,
             )
         else:
@@ -184,6 +288,8 @@ def run_reconstruction(
                 ratio,
                 plot_path,
                 latent_title=vae_title,
+                clip_outliers=clip_outliers,
+                clip_percentiles=clip_percentiles,
                 **mask_kw,
             )
         print(f"saved plot: {plot_path}")
@@ -247,9 +353,48 @@ def parse_args() -> argparse.Namespace:
         help="skip saving the mel/latent PNG",
     )
     p.add_argument(
+        "--clip-outliers",
+        action="store_true",
+        help="use percentile clip for heatmap color limits (see --clip-percentile)",
+    )
+    p.add_argument(
+        "--clip-percentile",
+        type=float,
+        nargs=2,
+        metavar=("LO", "HI"),
+        default=(2.0, 98.0),
+        help="percentile range for --clip-outliers color limits (default: 2 98)",
+    )
+    p.add_argument(
         "--gpu",
         action="store_true",
         help="use CUDA (set CUDA_VISIBLE_DEVICES to pick a GPU; default: CPU)",
+    )
+    p.add_argument(
+        "--stats-path",
+        default=None,
+        help="attribute_stats.yaml for FaderRAVE (auto-search near checkpoint if omitted)",
+    )
+    p.add_argument(
+        "--db-path",
+        default=None,
+        help="LMDB path to find attribute_stats.yaml for FaderRAVE",
+    )
+    p.add_argument(
+        "--attr-mode",
+        choices=ATTR_MODES,
+        default="extract",
+        help="Fader attribute control: extract from input, zeros, swap, or constant",
+    )
+    p.add_argument(
+        "--swap-input",
+        default=None,
+        help="second audio file for --attr-mode swap (z from --input, attr from swap)",
+    )
+    p.add_argument(
+        "--attr-constant",
+        default="",
+        help="comma name=value pairs for --attr-mode constant (raw or class index)",
     )
     return p.parse_args()
 
@@ -269,6 +414,13 @@ def main() -> None:
         pca_fidelity=args.pca_fidelity,
         save_wavs=not args.no_wavs,
         save_plot=not args.no_plot,
+        clip_outliers=args.clip_outliers,
+        clip_percentiles=tuple(args.clip_percentile),
+        stats_path=args.stats_path,
+        db_path=args.db_path,
+        attr_mode=args.attr_mode,
+        swap_input=args.swap_input,
+        attr_constant=args.attr_constant,
     )
 
 

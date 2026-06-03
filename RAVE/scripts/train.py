@@ -181,8 +181,12 @@ def main(argv):
             FLAGS.override,
         )
 
-    # create model
-    model = rave.RAVE(n_channels=FLAGS.channels)
+    # create model (FaderRAVE when brave_fader.gin is loaded)
+    if "rave.fader.model.FaderRAVE" in gin.operative_config_str():
+        from rave.fader.model import FaderRAVE
+        model = FaderRAVE(n_channels=FLAGS.channels)
+    else:
+        model = rave.build_training_model(n_channels=FLAGS.channels)
     if FLAGS.derivative:
         model.integrator = rave.dataset.get_derivator_integrator(model.sr)[1]
 
@@ -207,6 +211,66 @@ def main(argv):
         reject_kwargs['max_tries'] = FLAGS.reject_silent_max_tries
     train = rave.dataset.maybe_reject_silent(train, **reject_kwargs)
 
+    # --- Fader: wrap loaders to return (audio, attr) tuples ---
+    from rave.fader.dataset import wrap_fader_dataset
+    train = wrap_fader_dataset(
+        train,
+        sampling_rate=model.sr,
+        n_signal=FLAGS.n_signal,
+        db_path=FLAGS.db_path,
+    )
+    val = wrap_fader_dataset(
+        val,
+        sampling_rate=model.sr,
+        n_signal=FLAGS.n_signal,
+        db_path=FLAGS.db_path,
+    )
+
+    # --- Fader: load offline attribute stats (min/max, bin edges) ---
+    from rave.fader.model import FaderRAVE
+    from rave.fader.attributes import load_attribute_stats, resolve_stats_path, validate_stats_against_config
+    use_fader_callbacks = False
+    if isinstance(model, FaderRAVE):
+        stats_path = resolve_stats_path(FLAGS.db_path)
+        if stats_path is None and FLAGS.smoke_test:
+            print(
+                "attribute_stats.yaml missing; running quick precompute for smoke_test..."
+            )
+            import subprocess
+            precompute_script = os.path.join(
+                _RAVE_ROOT, "scripts", "precompute_descriptors.py")
+            subprocess.run(
+                [
+                    sys.executable,
+                    precompute_script,
+                    f"--db_path={FLAGS.db_path}",
+                    f"--n_signal={FLAGS.n_signal}",
+                    "--max_chunks=4",
+                ],
+                check=True,
+            )
+            stats_path = resolve_stats_path(FLAGS.db_path)
+        if stats_path is None:
+            raise FileNotFoundError(
+                f"Missing attribute_stats.yaml in {FLAGS.db_path}. Run:\n"
+                f"  python RAVE/scripts/precompute_descriptors.py "
+                f"--db_path {FLAGS.db_path} --n_signal {FLAGS.n_signal}"
+            )
+        from rave.fader.attributes import load_attribute_stats
+        model.load_attribute_stats_from_file(stats_path)
+        st = load_attribute_stats(stats_path)
+        validate_stats_against_config(
+            st,
+            model.continuous_attributes,
+            model.discrete_attributes,
+            n_signal=FLAGS.n_signal,
+        )
+        split_info = ""
+        if st.get("split"):
+            split_info = f" split={st['split']}"
+        print(f"Loaded {stats_path} (version={st.get('version', '?')}{split_info})")
+        use_fader_callbacks = True
+
     # get data-loader
     num_workers = FLAGS.workers
     if os.name == "nt" or sys.platform == "darwin":
@@ -219,7 +283,7 @@ def main(argv):
     val = DataLoader(val, FLAGS.batch, False, num_workers=num_workers)
 
     # CHECKPOINT CALLBACKS
-    validation_checkpoint = pl.callbacks.ModelCheckpoint(monitor="validation",
+    validation_checkpoint = pl.callbacks.ModelCheckpoint(monitor="loss",
                                                          filename="best")
     last_filename = "last" if FLAGS.save_every is None else "epoch-{epoch:04d}"                                                        
     last_checkpoint = rave.core.ModelCheckpoint(filename=last_filename, step_period=FLAGS.save_every)
@@ -272,6 +336,9 @@ def main(argv):
         # rave.core.LoggerCallback(rave.core.ProgressLogger(RUN_NAME)),
         rave.model.BetaWarmupCallback(),
     ]
+    if use_fader_callbacks:
+        from rave.fader.callbacks import LambdaWarmupCallback
+        callbacks.append(LambdaWarmupCallback())
 
     if FLAGS.ema is not None:
         callbacks.append(EMA(FLAGS.ema))

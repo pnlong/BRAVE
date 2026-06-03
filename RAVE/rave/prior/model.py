@@ -177,7 +177,7 @@ class Prior(pl.LightningModule):
             x.reshape(-1),
         )
 
-        self.log("validation", loss)
+        self.log("loss", loss)
         return batch
 
     def validation_epoch_end(self, out):

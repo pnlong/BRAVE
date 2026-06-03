@@ -15,6 +15,7 @@ sns.set_theme(style="darkgrid", context="notebook")
 
 DEFAULT_CMAP = "magma"
 DEFAULT_PCA_FIDELITY = 0.95
+DEFAULT_CLIP_PERCENTILES = (2.0, 98.0)
 MEL_N_FFT = 2048
 MEL_HOP = 512
 MEL_N_MELS = 128
@@ -55,8 +56,124 @@ def compute_mel(
     return mel.squeeze(0).cpu().numpy()
 
 
-def _panel_vlim(array: np.ndarray) -> tuple[float, float]:
-    return float(array.min()), float(array.max())
+def _as_numpy(z: torch.Tensor | np.ndarray) -> np.ndarray:
+    if isinstance(z, torch.Tensor):
+        return z.detach().cpu().numpy()
+    return z
+
+
+def latent_distribution_stats(z: torch.Tensor | np.ndarray) -> dict[str, float | int | tuple[int, ...]]:
+    """Summary stats over all elements of a latent tensor [L, T] or [1, L, T]."""
+    arr = np.asarray(_as_numpy(z)).astype(np.float64).ravel()
+    if arr.size == 0:
+        raise ValueError("empty latent array")
+    raw = _as_numpy(z)
+    shape = tuple(int(s) for s in raw.shape)
+    qs = np.percentile(arr, [1, 5, 25, 50, 75, 95, 99])
+    return {
+        "shape": shape,
+        "n": int(arr.size),
+        "min": float(arr.min()),
+        "max": float(arr.max()),
+        "mean": float(arr.mean()),
+        "std": float(arr.std()),
+        "p01": float(qs[0]),
+        "p05": float(qs[1]),
+        "p25": float(qs[2]),
+        "p50": float(qs[3]),
+        "p75": float(qs[4]),
+        "p95": float(qs[5]),
+        "p99": float(qs[6]),
+    }
+
+
+def _format_latent_stats_line(stats: dict[str, float | int | tuple[int, ...]]) -> str:
+    return (
+        f"shape={stats['shape']}  n={stats['n']}  "
+        f"min={stats['min']:.4f}  max={stats['max']:.4f}  "
+        f"mean={stats['mean']:.4f}  std={stats['std']:.4f}  "
+        f"p01={stats['p01']:.4f}  p50={stats['p50']:.4f}  p99={stats['p99']:.4f}"
+    )
+
+
+def print_latent_distributions(
+    z_vae: torch.Tensor,
+    z_pca: torch.Tensor | None = None,
+    *,
+    vae_label: str = "VAE latent (post-mask)",
+    pca_label: str = "PCA latent (post-mask)",
+) -> None:
+    """Print latent value distributions to stdout."""
+    print(f"latent distribution [{vae_label}]:")
+    print(f"  {_format_latent_stats_line(latent_distribution_stats(z_vae))}")
+    if z_pca is not None:
+        print(f"latent distribution [{pca_label}]:")
+        print(f"  {_format_latent_stats_line(latent_distribution_stats(z_pca))}")
+
+
+def plot_latent_distribution_histograms(
+    z_vae: torch.Tensor,
+    output_path: str | Path,
+    z_pca: torch.Tensor | None = None,
+    *,
+    vae_label: str = "VAE latent",
+    pca_label: str = "PCA latent",
+    bins: int | str = "auto",
+    clip_percentiles: tuple[float, float] = DEFAULT_CLIP_PERCENTILES,
+) -> Path:
+    """
+    Histogram of latent values (count per bin).
+
+    X-axis limits use ``clip_percentiles`` (same as ``--clip-percentile`` on the CLI).
+    Bins are confined to that range so tails do not dominate the view.
+    """
+    vae_arr = np.asarray(_as_numpy(z_vae)).astype(np.float64).ravel()
+    has_pca = z_pca is not None
+    lo_pct, hi_pct = clip_percentiles
+
+    if has_pca:
+        pca_arr = np.asarray(_as_numpy(z_pca)).astype(np.float64).ravel()
+        fig, axes = plt.subplots(1, 2, figsize=(12, 4), constrained_layout=True)
+        panels = [(axes[0], vae_arr, vae_label), (axes[1], pca_arr, pca_label)]
+    else:
+        fig, ax = plt.subplots(1, 1, figsize=(6, 4), constrained_layout=True)
+        panels = [(ax, vae_arr, vae_label)]
+
+    for ax, arr, title in panels:
+        lo, hi = np.percentile(arr, [lo_pct, hi_pct])
+        if lo >= hi:
+            lo, hi = float(arr.min()), float(arr.max())
+        sns.histplot(
+            arr,
+            ax=ax,
+            bins=bins,
+            binrange=(lo, hi),
+            stat="count",
+            edgecolor=None,
+        )
+        ax.set_xlim(lo, hi)
+        ax.set_title(f"{title} (p{lo_pct:g}–p{hi_pct:g})")
+        ax.set_xlabel("latent value")
+        ax.set_ylabel("count")
+
+    saved = _save_figure(fig, output_path)
+    plt.close(fig)
+    return saved
+
+
+def _panel_vlim(
+    array: np.ndarray,
+    *,
+    clip_outliers: bool = False,
+    clip_percentiles: tuple[float, float] = DEFAULT_CLIP_PERCENTILES,
+) -> tuple[float, float]:
+    if not clip_outliers:
+        return float(array.min()), float(array.max())
+    lo, hi = clip_percentiles
+    vmin, vmax = np.percentile(array, [lo, hi])
+    if vmin >= vmax:
+        return float(array.min()), float(array.max())
+    return float(vmin), float(vmax)
 
 
 def _add_time_ticks(
@@ -114,8 +231,12 @@ def _plot_latent_panel(
     mask_start: int | None = None,
     mask_width: int | None = None,
     draw_mask: bool = True,
+    clip_outliers: bool = False,
+    clip_percentiles: tuple[float, float] = DEFAULT_CLIP_PERCENTILES,
 ) -> None:
-    z_vmin, z_vmax = _panel_vlim(z)
+    z_vmin, z_vmax = _panel_vlim(
+        z, clip_outliers=clip_outliers, clip_percentiles=clip_percentiles
+    )
     sns.heatmap(
         z,
         ax=ax,
@@ -157,6 +278,8 @@ def plot_mel_latent_and_pca(
     mask_width: int | None = None,
     mask_on_vae: bool = True,
     mask_on_pca: bool = True,
+    clip_outliers: bool = False,
+    clip_percentiles: tuple[float, float] = DEFAULT_CLIP_PERCENTILES,
 ) -> Path:
     """Three-panel figure: input mel | VAE latent | PCA latent (optionally cropped)."""
     mel = compute_mel(waveform, sample_rate)
@@ -170,7 +293,9 @@ def plot_mel_latent_and_pca(
     else:
         z_pca = z_pca_full
         pca_title = base_pca_title
-    mel_vmin, mel_vmax = _panel_vlim(mel)
+    mel_vmin, mel_vmax = _panel_vlim(
+        mel, clip_outliers=clip_outliers, clip_percentiles=clip_percentiles
+    )
 
     fig, axes = plt.subplots(1, 3, figsize=(18, 5), constrained_layout=True)
 
@@ -198,6 +323,8 @@ def plot_mel_latent_and_pca(
         mask_start=mask_start,
         mask_width=mask_width,
         draw_mask=mask_on_vae,
+        clip_outliers=clip_outliers,
+        clip_percentiles=clip_percentiles,
     )
     _plot_latent_panel(
         axes[2],
@@ -210,6 +337,8 @@ def plot_mel_latent_and_pca(
         mask_start=mask_start,
         mask_width=mask_width,
         draw_mask=mask_on_pca,
+        clip_outliers=clip_outliers,
+        clip_percentiles=clip_percentiles,
     )
 
     saved = _save_figure(fig, output_path)
@@ -229,12 +358,18 @@ def plot_mel_and_latent(
     mask_style: Literal["none", "temporal", "latent"] | None = None,
     mask_start: int | None = None,
     mask_width: int | None = None,
+    clip_outliers: bool = False,
+    clip_percentiles: tuple[float, float] = DEFAULT_CLIP_PERCENTILES,
 ) -> Path:
     """Two-panel figure: input mel | latent heatmap."""
     mel = compute_mel(waveform, sample_rate)
     z = latent.squeeze(0).detach().cpu().numpy()
-    mel_vmin, mel_vmax = _panel_vlim(mel)
-    z_vmin, z_vmax = _panel_vlim(z)
+    mel_vmin, mel_vmax = _panel_vlim(
+        mel, clip_outliers=clip_outliers, clip_percentiles=clip_percentiles
+    )
+    z_vmin, z_vmax = _panel_vlim(
+        z, clip_outliers=clip_outliers, clip_percentiles=clip_percentiles
+    )
 
     fig, axes = plt.subplots(1, 2, figsize=(14, 5), constrained_layout=True)
 

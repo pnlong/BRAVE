@@ -1,3 +1,11 @@
+import warnings
+
+# pytorch_lightning 1.9 / lightning_fabric still call pkg_resources; setuptools warns.
+warnings.filterwarnings(
+    "ignore",
+    message=".*pkg_resources.*",
+)
+
 from pathlib import Path
 
 import cached_conv as cc
@@ -31,3 +39,9 @@ from .discriminator import *
 from .model import RAVE, BetaWarmupCallback
 from .pqmf import *
 from .balancer import *
+
+
+@gin.configurable
+def build_training_model(n_channels: int = 0):
+    """Gin factory for training module; override with FaderRAVE in brave_fader.gin."""
+    return RAVE(n_channels=n_channels)

@@ -1,0 +1,155 @@
+"""
+JIT-traced Fader model: encode → concat attr → decode.
+
+Used by export_fader_ts.py for TorchScript / plugin deployment.
+Strips training-only pieces (latent disc, GAN, stats mutation).
+
+Inference path
+--------------
+  audio x  → encode → z (B, latent_size, T_lat)
+  attr raw → normalize_all → attr_norm (B, D, T_lat)
+  decode(cat(z, attr_norm)) → audio y
+
+Port of neurorave realtime/trace.py for BRAVE FaderRAVE.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Dict, List, Sequence, Tuple
+
+import gin
+import torch
+import torch.nn as nn
+
+from ..attributes import discrete_index_to_decoder_float, load_attribute_stats
+
+
+class FaderTraceModel(nn.Module):
+    """
+    Stripped FaderRAVE for TorchScript: encoder + widened decoder + pqmf.
+
+    Buffers min/max for continuous attrs; discrete attrs use fixed num_classes.
+    """
+
+    def __init__(
+        self,
+        encoder: nn.Module,
+        decoder: nn.Module,
+        pqmf: nn.Module,
+        attribute_names: Sequence[str],
+        attribute_kinds: Dict[str, str],
+        min_max_features: Dict[str, Tuple[float, float]],
+        discrete_num_classes: Dict[str, int],
+        latent_size: int,
+        sr: int,
+        deterministic: bool = True,
+    ) -> None:
+        super().__init__()
+        self.encoder = encoder
+        self.decoder = decoder
+        self.pqmf = pqmf
+        self.attribute_names = list(attribute_names)
+        self.attribute_kinds = dict(attribute_kinds)
+        self.discrete_num_classes = dict(discrete_num_classes)
+        self.latent_size = latent_size
+        self.sr = sr
+        self.deterministic = deterministic
+
+        # --- Register min/max as buffers for JIT normalize ---
+        mm = []
+        for name in self.attribute_names:
+            if self.attribute_kinds.get(name) == "continuous":
+                lo, hi = min_max_features.get(name, (0.0, 1.0))
+                mm.append([lo, hi])
+            else:
+                mm.append([0.0, 1.0])
+        self.register_buffer(
+            "min_max_features",
+            torch.tensor(mm, dtype=torch.float32),
+        )
+        self.register_buffer(
+            "num_attributes",
+            torch.tensor(len(self.attribute_names)),
+        )
+        self.register_buffer(
+            "content_latent_size",
+            torch.tensor(latent_size),
+        )
+
+    @torch.jit.export
+    def normalize_all(self, attr: torch.Tensor) -> torch.Tensor:
+        """Normalize raw attr (B, D, T) to [-1,1] for decoder concat."""
+        out = attr.clone()
+        for i, name in enumerate(self.attribute_names):
+            if self.attribute_kinds.get(name) == "continuous":
+                lo, hi = self.min_max_features[i, 0], self.min_max_features[i, 1]
+                out[:, i] = 2.0 * ((out[:, i] - lo) / (hi - lo + 1e-8) - 0.5)
+            else:
+                n_cls = self.discrete_num_classes.get(name, 2)
+                idx = out[:, i].long()
+                out[:, i] = discrete_index_to_decoder_float(idx, n_cls)
+        return out
+
+    def _encode_core(self, x: torch.Tensor) -> torch.Tensor:
+        # --- PQMF encode → VAE latent (deterministic mean if configured) ---
+        if self.pqmf is not None:
+            x = self.pqmf(x)
+        z = self.encoder(x)
+        if z.shape[1] % 2 == 0:
+            mean, scale = torch.split(z, z.shape[1] // 2, dim=1)
+            std = nn.functional.softplus(scale) + 1e-4
+            if self.deterministic:
+                return mean
+            return mean + torch.randn_like(mean) * std
+        return z
+
+    @torch.jit.export
+    def encode(self, x: torch.Tensor) -> torch.Tensor:
+        """Encode audio (B, C, T) → content z (B, latent_size, T_lat)."""
+        return self._encode_core(x)
+
+    @torch.jit.export
+    def decode(self, z: torch.Tensor) -> torch.Tensor:
+        """Decode concatenated z (B, latent_size+D, T_lat) → audio."""
+        y = self.decoder(z)
+        if self.pqmf is not None:
+            y = self.pqmf.inverse(y)
+        return y
+
+    @torch.jit.export
+    def forward(self, x: torch.Tensor, attr: torch.Tensor) -> torch.Tensor:
+        """Encode → concat normalized attr → decode (main realtime entry point)."""
+        z = self.encode(x)
+        attr_n = self.normalize_all(attr)
+        # --- Widened latent: content + control channels ---
+        z_c = torch.cat([z, attr_n], dim=1)
+        return self.decode(z_c)
+
+
+def build_trace_model(
+    fader_model,
+    stats_path: str | Path,
+    deterministic: bool = True,
+) -> FaderTraceModel:
+    """
+    Build FaderTraceModel from trained FaderRAVE + attribute_stats.yaml.
+
+    Copies encoder/decoder/pqmf weights; embeds min/max and discrete class
+    counts as buffers for JIT-safe normalize_all().
+    """
+    stats = load_attribute_stats(stats_path)
+    names = stats["attribute_names"]
+    kinds = stats.get("attribute_kinds", {})
+    return FaderTraceModel(
+        encoder=fader_model.encoder,
+        decoder=fader_model.decoder,
+        pqmf=fader_model.pqmf,
+        attribute_names=names,
+        attribute_kinds=kinds,
+        min_max_features=stats["min_max_features"],
+        discrete_num_classes=stats.get("discrete_num_classes", {}),
+        latent_size=fader_model.latent_size,
+        sr=fader_model.sr,
+        deterministic=deterministic,
+    )

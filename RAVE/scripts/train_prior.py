@@ -1,3 +1,17 @@
+"""
+Train a prior on content latents from a pretrained RAVE or FaderRAVE checkpoint.
+
+FaderRAVE: encodes 128-D content z only (attributes are never concatenated into
+the prior dataset). Load the fader gin config from the checkpoint directory.
+
+Usage (BRAVE root):
+  export PYTHONPATH="${PWD}/RAVE:${PYTHONPATH}"
+  python RAVE/scripts/train_prior.py \\
+    --model runs/brave_fader_run \\
+    --db_path /path/to/lmdb \\
+    --name fader_prior_run
+"""
+
 import hashlib
 import os
 import sys
@@ -62,6 +76,10 @@ flags.DEFINE_bool('wandb_offline',
                   default=False,
                   help='Log to W&B in offline mode')
 
+flags.DEFINE_bool('fader',
+                  default=False,
+                  help='Force FaderRAVE loader (auto-detected from gin if unset)')
+
 def add_gin_extension(config_name: str) -> str:
     if config_name[-4:] != '.gin':
         config_name += '.gin'
@@ -79,7 +97,16 @@ def main(argv):
     if run is None:
         print('no checkpoint found in %s'%FLAGS.model)
         exit()
-    pretrained = rave.RAVE()
+
+    # --- Detect FaderRAVE from gin operative config ---
+    use_fader = FLAGS.fader or "rave.fader.model.FaderRAVE" in gin.operative_config_str()
+    if use_fader:
+        from rave.fader.model import FaderRAVE
+        pretrained = FaderRAVE(n_channels=0)
+        print('loading FaderRAVE checkpoint (128-D content z for prior)')
+    else:
+        pretrained = rave.RAVE()
+        print('loading RAVE checkpoint')
     print('model found : %s'%run)
     checkpoint = torch.load(run, map_location='cpu')
     if "EMA" in checkpoint["callbacks"]:
@@ -135,7 +162,7 @@ def main(argv):
     val = DataLoader(val, FLAGS.batch, False, num_workers=num_workers)
 
     # CHECKPOINT CALLBACKS
-    validation_checkpoint = pl.callbacks.ModelCheckpoint(monitor="validation",
+    validation_checkpoint = pl.callbacks.ModelCheckpoint(monitor="loss",
                                                          filename="best")
     last_filename = "last" if FLAGS.save_every is None else "epoch-{epoch:04d}"                                                        
     last_checkpoint = rave.core.ModelCheckpoint(filename=last_filename, step_period=FLAGS.save_every)

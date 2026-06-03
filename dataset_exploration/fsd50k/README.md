@@ -19,7 +19,7 @@ Turn **official [FSD50K](https://annotator.freesound.org/fsd/release/fsd50k/)** 
 cd BRAVE && micromamba env create -f environment.yaml && micromamba activate brave
 ```
 
-Details: [BRAVE README](../README.md). For CUDA PyTorch inside this env, use the [PyTorch install picker](https://pytorch.org/) if needed.
+Details: [BRAVE README](../../README.md). Dataset hub: [dataset_exploration](../README.md). For CUDA PyTorch inside this env, use the [PyTorch install picker](https://pytorch.org/) if needed.
 
 **Data scale:** **`BRAVE_STORAGE`** points at large disks (default **`/deepfreeze/pnlong/hai_lab/BRAVE`**). Scripts read **`$BRAVE_STORAGE/FSD50K`** (override with **`export BRAVE_STORAGE=...`** or **`--dataset-root`**).
 
@@ -52,7 +52,7 @@ mkdir -p "${BRAVE_STORAGE:-/deepfreeze/pnlong/hai_lab/BRAVE}/fsd50k_brave/"{audi
 **`sample_tag_audio.py`** — sample **N** random clips with a given ontology tag and **symlink** them (default) under `artifacts/listen_samples/` (gitignored). Use `--no-symlink` to copy. A `manifest.tsv` lists clip ids and labels.
 
 ```bash
-cd BRAVE/fsd50k_exploration
+cd BRAVE/dataset_exploration/fsd50k
 
 python3 sample_tag_audio.py --tag water -n 8 --seed 42
 python3 sample_tag_audio.py --tag rain -n 12 --partition dev_val --overwrite
@@ -71,7 +71,7 @@ Default output: `artifacts/listen_samples/<tag>_<partition>_n<N>_seed<S>/` with 
 ## 1. Mine tags
 
 ```bash
-cd BRAVE/fsd50k_exploration
+cd BRAVE/dataset_exploration/fsd50k
 mkdir -p artifacts
 python3 count_tags.py > artifacts/tag_frequencies.tsv 2> artifacts/count_tags.log
 python3 count_tags.py --partition dev_train --partition dev_val
@@ -145,8 +145,35 @@ Preprocess decodes WAV → LMDB; add **`--lazy`** only for on-the-fly decode fro
 
 **Parallelism.** Preprocess supports **`--workers`** (FFmpeg pool; default uses all CPUs). Train has **`--workers`** (PyTorch **`DataLoader`**, default **8**) and **`--gpu`**. Metrics go to Weights & Biases (`--wandb_project`, default **`brave`**). **`cannot unpack … NoneType`** in preprocess ⇒ **`ffmpeg`/`ffprobe`** failed on some staged WAV/path.
 
+### Fader + `water_scene` (optional)
+
+After preprocess, wire a 3-class discrete **`water_scene`** sidecar (storm / coastal / other). From **`BRAVE/`**:
+
+```bash
+export PYTHONPATH="${PWD}/RAVE:${PYTHONPATH}"
+
+python RAVE/scripts/build_lmdb_index_manifest.py \
+  --input_path="${BRAVE_STORAGE}/fsd50k_brave/water/audio_subset" \
+  --db_path="${BRAVE_STORAGE}/fsd50k_brave/water/preprocessed" \
+  --num_signal 131072
+
+python RAVE/scripts/build_attribute_sidecar.py \
+  --db_path="${BRAVE_STORAGE}/fsd50k_brave/water/preprocessed" \
+  --scheme water_scene --partition dev_train
+
+python RAVE/scripts/precompute_descriptors.py \
+  --db_path=.../water/preprocessed --discrete_attributes water_scene
+
+# Copy configs/brave_fader_fsd50k_water.gin.example → brave_fader_fsd50k_water.gin
+python RAVE/scripts/train.py --config configs/brave.gin \
+  --config configs/brave_fader_fsd50k_water.gin \
+  --db_path=.../water/preprocessed --name water_fader
+```
+
+Tag sets: [`configs/fader_water_scene_tags.yaml`](../../configs/fader_water_scene_tags.yaml). Details: [`scratchpaper/fader_future_work.md`](../../scratchpaper/fader_future_work.md).
+
 ---
 
 ## 4. Export plugin
 
-From **`BRAVE/`**: [main README](../README.md) → **`scripts/export_brave_plugin.py`** (Minifusion). Optional level scans: **`evaluation/scripts/loud_tool.py`**.
+From **`BRAVE/`**: [main README](../../README.md) → **`scripts/export_brave_plugin.py`** (Minifusion). Optional level scans: **`evaluation/scripts/loud_tool.py`**.

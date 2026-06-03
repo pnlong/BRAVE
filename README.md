@@ -70,6 +70,8 @@ python RAVE/scripts/preprocess.py \
 
 Use `--workers=N` to limit FFmpeg parallelism during preprocess.
 
+Dataset-specific download, staging, and stats helpers live under [`dataset_exploration/`](./dataset_exploration/) (e.g. [FSD50K](./dataset_exploration/fsd50k/), [Tabla ISMIR 2021](./dataset_exploration/tabla_ismir21/)).
+
 
 ## Training
 

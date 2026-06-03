@@ -28,7 +28,7 @@ from paths import PARTITION_CHOICES, canonical_partition, partitions_for
 from tag_utils import normalize_tag
 
 # Reuse vendored preprocess planning (shuffle + greedy packs).
-_RAVE_ROOT = Path(__file__).resolve().parents[1] / "RAVE"
+_RAVE_ROOT = Path(__file__).resolve().parents[2] / "RAVE"
 if _RAVE_ROOT.is_dir() and str(_RAVE_ROOT) not in sys.path:
     sys.path.insert(0, str(_RAVE_ROOT))
 

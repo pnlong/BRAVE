@@ -46,6 +46,19 @@ def parse_args() -> argparse.Namespace:
         help="skip saving reconstructed/original WAV files",
     )
     p.add_argument(
+        "--clip-outliers",
+        action="store_true",
+        help="use percentile clip for heatmap color limits (see --clip-percentile)",
+    )
+    p.add_argument(
+        "--clip-percentile",
+        type=float,
+        nargs=2,
+        metavar=("LO", "HI"),
+        default=(2.0, 98.0),
+        help="percentile range for --clip-outliers color limits (default: 2 98)",
+    )
+    p.add_argument(
         "--gpu",
         action="store_true",
         help="use CUDA (set CUDA_VISIBLE_DEVICES to pick a GPU; default: CPU)",
@@ -67,6 +80,8 @@ def main() -> None:
         pca_fidelity=args.pca_fidelity,
         save_wavs=not args.no_wavs,
         save_plot=True,
+        clip_outliers=args.clip_outliers,
+        clip_percentiles=tuple(args.clip_percentile),
     )
 
 

@@ -170,7 +170,8 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 
-fsd50k_exploration/artifacts/exported_models/
-fsd50k_exploration/artifacts/listen_samples/
+dataset_exploration/*/artifacts/exported_models/
+dataset_exploration/*/artifacts/listen_samples/
 latent_exploration/artifacts/
 tap_samples/
+scratchpaper/

@@ -1,0 +1,15 @@
+# Tag sets for water_scene discrete class (FSD50k ontology tokens, normalized).
+# Used by RAVE/scripts/build_attribute_sidecar.py --scheme water_scene
+
+class_1_storm:
+  - rain
+  - thunderstorm
+  - thunder
+  - raindrop
+
+class_2_coastal:
+  - waves_and_surf
+  - wind
+  - ocean
+
+# Class 0: no class_1 or class_2 tag on the clip (elif: storm checked first).

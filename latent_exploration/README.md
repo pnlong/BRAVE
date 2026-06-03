@@ -85,6 +85,15 @@ All paths go through **`mask_reconstruct.py`** (`run_reconstruction`). By defaul
 
 Use `--no-wavs` or `--no-plot` to skip either output.
 
+Each run prints **latent value distributions** to stdout (min/max/mean/std and percentiles for VAE and PCA tensors used for decode/plot).
+
+With **`--plot`** (default on `visualize_latents` / `mask_reconstruct`), also saves:
+
+- `{stem}_latents.png` or `{stem}_mask_plot.png` — mel + latent heatmaps
+- `{stem}_latent_hist.png` — VAE and PCA histograms (x-axis uses `--clip-percentile`, default p2–p98)
+
+Use **`--clip-outliers`** to set heatmap color limits from percentiles instead of min/max (default range `--clip-percentile 2 98`), so extreme values don't wash out the plot. Values outside the range still render at the colorbar ends.
+
 ### Visualize latents
 
 Thin wrapper: `mask_reconstruct` with `--mask-style none`, output under `artifacts/plots/<stem>/`.
@@ -165,3 +174,25 @@ Requires `seaborn` (see `environment.yaml`). Mel spectrograms use `torchaudio`; 
 - `forward_with_mask(x, mask=None)`
 
 Training paths (`forward`, `training_step`) are unchanged; default behavior is identity (no mask set).
+
+## FaderRAVE (attribute-controlled decode)
+
+When the checkpoint was trained with `configs/brave_fader.gin`, use `load_model()` (auto-detects FaderRAVE) and pass attribute stats:
+
+```bash
+python latent_exploration/mask_reconstruct.py \
+  --model runs/brave_fader_run \
+  --input tap_samples/0.wav \
+  --db-path /path/to/lmdb \
+  --attr-mode extract \
+  --gpu
+```
+
+| `--attr-mode` | Behavior |
+|---------------|----------|
+| `extract` (default) | timbral attributes from input audio |
+| `zeros` | zero control tensor (ablation) |
+| `swap` | content `z` from `--input`, attributes from `--swap-input` |
+| `constant` | fixed values via `--attr-constant rms=0.5,centroid=0.2` |
+
+Override stats location with `--stats-path /path/to/attribute_stats.yaml`.

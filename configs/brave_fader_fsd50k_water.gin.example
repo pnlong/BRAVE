@@ -1,0 +1,30 @@
+# BRAVE Fader + FSD50K water subset with water_scene (3-class discrete).
+# Copy to brave_fader_fsd50k_water.gin and load after configs/brave.gin:
+#   python RAVE/scripts/train.py --config configs/brave.gin \
+#     --config configs/brave_fader_fsd50k_water.gin --db_path .../water/preprocessed
+
+CONTINUOUS_ATTRIBUTES = ["centroid", "rms", "bandwidth", "sharpness", "booming"]
+DISCRETE_ATTRIBUTES = ["water_scene"]
+NUM_ATTRIBUTES = 6
+DECODER_LATENT_SIZE = 134
+
+blocks.Generator.latent_size = %DECODER_LATENT_SIZE
+
+rave.fader.model.FaderRAVE:
+    continuous_attributes = %CONTINUOUS_ATTRIBUTES
+    discrete_attributes = %DISCRETE_ATTRIBUTES
+    discrete_num_classes = {"water_scene": 3}
+
+rave.fader.providers.build_attribute_loader:
+    continuous_attributes = %CONTINUOUS_ATTRIBUTES
+    discrete_attributes = %DISCRETE_ATTRIBUTES
+    use_audio_descriptors = True
+    cache_descriptors = True
+    cache_max_entries = 4096
+
+rave.fader.dataset.wrap_fader_dataset:
+    continuous_attributes = %CONTINUOUS_ATTRIBUTES
+    discrete_attributes = %DISCRETE_ATTRIBUTES
+
+rave.fader.latent_discriminator.LatentDiscriminator:
+    num_attributes = %NUM_ATTRIBUTES

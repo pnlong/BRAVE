@@ -437,8 +437,9 @@ class RAVE(pl.LightningModule):
             loss_gen['adversarial'] = self.weights['adversarial'] * loss_adv
 
         # OPTIMIZATION
-        if not (batch_idx %
-                self.update_discriminator_every) and self.warmed_up:
+        is_gen_step = not (
+            not (batch_idx % self.update_discriminator_every) and self.warmed_up)
+        if not is_gen_step:
             dis_opt.zero_grad()
             loss_dis.backward()
             dis_opt.step()
@@ -450,6 +451,10 @@ class RAVE(pl.LightningModule):
                 loss_gen_value += v * self.weights.get(k, 1.)
             loss_gen_value.backward()
             gen_opt.step()
+
+        from .train_logging import log_generator_losses
+
+        log_generator_losses(self, loss_gen, is_gen_step)
 
         # LOGGING
         self.log("beta_factor", self.beta_factor)
@@ -477,7 +482,7 @@ class RAVE(pl.LightningModule):
         full_distance = sum(distance.values())
 
         if self.trainer is not None:
-            self.log('validation', full_distance)
+            self.log('loss', full_distance)
 
         return torch.cat([x, y], -1), mean
 

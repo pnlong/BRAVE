@@ -14,7 +14,9 @@ We log the estimated size of the latent space for several values of fidelity (80
 
 ## Reconstruction error
 
-The values you should look at for tracking the reconstruction error of the model are the *distance* and *validation* logs.
+The values you should look at for tracking the reconstruction error of the model are **`train/loss_recon`** (and per-distance components in `train/*`) paired with **`val/loss`** (fullband reconstruction sum at validation).
+
+**Headline scalars:** **`train/loss`** matches the generator objective used in `backward()` (logged on generator steps only). **`train/loss_latent`** is the Fader phase-1 latent adversarial term (0 for base BRAVE). Fader attribute metrics live under **`train/fader/*`**.
 
 ![log_distance.png](log_distance.png)
 

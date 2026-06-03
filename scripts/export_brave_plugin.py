@@ -8,7 +8,7 @@ import cached_conv as cc
 def store_state_dict_as_h5(filename:str,state_dict:dict):
     # Save the state dict to an HDF5 file
     
-    prefixes = ["discriminator", "audio", "multiband"]
+    prefixes = ["discriminator", "audio", "multiband", "latent_discriminator"]
     filtered_dict = state_dict.copy()
     for prefix in prefixes:
         filtered_dict = {k: v for k, v in filtered_dict.items() if not k.startswith(prefix)}.copy()
@@ -49,7 +49,13 @@ def main(argv):
         if config_path is None:
             logging.error('config not found in folder %s'%model_path)
         gin.parse_config_file(config_path)
-        model = rave.RAVE()
+        use_fader = "rave.fader.model.FaderRAVE" in gin.operative_config_str()
+        if use_fader:
+            from rave.fader.model import FaderRAVE
+            logging.info("loading FaderRAVE (widened decoder 128+D)")
+            model = FaderRAVE()
+        else:
+            model = rave.RAVE()
         run = rave.core.search_for_run(model_path)
         if run is None:
             logging.error("run not found in folder %s"%model_path)
