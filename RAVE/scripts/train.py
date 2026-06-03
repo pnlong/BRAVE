@@ -233,7 +233,7 @@ def main(argv):
     val = DataLoader(val, FLAGS.batch, False, num_workers=num_workers)
 
     # CHECKPOINT CALLBACKS
-    validation_checkpoint = pl.callbacks.ModelCheckpoint(monitor="loss",
+    validation_checkpoint = pl.callbacks.ModelCheckpoint(monitor="val/loss",
                                                          filename="best")
     last_filename = "last" if FLAGS.save_every is None else "epoch-{epoch:04d}"                                                        
     last_checkpoint = rave.core.ModelCheckpoint(filename=last_filename, step_period=FLAGS.save_every)

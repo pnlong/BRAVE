@@ -161,7 +161,9 @@ class Prior(pl.LightningModule):
             x.reshape(-1),
         )
 
-        self.log("latent_prediction", loss)
+        from ..train_logging import log_train
+
+        log_train(self, "latent_prediction", loss)
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -177,7 +179,9 @@ class Prior(pl.LightningModule):
             x.reshape(-1),
         )
 
-        self.log("loss", loss)
+        from ..train_logging import log_val
+
+        log_val(self, "loss", loss)
         return batch
 
     def validation_epoch_end(self, out):

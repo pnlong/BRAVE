@@ -452,19 +452,19 @@ class RAVE(pl.LightningModule):
             loss_gen_value.backward()
             gen_opt.step()
 
-        from .train_logging import log_generator_losses
+        from .train_logging import log_generator_losses, log_train, log_train_dict
 
         log_generator_losses(self, loss_gen, is_gen_step)
 
         # LOGGING
-        self.log("beta_factor", self.beta_factor)
+        log_train(self, "beta_factor", self.beta_factor)
 
         if self.warmed_up:
-            self.log("loss_dis", loss_dis)
-            self.log("pred_real", pred_real.mean())
-            self.log("pred_fake", pred_fake.mean())
+            log_train(self, "loss_dis", loss_dis)
+            log_train(self, "pred_real", pred_real.mean())
+            log_train(self, "pred_fake", pred_fake.mean())
 
-        self.log_dict(loss_gen)
+        log_train_dict(self, loss_gen)
         p.tick('logging')
 
     def validation_step(self, x, batch_idx):
@@ -482,7 +482,9 @@ class RAVE(pl.LightningModule):
         full_distance = sum(distance.values())
 
         if self.trainer is not None:
-            self.log('loss', full_distance)
+            from .train_logging import log_val
+
+            log_val(self, "loss", full_distance)
 
         return torch.cat([x, y], -1), mean
 
@@ -525,8 +527,11 @@ class RAVE(pl.LightningModule):
             self.fidelity.copy_(torch.from_numpy(var).to(self.fidelity))
 
             var_percent = [.8, .9, .95, .99]
+            from .train_logging import log_val
+
             for p in var_percent:
-                self.log(
+                log_val(
+                    self,
                     f"fidelity_{p}",
                     np.argmax(var > p).astype(np.float32),
                 )

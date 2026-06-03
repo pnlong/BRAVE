@@ -1,12 +1,43 @@
-"""Shared training metrics for W&B / PyTorch Lightning (train/* and val/* prefixes)."""
+"""Shared training metrics for W&B / PyTorch Lightning (explicit train/ and val/ keys)."""
 
 from __future__ import annotations
 
-from typing import Dict, Tuple
+from typing import Dict, Mapping, Tuple, Union
 
 import torch
 
+TRAIN_PREFIX = "train/"
+VAL_PREFIX = "val/"
+
 _RECON_PREFIXES = ("multiband_", "fullband_")
+
+
+def train_key(name: str) -> str:
+    if name.startswith(TRAIN_PREFIX) or name.startswith(VAL_PREFIX):
+        return name
+    return f"{TRAIN_PREFIX}{name}"
+
+
+def val_key(name: str) -> str:
+    if name.startswith(VAL_PREFIX) or name.startswith(TRAIN_PREFIX):
+        return name
+    return f"{VAL_PREFIX}{name}"
+
+
+def log_train(module, name: str, value, **kwargs) -> None:
+    module.log(train_key(name), value, **kwargs)
+
+
+def log_val(module, name: str, value, **kwargs) -> None:
+    module.log(val_key(name), value, **kwargs)
+
+
+def log_train_dict(
+    module,
+    metrics: Mapping[str, torch.Tensor],
+    **kwargs,
+) -> None:
+    module.log_dict({train_key(k): v for k, v in metrics.items()}, **kwargs)
 
 
 def aggregate_generator_loss(
@@ -35,11 +66,11 @@ def aggregate_generator_loss(
 
 
 def log_generator_losses(module, loss_gen: Dict[str, torch.Tensor], is_gen_step: bool) -> None:
-    """Log ``loss``, ``loss_recon``, ``loss_latent`` on generator optimizer steps only."""
+    """Log headline generator losses on generator optimizer steps only."""
     if not is_gen_step:
         return
     loss_total, loss_recon, loss_latent = aggregate_generator_loss(
         loss_gen, module.weights)
-    module.log("loss", loss_total)
-    module.log("loss_recon", loss_recon)
-    module.log("loss_latent", loss_latent)
+    log_train(module, "loss", loss_total)
+    log_train(module, "loss_recon", loss_recon)
+    log_train(module, "loss_latent", loss_latent)

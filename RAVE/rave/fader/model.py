@@ -272,10 +272,12 @@ class FaderRAVE(RAVE):
             attr_cls_pred, attr_cls, self.attribute_names)
         acc = per_attribute_accuracies(
             attr_cls_pred, attr_cls, self.attribute_names)
+        from ..train_logging import log_train
+
         for name, val in ce.items():
-            self.log(f"fader/{prefix}_ce_{name}", val)
+            log_train(self, f"fader/{prefix}_ce_{name}", val)
         for name, val in acc.items():
-            self.log(f"fader/{prefix}_acc_{name}", val)
+            log_train(self, f"fader/{prefix}_acc_{name}", val)
 
     def lat_dis_step(
         self,
@@ -332,8 +334,10 @@ class FaderRAVE(RAVE):
         # --- Split raw attrs into decoder float + latent CE integer targets ---
         attr, attr_cls = self._prepare_attributes(attr_raw)
 
+        from ..train_logging import log_train
+
         if self.rave_mode:
-            self.log("fader/rave_mode_active", 1.0)
+            log_train(self, "fader/rave_mode_active", 1.0)
 
         # --- Phase 1 pre-step: train latent disc (+CE) before generator ---
         lat_dis_loss_dis = torch.tensor(0.0, device=self.device)
@@ -372,7 +376,7 @@ class FaderRAVE(RAVE):
             self._log_per_attribute_metrics(attr_cls_pred, attr_cls, "latent_gen")
         else:
             # --- Phase 2: latent adversarial finished; skip -CE (z detached, no encoder grad) ---
-            self.log("fader/latent_adversarial_active", 0.0)
+            log_train(self, "fader/latent_adversarial_active", 0.0)
 
         # --- Conditional decode: cat(content z, normalized attr) → widened decoder ---
         z_cond = torch.cat([z, attr], dim=1)
@@ -481,22 +485,22 @@ class FaderRAVE(RAVE):
             loss_gen_value.backward()
             gen_opt.step()
 
-        from ..train_logging import log_generator_losses
+        from ..train_logging import log_generator_losses, log_train, log_train_dict
 
         log_generator_losses(self, loss_gen, is_gen_step)
 
-        self.log("beta_factor", self.beta_factor)
-        self.log("fader/lambda_factor", self.lambda_factor)
+        log_train(self, "beta_factor", self.beta_factor)
+        log_train(self, "fader/lambda_factor", self.lambda_factor)
         if not self.warmed_up:
-            self.log("fader/latent_dis_loss_dis", lat_dis_loss_dis)
-            self.log("fader/latent_adversarial_active", 1.0)
+            log_train(self, "fader/latent_dis_loss_dis", lat_dis_loss_dis)
+            log_train(self, "fader/latent_adversarial_active", 1.0)
 
         if self.warmed_up:
-            self.log("loss_dis", loss_dis)
-            self.log("pred_real", pred_real.mean())
-            self.log("pred_fake", pred_fake.mean())
+            log_train(self, "loss_dis", loss_dis)
+            log_train(self, "pred_real", pred_real.mean())
+            log_train(self, "pred_fake", pred_fake.mean())
 
-        self.log_dict(loss_gen)
+        log_train_dict(self, loss_gen)
 
     def validation_step(self, batch, batch_idx):
         """Validation with conditional decode when attributes are in the batch."""
@@ -527,6 +531,8 @@ class FaderRAVE(RAVE):
         full_distance = sum(distance.values())
 
         if self.trainer is not None:
-            self.log("loss", full_distance)
+            from ..train_logging import log_val
+
+            log_val(self, "loss", full_distance)
 
         return torch.cat([x, y], -1), mean
