@@ -560,10 +560,22 @@ def get_valid_extensions():
         return ['.wav', '.flac', '.ogg', '.aiff', '.aif', '.aifc']
 
 
-def log_audio(logger, key: str, waveform, sample_rate: int, step: Optional[int] = None):
+def log_audio(
+    logger,
+    key: str,
+    waveform,
+    sample_rate: int,
+    step: Optional[int] = None,
+    *,
+    pl_module=None,
+):
     import wandb
     if logger is None or wandb.run is None:
         return
+    if step is None and pl_module is not None:
+        trainer = getattr(pl_module, "trainer", None)
+        if trainer is not None:
+            step = trainer.global_step
     audio = wandb.Audio(np.asarray(waveform), sample_rate=sample_rate)
     wandb.log({key: audio}, step=step)
 

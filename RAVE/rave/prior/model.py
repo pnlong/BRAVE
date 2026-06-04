@@ -67,7 +67,6 @@ class Prior(pl.LightningModule):
         )
 
         self.n_channels = n_channels
-        self.val_idx = 0
         rf = (kernel_size - 1) * sum(2**(np.arange(n_layers) % cycle_size)) + 1
         if pretrained_vae is not None:
             ratio = self.get_model_ratio()
@@ -196,9 +195,8 @@ class Prior(pl.LightningModule):
             "generation",
             y.reshape(-1),
             self.synth.sr,
-            step=self.val_idx,
+            pl_module=self,
         )
-        self.val_idx += 1
 
     @abc.abstractmethod
     def post_process_latent(self, z):

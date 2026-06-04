@@ -232,11 +232,25 @@ def main(argv):
                        num_workers=num_workers)
     val = DataLoader(val, FLAGS.batch, False, num_workers=num_workers)
 
-    # CHECKPOINT CALLBACKS
-    validation_checkpoint = pl.callbacks.ModelCheckpoint(monitor="val/loss",
-                                                         filename="best")
-    last_filename = "last" if FLAGS.save_every is None else "epoch-{epoch:04d}"                                                        
-    last_checkpoint = rave.core.ModelCheckpoint(filename=last_filename, step_period=FLAGS.save_every)
+    gin_hash = hashlib.md5(
+        gin.operative_config_str().encode()).hexdigest()[:10]
+    RUN_NAME = f'{FLAGS.name}_{gin_hash}'
+    RUN_DIR = os.path.join(FLAGS.out_path, RUN_NAME)
+    os.makedirs(RUN_DIR, exist_ok=True)
+    print(f'Run directory: {RUN_DIR}')
+
+    # CHECKPOINT CALLBACKS (dirpath = RUN_DIR so ckpts sit with config.gin)
+    validation_checkpoint = pl.callbacks.ModelCheckpoint(
+        dirpath=RUN_DIR,
+        monitor="val/loss",
+        filename="best",
+    )
+    last_filename = "last" if FLAGS.save_every is None else "epoch-{epoch:04d}"
+    last_checkpoint = rave.core.ModelCheckpoint(
+        dirpath=RUN_DIR,
+        filename=last_filename,
+        step_period=FLAGS.save_every,
+    )
 
     val_check = {}
     if len(train) >= FLAGS.val_every:
@@ -248,13 +262,6 @@ def main(argv):
     if FLAGS.smoke_test:
         val_check['limit_train_batches'] = 1
         val_check['limit_val_batches'] = 1
-
-    gin_hash = hashlib.md5(
-        gin.operative_config_str().encode()).hexdigest()[:10]
-
-    RUN_NAME = f'{FLAGS.name}_{gin_hash}'
-
-    os.makedirs(os.path.join(FLAGS.out_path, RUN_NAME), exist_ok=True)
 
     if FLAGS.gpu == [-1]:
         gpu = 0
@@ -294,7 +301,7 @@ def main(argv):
     wandb_kwargs = dict(
         project=FLAGS.wandb_project,
         name=RUN_NAME,
-        save_dir=FLAGS.out_path,
+        save_dir=RUN_DIR,
         offline=FLAGS.wandb_offline,
         config={
             'db_path': FLAGS.db_path,
@@ -326,7 +333,7 @@ def main(argv):
         trainer.fit_loop.epoch_loop._batches_that_stepped = loaded['global_step']
         # model = model.load_state_dict(loaded['state_dict'])
     
-    with open(os.path.join(FLAGS.out_path, RUN_NAME, "config.gin"), "w") as config_out:
+    with open(os.path.join(RUN_DIR, "config.gin"), "w") as config_out:
         config_out.write(gin.operative_config_str())
 
     trainer.fit(model, train, val, ckpt_path=run)

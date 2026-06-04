@@ -216,7 +216,6 @@ class RAVE(pl.LightningModule):
         self.num_skipped_features = num_skipped_features
         self.update_discriminator_every = update_discriminator_every
 
-        self.eval_number = 0
         self.beta_factor = 1.
         self.integrator = None
 
@@ -539,9 +538,7 @@ class RAVE(pl.LightningModule):
         y = torch.cat(audio, 0)[:8].reshape(-1).numpy()
         if self.integrator is not None:
             y = self.integrator(y)
-        rave.core.log_audio(self.logger, "audio_val", y, self.sr,
-                            step=self.eval_number)
-        self.eval_number += 1
+        rave.core.log_audio(self.logger, "audio_val", y, self.sr, pl_module=self)
 
     def on_fit_start(self):
         config = gin.operative_config_str()
