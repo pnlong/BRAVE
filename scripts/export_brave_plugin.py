@@ -1,5 +1,13 @@
+import os
+import sys
+
+_BRAVE_RAVE_ROOT = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "RAVE"))
+if _BRAVE_RAVE_ROOT not in sys.path:
+    sys.path.insert(0, _BRAVE_RAVE_ROOT)
+
 from absl import app, flags, logging
-import torch, os, gin
+import torch, gin
 import h5py
 import rave
 import numpy as np
