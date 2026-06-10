@@ -201,14 +201,43 @@ class FaderRAVE(RAVE):
                 discrete_num_classes=self.discrete_num_classes,
             )
 
+    def _neutral_attributes(self, z: torch.Tensor) -> torch.Tensor:
+        """Midpoint normalized controls (zeros in [-1, 1]) for unconditional decode."""
+        return torch.zeros(
+            z.shape[0],
+            self.num_attributes,
+            z.shape[-1],
+            device=z.device,
+            dtype=z.dtype,
+        )
+
+    def decode_neutral(self, z: torch.Tensor) -> torch.Tensor:
+        """
+        Decode with midpoint attribute controls.
+
+        Use for receptive-field probes or unconstrained reconstruction when
+        real attributes are unavailable. For conditional inference, pass
+        explicit attrs to decode().
+        """
+        if self.num_attributes == 0:
+            return self.decode(z, attr=None)
+        return self.decode(z, attr=self._neutral_attributes(z))
+
     def decode(self, z: torch.Tensor, attr: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
-        Decode latent; optionally concat normalized attributes first.
+        Decode latent; concat normalized attributes when the decoder is widened.
 
         Args:
             z: (B, latent_size, T_lat)
-            attr: (B, D_total, T_lat) normalized control (optional)
+            attr: (B, D_total, T_lat) normalized control; required when
+                num_attributes > 0. Use decode_neutral() for midpoint controls.
         """
+        if self.num_attributes > 0 and attr is None:
+            raise ValueError(
+                "FaderRAVE.decode() requires attr when num_attributes > 0. "
+                "Pass extracted/normalized attributes, or call decode_neutral(z) "
+                "for midpoint controls."
+            )
         batch_size = z.shape[:-2]
         if attr is not None:
             # --- Widened decode: z_c = cat(content_z, attr_norm) → (B, 128+D, T_lat) ---
@@ -503,20 +532,24 @@ class FaderRAVE(RAVE):
         log_train_dict(self, loss_gen)
 
     def validation_step(self, batch, batch_idx):
-        """Validation with conditional decode when attributes are in the batch."""
+        """Validation with conditional decode; attrs required like training."""
         from .. import blocks
 
-        if isinstance(batch, (list, tuple)) and len(batch) == 2:
-            x, attr_raw = batch
-            if self._attribute_stats_loaded:
-                attr_raw = attr_raw.to(x.device)
-                # --- Match training: conditional decode with attr_norm ---
-                attr, _ = self._prepare_attributes(attr_raw)
-            else:
-                attr = None
-        else:
-            x = batch
-            attr = None
+        if not isinstance(batch, (list, tuple)) or len(batch) != 2:
+            raise ValueError(
+                "FaderRAVE validation expects (audio, attr) batches. "
+                "Enable wrap_fader_dataset in gin config."
+            )
+        if not self._attribute_stats_loaded:
+            raise RuntimeError(
+                "Attribute stats not loaded. Run precompute_descriptors.py or "
+                "call load_attribute_stats_from_file before validation."
+            )
+
+        x, attr_raw = batch
+        attr_raw = attr_raw.to(x.device)
+        # --- Match training: conditional decode with attr_norm ---
+        attr, _ = self._prepare_attributes(attr_raw)
 
         z = self.encode(x)
         if isinstance(self.encoder, blocks.VariationalEncoder):

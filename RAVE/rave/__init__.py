@@ -18,6 +18,10 @@ BASE_PATH: Path = Path(__file__).parent
 gin.add_config_file_search_path(BASE_PATH)
 gin.add_config_file_search_path(BASE_PATH.joinpath('configs'))
 gin.add_config_file_search_path(BASE_PATH.joinpath('configs', 'augmentations'))
+# BRAVE repo configs/ (brave.gin, brave_fader.gin) — sibling of vendored RAVE/
+_BRAVE_CONFIGS = BASE_PATH.parent.parent / 'configs'
+if _BRAVE_CONFIGS.is_dir():
+    gin.add_config_file_search_path(_BRAVE_CONFIGS)
 
 
 def __safe_configurable(name):

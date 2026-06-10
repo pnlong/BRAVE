@@ -182,6 +182,8 @@ def run_reconstruction(
         )
         if attr_norm is not None:
             y = model.decode(z_out, attr=attr_norm)
+        elif hasattr(model, "decode_neutral"):
+            y = model.decode_neutral(z_out)
         else:
             y = model.decode(z_out)
 

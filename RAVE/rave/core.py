@@ -192,7 +192,11 @@ def get_rave_receptive_field(model, n_channels=1):
 
         z = model.encode(x)
         z = model.encoder.reparametrize(z)[0]
-        y = model.decode(z)
+        decode_neutral = getattr(model, "decode_neutral", None)
+        if callable(decode_neutral) and getattr(model, "num_attributes", 0) > 0:
+            y = decode_neutral(z)
+        else:
+            y = model.decode(z)
 
         y[0, 0, N // 2].backward()
         assert x.grad is not None, "input has no grad"

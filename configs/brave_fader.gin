@@ -5,6 +5,14 @@ include "brave.gin"
 
 from __gin__ import dynamic_registration
 
+# Imports from brave.gin are not re-exported after include; repeat bindings used below.
+import rave
+import rave.training
+from rave import pqmf
+from rave import core
+from rave import blocks
+from rave import discriminator
+
 import rave.fader.model
 import rave.fader.dataset
 import rave.fader.callbacks

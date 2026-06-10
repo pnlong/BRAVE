@@ -60,6 +60,13 @@ def compute_timbral(y: np.ndarray,
     features = {}
     if max([(feature in descriptors)
             for feature in list(features_dict.keys())]):
+        # Timbral models refuse exact silence; mute aug / reject_silent edge cases can still hit zero crops.
+        y_mono = y[0] if y.ndim > 1 else y
+        if np.max(np.abs(y_mono)) == 0.0:
+            for name in features_dict:
+                if name in descriptors:
+                    features[name] = np.zeros(1, dtype=np.float64)
+            return features
         if sr < 44100:
             if resampler is None:
                 y = librosa.core.resample(y, orig_sr=sr, target_sr=44100)
