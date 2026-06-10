@@ -7,6 +7,8 @@ Lambda warmup mirrors neurorave faderave.get_lambda().
 import gin
 import pytorch_lightning as pl
 
+from ..train_logging import log_train
+
 
 @gin.configurable
 class LambdaWarmupCallback(pl.Callback):
@@ -52,7 +54,12 @@ class LambdaWarmupCallback(pl.Callback):
     ) -> None:
         # --- Surface lambda_factor at epoch boundary for W&B ---
         if hasattr(pl_module, "lambda_factor"):
-            pl_module.log("lambda_factor_epoch", pl_module.lambda_factor)
+            log_train(
+                pl_module,
+                "fader/lambda_factor_epoch",
+                pl_module.lambda_factor,
+                on_step=False,
+            )
 
     def state_dict(self):
         return self.state.copy()

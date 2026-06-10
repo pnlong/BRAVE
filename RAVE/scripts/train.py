@@ -82,6 +82,11 @@ flags.DEFINE_string('wandb_entity',
 flags.DEFINE_bool('wandb_offline',
                   default=False,
                   help='Log to W&B in offline mode')
+flags.DEFINE_integer(
+    'log_every_n_steps',
+    default=None,
+    help='Lightning/W&B flush interval (default: min(50, batches per epoch))',
+)
 flags.DEFINE_bool(
     'reject_silent',
     default=None,
@@ -232,6 +237,17 @@ def main(argv):
                        num_workers=num_workers)
     val = DataLoader(val, FLAGS.batch, False, num_workers=num_workers)
 
+    steps_per_epoch = len(train)
+    if FLAGS.log_every_n_steps is not None:
+        log_every_n_steps = max(1, FLAGS.log_every_n_steps)
+    else:
+        log_every_n_steps = min(50, max(1, steps_per_epoch))
+    if steps_per_epoch < 50:
+        print(
+            f"W&B: log_every_n_steps={log_every_n_steps} "
+            f"({steps_per_epoch} train batches/epoch; default 50 would skip charts)"
+        )
+
     gin_hash = hashlib.md5(
         gin.operative_config_str().encode()).hexdigest()[:10]
     RUN_NAME = f'{FLAGS.name}_{gin_hash}'
@@ -320,6 +336,7 @@ def main(argv):
         callbacks=callbacks,
         max_epochs=300000,
         max_steps=FLAGS.max_steps,
+        log_every_n_steps=log_every_n_steps,
         profiler="simple",
         enable_progress_bar=FLAGS.progress,
         **val_check,

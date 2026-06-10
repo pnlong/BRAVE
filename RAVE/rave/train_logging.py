@@ -11,6 +11,15 @@ VAL_PREFIX = "val/"
 
 _RECON_PREFIXES = ("multiband_", "fullband_")
 
+# Explicit flags so W&B receives time series under manual optimization and when
+# len(train) < Trainer.log_every_n_steps (common for small LMDBs + large batch).
+_LOG_KWARGS = dict(on_step=True, on_epoch=True, logger=True, sync_dist=False)
+_VAL_KWARGS = dict(on_step=False, on_epoch=True, logger=True, sync_dist=False)
+
+
+def _merged_opts(defaults: dict, overrides: dict) -> dict:
+    return {**defaults, **overrides}
+
 
 def train_key(name: str) -> str:
     if name.startswith(TRAIN_PREFIX) or name.startswith(VAL_PREFIX):
@@ -25,11 +34,11 @@ def val_key(name: str) -> str:
 
 
 def log_train(module, name: str, value, **kwargs) -> None:
-    module.log(train_key(name), value, **kwargs)
+    module.log(train_key(name), value, **_merged_opts(_LOG_KWARGS, kwargs))
 
 
 def log_val(module, name: str, value, **kwargs) -> None:
-    module.log(val_key(name), value, **kwargs)
+    module.log(val_key(name), value, **_merged_opts(_VAL_KWARGS, kwargs))
 
 
 def log_train_dict(
@@ -37,7 +46,10 @@ def log_train_dict(
     metrics: Mapping[str, torch.Tensor],
     **kwargs,
 ) -> None:
-    module.log_dict({train_key(k): v for k, v in metrics.items()}, **kwargs)
+    module.log_dict(
+        {train_key(k): v for k, v in metrics.items()},
+        **_merged_opts(_LOG_KWARGS, kwargs),
+    )
 
 
 def aggregate_generator_loss(
