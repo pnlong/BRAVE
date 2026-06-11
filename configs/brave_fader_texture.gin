@@ -4,9 +4,7 @@
 #   python RAVE/scripts/build_lmdb_index_manifest.py --input_path=.../audio_subset --db_path=.../preprocessed
 #   python RAVE/scripts/build_attribute_sidecar.py --db_path=.../preprocessed --scheme texture_class
 #   python RAVE/scripts/precompute_descriptors.py --db_path=.../preprocessed \\
-#     --continuous_attributes=rms --continuous_attributes=flatness \\
-#     --continuous_attributes=centroid --continuous_attributes=roughness \\
-#     --continuous_attributes=brightness --discrete_attributes=texture_class --train_only
+#     --config configs/brave_fader_texture.gin --train_only
 #   python RAVE/scripts/train.py --config configs/brave_fader_texture.gin --name=... --db_path=...
 #
 # texture_class: 10 buckets (0–9) from dataset_exploration/fsd50k/configs/fader_texture_class_tags.yaml.

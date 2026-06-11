@@ -11,6 +11,7 @@ Usage (BRAVE root):
 
 from __future__ import annotations
 
+import multiprocessing
 import os
 import pathlib
 import subprocess
@@ -24,6 +25,7 @@ if _RAVE_ROOT not in sys.path:
 
 import yaml
 from absl import app, flags
+from tqdm import tqdm
 
 from rave.preprocess_plan import (
     AudioPack,
@@ -46,6 +48,12 @@ flags.DEFINE_bool("lazy", False, "Lazy LMDB mode (one row per work item)")
 flags.DEFINE_bool("concat_short", True, "Pack short files (preprocess default)")
 flags.DEFINE_integer("concat_seed", 0, "Short-file pack shuffle seed")
 flags.DEFINE_bool("pad_short_remainder", True, "Pad last pack remainder")
+flags.DEFINE_integer(
+    "workers",
+    0,
+    "ffprobe worker processes (0=all logical CPU cores)",
+)
+flags.DEFINE_bool("no_progress", False, "Disable progress bars")
 
 
 def _flatten(iterator: Iterable):
@@ -107,13 +115,19 @@ def manifest_entries(
     sr: int,
     num_signal: int,
     lazy: bool,
+    *,
+    show_progress: bool = True,
 ) -> list:
     entries = []
     min_samples = min_samples_for_mode(num_signal, lazy)
     idx = 0
+    item_iter = (
+        tqdm(work_items, desc="manifest", unit="item")
+        if show_progress else work_items
+    )
 
     if lazy:
-        for kind, data in work_items:
+        for kind, data in item_iter:
             if kind == "long":
                 probe: AudioProbe = data
                 entries.append({
@@ -139,7 +153,7 @@ def manifest_entries(
                 idx += 1
         return entries
 
-    for kind, data in work_items:
+    for kind, data in item_iter:
         if kind == "long":
             probe = data
             n_samples = samples_at_sr(probe.length_sec, sr)
@@ -176,19 +190,39 @@ def manifest_entries(
 
 def main(argv):
     del argv
+    show_progress = not FLAGS.no_progress
     audios = search_for_audios(FLAGS.input_path, FLAGS.ext)
     audios = [os.path.abspath(str(p)) for p in audios]
     if not audios:
         print("No audio files found.")
         return
 
+    pool = multiprocessing.Pool(
+        processes=max(1, FLAGS.workers) if FLAGS.workers > 0 else None)
+    try:
+        probe_iter = pool.imap(get_audio_length, audios)
+        if show_progress:
+            probe_iter = tqdm(
+                probe_iter,
+                total=len(audios),
+                desc="ffprobe",
+                unit="file",
+            )
+        probe_results = list(probe_iter)
+    finally:
+        pool.close()
+        pool.join()
+
+    probe_failures = sum(1 for r in probe_results if r is None)
     probes = []
-    for path in audios:
-        result = get_audio_length(path)
+    for result in probe_results:
         if result is None:
             continue
         p, length, channels = result
         probes.append(AudioProbe(path=p, length_sec=length, channels=channels))
+
+    if probe_failures:
+        print(f"ffprobe failed on {probe_failures} file(s).")
 
     plan = build_preprocess_plan(
         probes,
@@ -201,7 +235,13 @@ def main(argv):
     )
     work_items = build_work_items(plan, FLAGS.concat_short)
     entries = manifest_entries(
-        plan, work_items, FLAGS.sampling_rate, FLAGS.num_signal, FLAGS.lazy)
+        plan,
+        work_items,
+        FLAGS.sampling_rate,
+        FLAGS.num_signal,
+        FLAGS.lazy,
+        show_progress=show_progress,
+    )
 
     expected = (
         len(work_items) if FLAGS.lazy else count_plan_chunks(

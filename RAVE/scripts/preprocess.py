@@ -79,6 +79,7 @@ flags.DEFINE_integer('concat_seed',
 flags.DEFINE_bool('pad_short_remainder',
                   default=False,
                   help='Zero-pad the final undersized short-file pack to one chunk')
+flags.DEFINE_bool('no_progress', False, 'Disable progress bars')
 
 
 def load_audio_chunk(path: str, n_signal: int,
@@ -299,13 +300,15 @@ def main(argv):
     min_samples = min_samples_for_mode(FLAGS.num_signal, FLAGS.lazy)
     chunk_seconds = min_samples / FLAGS.sampling_rate
 
-    probe_results = list(
-        tqdm(
-            pool.imap(get_audio_length, audios),
+    probe_iter = pool.imap(get_audio_length, audios)
+    if not FLAGS.no_progress:
+        probe_iter = tqdm(
+            probe_iter,
             total=len(audios),
             desc="ffprobe",
             unit="file",
-        ))
+        )
+    probe_results = list(probe_iter)
     probe_failures = sum(1 for r in probe_results if r is None)
     probes = []
     file_lengths = []
@@ -372,39 +375,55 @@ def main(argv):
             chunks,
         )
 
-        pbar = tqdm(
-            processed_samples,
-            total=total_chunks or None,
-            desc="preprocess",
-            unit="chunk",
-        )
-        last_id = -1
-        for audio_id in pbar:
-            last_id = audio_id
-            n_seconds = chunk_seconds * (audio_id + 1)
-            pbar.set_description(
-                f'preprocess ({timedelta(seconds=n_seconds)} audio)')
-            if total_chunks and audio_id + 1 > total_chunks:
-                pbar.total = audio_id + 1
-                pbar.refresh()
-        pbar.close()
-        stats.chunks_written = last_id + 1 if last_id >= 0 else 0
-        stats.stored_sec = stats.chunks_written * chunk_seconds
+        sample_iter = processed_samples
+        if FLAGS.no_progress:
+            last_id = -1
+            for audio_id in sample_iter:
+                last_id = audio_id
+                n_seconds = chunk_seconds * (audio_id + 1)
+                if total_chunks and audio_id + 1 > total_chunks:
+                    pass
+            stats.chunks_written = last_id + 1 if last_id >= 0 else 0
+            stats.stored_sec = stats.chunks_written * chunk_seconds
+        else:
+            pbar = tqdm(
+                sample_iter,
+                total=total_chunks or None,
+                desc="preprocess",
+                unit="chunk",
+            )
+            last_id = -1
+            for audio_id in pbar:
+                last_id = audio_id
+                n_seconds = chunk_seconds * (audio_id + 1)
+                pbar.set_description(
+                    f'preprocess ({timedelta(seconds=n_seconds)} audio)')
+                if total_chunks and audio_id + 1 > total_chunks:
+                    pbar.total = audio_id + 1
+                    pbar.refresh()
+            pbar.close()
+            stats.chunks_written = last_id + 1 if last_id >= 0 else 0
+            stats.stored_sec = stats.chunks_written * chunk_seconds
     else:
         lazy_entries = enumerate(work_items)
         processed = map(partial(process_lazy_entry, env=env), lazy_entries)
-        pbar = tqdm(
-            processed,
-            total=len(work_items),
-            desc="preprocess",
-            unit="entry",
-        )
+        entry_iter = processed
         n_seconds = 0.0
-        for length in pbar:
-            n_seconds += length
-            pbar.set_description(
-                f'preprocess ({timedelta(seconds=n_seconds)} audio)')
-        pbar.close()
+        if FLAGS.no_progress:
+            for length in entry_iter:
+                n_seconds += length
+        else:
+            pbar = tqdm(
+                entry_iter,
+                total=len(work_items),
+                desc="preprocess",
+                unit="entry",
+            )
+            for length in pbar:
+                n_seconds += length
+                pbar.set_description(
+                    f'preprocess ({timedelta(seconds=n_seconds)} audio)')
+            pbar.close()
         stats.chunks_written = len(work_items)
         stats.stored_sec = n_seconds
 

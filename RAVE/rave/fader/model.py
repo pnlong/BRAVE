@@ -165,9 +165,14 @@ class FaderRAVE(RAVE):
         rows = min(bv.shape[0], self.bin_values.shape[0])
         cols = min(bv.shape[1], self.bin_values.shape[1])
         self.bin_values[:rows, :cols].copy_(bv[:rows, :cols])
-        # --- Optional discrete class counts from stats file ---
+        # --- Optional discrete class counts (decoder mapping; capped to head size) ---
         if stats.get("discrete_num_classes"):
-            self.discrete_num_classes.update(stats["discrete_num_classes"])
+            for name, n in stats["discrete_num_classes"].items():
+                if name not in self.attribute_names:
+                    continue
+                row = self.attribute_names.index(name)
+                cap = self.num_classes_per_attribute[row]
+                self.discrete_num_classes[name] = min(int(n), cap)
         self._attribute_stats_loaded = True
 
     def set_attribute_stats(
@@ -270,17 +275,18 @@ class FaderRAVE(RAVE):
         for i, name in enumerate(self.attribute_names):
             if i >= d:
                 break
+            n_head = self.num_classes_per_attribute[i]
             if self.attribute_kinds[name] == "continuous":
                 # --- Quantile CE targets from raw continuous values ---
-                raw_i = attr_raw[:, i:i + 1, :]
+                raw_i = torch.nan_to_num(attr_raw[:, i:i + 1, :], nan=0.0)
                 cls_i = quantify(raw_i, self.bin_values[i:i + 1]).long()
-                attr_cls[:, i, :] = cls_i[:, 0, :]
+                attr_cls[:, i, :] = cls_i[:, 0, :].clamp(0, n_head - 1)
                 lo, hi = self.min_max_features.get(name, (0.0, 1.0))
                 attr_norm[:, i, :] = 2.0 * (
-                    (attr_raw[:, i, :] - lo) / (hi - lo + 1e-8) - 0.5)
+                    (raw_i[:, 0, :] - lo) / (hi - lo + 1e-8) - 0.5)
             else:
                 # --- Native discrete indices (no re-bucketing) ---
-                idx = attr_raw[:, i, :].long()
+                idx = attr_raw[:, i, :].long().clamp(0, n_head - 1)
                 attr_cls[:, i, :] = idx
                 n_cls = self.discrete_num_classes.get(name, 2)
                 attr_norm[:, i, :] = discrete_index_to_decoder_float(idx, n_cls)

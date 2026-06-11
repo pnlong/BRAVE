@@ -163,10 +163,7 @@ python RAVE/scripts/build_attribute_sidecar.py \
 
 python RAVE/scripts/precompute_descriptors.py \
   --db_path=.../texture/preprocessed \
-  --continuous_attributes=rms --continuous_attributes=flatness \
-  --continuous_attributes=centroid --continuous_attributes=roughness \
-  --continuous_attributes=brightness \
-  --discrete_attributes=texture_class --train_only
+  --config configs/brave_fader_texture.gin --train_only
 
 python RAVE/scripts/train.py --config configs/brave_fader_texture.gin \
   --db_path=.../texture/preprocessed --name texture_fader

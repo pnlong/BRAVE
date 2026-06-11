@@ -470,3 +470,34 @@ def validate_stats_against_config(
             f"Stats n_signal {stats['precompute'].get('n_signal')} != {n_signal}",
             stacklevel=2,
         )
+
+
+def validate_discrete_sidecar(
+    db_path: str,
+    attribute_names: Sequence[str],
+    discrete_attributes: Sequence[str],
+    num_classes_per_attribute: Sequence[int],
+) -> None:
+    """Fail fast when sidecar class indices exceed latent-disc head sizes."""
+    sidecar_path = Path(db_path) / "attribute_sidecar.yaml"
+    if not sidecar_path.is_file():
+        return
+    with open(sidecar_path, "r") as f:
+        data = yaml.safe_load(f) or {}
+    schema = data.get("attributes", {})
+    for name in discrete_attributes:
+        if name not in schema or name not in attribute_names:
+            continue
+        row = attribute_names.index(name)
+        n_cls = int(num_classes_per_attribute[row])
+        values = schema[name].get("values", {})
+        if not values:
+            continue
+        max_val = max(int(v) for v in values.values())
+        if max_val >= n_cls:
+            raise ValueError(
+                f"{sidecar_path}: '{name}' contains class {max_val}, but the "
+                f"latent discriminator only has {n_cls} classes (valid: 0..{n_cls - 1}). "
+                f"Rebuild the sidecar with texture_only (default) or raise "
+                f"NUM_TEXTURE_CLASSES in brave_fader_texture.gin."
+            )

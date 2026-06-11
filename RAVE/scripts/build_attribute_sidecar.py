@@ -17,13 +17,14 @@ from __future__ import annotations
 
 import csv
 import json
+import multiprocessing
 import os
 import sys
 from pathlib import Path
-from typing import Dict, List, Set
+from typing import Dict, List, Set, Tuple
 
 _RAVE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_BRAVE_ROOT = os.path.dirname(_RAVE_ROOT)
+_BRAVE_ROOT = Path(_RAVE_ROOT).parent
 if _RAVE_ROOT not in sys.path:
     sys.path.insert(0, _RAVE_ROOT)
 _FSD50K = _BRAVE_ROOT / "dataset_exploration" / "fsd50k"
@@ -32,6 +33,7 @@ if str(_FSD50K) not in sys.path:
 
 import yaml
 from absl import app, flags
+from tqdm import tqdm
 
 from fsd50k_manifest import clip_id_from_fname_cell, csv_labels_normalized
 from paths import canonical_partition, fsd50k_dataset_root, partitions_for
@@ -71,9 +73,16 @@ flags.DEFINE_string(
     None,
     "Override manifest yaml path",
 )
-
+flags.DEFINE_integer(
+    "workers",
+    0,
+    "Classification worker processes (0=all logical CPU cores; 1=serial)",
+)
+flags.DEFINE_bool("no_progress", False, "Disable progress bars")
 
 TEXTURE_CLASS_COUNT = 10
+RowResult = Tuple[int, int, bool, bool]  # idx, label, missing_csv, skipped
+_WORKER_STATE: Dict = {}
 
 
 def _default_tags_config(scheme: str) -> Path:
@@ -134,14 +143,26 @@ def classify_water_scene(
     return 0
 
 
-def load_clip_tags(partition_key: str, dataset_root: Path) -> Dict[str, List[str]]:
+def load_clip_tags(
+    partition_key: str,
+    dataset_root: Path,
+    *,
+    show_progress: bool = False,
+) -> Dict[str, List[str]]:
     part = partitions_for(dataset_root)[canonical_partition(partition_key)]
     out: Dict[str, List[str]] = {}
     if not part.csv_path.is_file():
         return out
     with part.csv_path.open(encoding="utf-8", newline="") as fh:
         reader = csv.DictReader(fh)
-        for row in reader:
+        row_iter = reader
+        if show_progress:
+            row_iter = tqdm(
+                reader,
+                desc=f"csv:{partition_key}",
+                unit="row",
+            )
+        for row in row_iter:
             if part.csv_split is not None and row.get("split") != part.csv_split:
                 continue
             cid = clip_id_from_fname_cell(row.get("fname") or "")
@@ -154,10 +175,12 @@ def load_clip_tags(partition_key: str, dataset_root: Path) -> Dict[str, List[str
 def load_clip_tags_merged(
     partition_keys: List[str],
     dataset_root: Path,
+    *,
+    show_progress: bool = False,
 ) -> Dict[str, List[str]]:
     out: Dict[str, List[str]] = {}
     for key in partition_keys:
-        out.update(load_clip_tags(key, dataset_root))
+        out.update(load_clip_tags(key, dataset_root, show_progress=show_progress))
     return out
 
 
@@ -170,50 +193,110 @@ def tags_for_entry(entry: dict, clip_tags: Dict[str, List[str]]) -> Set[str]:
     return tags
 
 
-def _build_water_scene(
-    entries: List[dict],
-    clip_tags: Dict[str, List[str]],
-    tags_path: Path,
-) -> tuple[Dict[str, int], Dict[int, int], int, int]:
-    class_1, class_2 = load_tags_config(tags_path)
-    values: Dict[str, int] = {}
-    counts = {0: 0, 1: 0, 2: 0}
-    missing_csv = 0
-    skipped = 0
+def _init_sidecar_worker(state: Dict) -> None:
+    global _WORKER_STATE
+    _WORKER_STATE = state
 
-    for entry in entries:
-        idx = int(entry["lmdb_index"])
-        tag_set = tags_for_entry(entry, clip_tags)
-        if not tag_set:
-            missing_csv += 1
+
+def _classify_entry_worker(entry: dict) -> RowResult:
+    state = _WORKER_STATE
+    clip_tags = state["clip_tags"]
+    tag_set = tags_for_entry(entry, clip_tags)
+    missing = not bool(tag_set)
+    idx = int(entry["lmdb_index"])
+    if state["scheme"] == "water_scene":
         label = classify_water_scene(
-            tag_set, class_1, class_2, FLAGS.priority)
-        key = f"{idx:08d}"
-        values[key] = label
-        counts[label] = counts.get(label, 0) + 1
+            tag_set,
+            state["class_1"],
+            state["class_2"],
+            state["priority_str"],
+        )
+        skipped = False
+    else:
+        label = classify_texture_class(
+            tag_set,
+            state["priority"],
+            state["tag_sets"],
+            state["id_by_key"],
+        )
+        skipped = state["texture_only"] and label >= TEXTURE_CLASS_COUNT
+    return idx, label, missing, skipped
 
-    return values, counts, missing_csv, skipped
+
+def _worker_count(workers: int) -> int:
+    if workers == 1:
+        return 1
+    if workers > 0:
+        return workers
+    return max(1, os.cpu_count() or 1)
 
 
-def _build_texture_class(
-    entries: List[dict],
-    clip_tags: Dict[str, List[str]],
+def _build_worker_state(
+    scheme: str,
     tags_path: Path,
+    clip_tags: Dict[str, List[str]],
+) -> Dict:
+    state: Dict = {
+        "scheme": scheme,
+        "clip_tags": clip_tags,
+        "priority_str": FLAGS.priority,
+        "texture_only": FLAGS.texture_only,
+    }
+    if scheme == "water_scene":
+        class_1, class_2 = load_tags_config(tags_path)
+        state["class_1"] = frozenset(class_1)
+        state["class_2"] = frozenset(class_2)
+    else:
+        priority, tag_sets, id_by_key = load_texture_tags_config(tags_path)
+        state["priority"] = priority
+        state["tag_sets"] = {k: frozenset(v) for k, v in tag_sets.items()}
+        state["id_by_key"] = id_by_key
+    return state
+
+
+def _classify_entries(
+    entries: List[dict],
+    scheme: str,
+    tags_path: Path,
+    clip_tags: Dict[str, List[str]],
+    *,
+    show_progress: bool = True,
 ) -> tuple[Dict[str, int], Dict[int, int], int, int]:
-    priority, tag_sets, id_by_key = load_texture_tags_config(tags_path)
+    worker_state = _build_worker_state(scheme, tags_path, clip_tags)
+    n_workers = _worker_count(FLAGS.workers)
     values: Dict[str, int] = {}
     counts: Dict[int, int] = {}
     missing_csv = 0
     skipped = 0
 
-    for entry in entries:
-        idx = int(entry["lmdb_index"])
-        tag_set = tags_for_entry(entry, clip_tags)
-        if not tag_set:
+    if n_workers == 1:
+        _init_sidecar_worker(worker_state)
+        row_iter = entries
+        if show_progress:
+            row_iter = tqdm(entries, desc="classify", unit="row")
+        results = (_classify_entry_worker(entry) for entry in row_iter)
+    else:
+        chunksize = max(1, len(entries) // (n_workers * 8))
+        with multiprocessing.Pool(
+            processes=n_workers,
+            initializer=_init_sidecar_worker,
+            initargs=(worker_state,),
+        ) as pool:
+            row_iter = pool.imap(_classify_entry_worker, entries, chunksize=chunksize)
+            if show_progress:
+                row_iter = tqdm(
+                    row_iter,
+                    total=len(entries),
+                    desc="classify",
+                    unit="row",
+                )
+            results = list(row_iter)
+
+    for idx, label, missing, row_skipped in results:
+        if missing:
             missing_csv += 1
-        label = classify_texture_class(tag_set, priority, tag_sets, id_by_key)
         counts[label] = counts.get(label, 0) + 1
-        if FLAGS.texture_only and label >= TEXTURE_CLASS_COUNT:
+        if row_skipped:
             skipped += 1
             continue
         values[f"{idx:08d}"] = label
@@ -228,6 +311,7 @@ def main(argv):
         print(f"Unknown scheme: {scheme}")
         return
 
+    show_progress = not FLAGS.no_progress
     db_path = FLAGS.db_path
     manifest_path = FLAGS.manifest_path or os.path.join(
         db_path, "lmdb_index_manifest.yaml")
@@ -246,16 +330,17 @@ def main(argv):
     )
     root = fsd50k_dataset_root(
         Path(FLAGS.dataset_root) if FLAGS.dataset_root else None)
-    clip_tags = load_clip_tags_merged(list(FLAGS.partition), root)
+    clip_tags = load_clip_tags_merged(
+        list(FLAGS.partition), root, show_progress=show_progress)
 
-    if scheme == "water_scene":
-        values, counts, missing_csv, skipped = _build_water_scene(
-            entries, clip_tags, tags_path)
-        attr_name = "water_scene"
-    else:
-        values, counts, missing_csv, skipped = _build_texture_class(
-            entries, clip_tags, tags_path)
-        attr_name = "texture_class"
+    values, counts, missing_csv, skipped = _classify_entries(
+        entries,
+        scheme,
+        tags_path,
+        clip_tags,
+        show_progress=show_progress,
+    )
+    attr_name = "water_scene" if scheme == "water_scene" else "texture_class"
 
     sidecar = {
         "index_key": "lmdb_index",

@@ -41,14 +41,25 @@ class AudioDataset(data.Dataset):
     def keys(self) -> Sequence[str]:
         if self._keys is None:
             with self.env.begin() as txn:
-                self._keys = list(txn.cursor().iternext(values=False))
+                cursor = txn.cursor()
+                if getattr(self, "_show_progress", True):
+                    self._keys = [
+                        k for k in tqdm(
+                            cursor.iternext(values=False),
+                            desc="probe",
+                            unit="row",
+                        )
+                    ]
+                else:
+                    self._keys = list(cursor.iternext(values=False))
         return self._keys
 
     def __init__(self,
                  db_path: str,
                  audio_key: str = 'waveform',
-                 transforms: Optional[transforms.Transform] = None, 
-                 n_channels: int = 1) -> None:
+                 transforms: Optional[transforms.Transform] = None,
+                 n_channels: int = 1,
+                 show_progress: bool = True) -> None:
         super().__init__()
         self._db_path = db_path
         self._audio_key = audio_key
@@ -56,11 +67,9 @@ class AudioDataset(data.Dataset):
         self._keys = None
         self._transforms = transforms
         self._n_channels = n_channels
-        lens = []
-        with self.env.begin() as txn:
-            for k in self.keys:
-               ae = AudioExample.FromString(txn.get(k)) 
-               lens.append(np.frombuffer(ae.buffers['waveform'].data, dtype=np.int16).shape)
+        self._show_progress = show_progress
+        # Touch keys once so eager LMDB row count is known (with optional tqdm).
+        _ = len(self.keys)
 
 
     def __len__(self):
@@ -103,7 +112,9 @@ class LazyAudioDataset(data.Dataset):
                  n_signal: int,
                  sampling_rate: int,
                  transforms: Optional[transforms.Transform] = None,
-                 n_channels: int = 1) -> None:
+                 n_channels: int = 1,
+                 lazy_index: Optional[dict] = None,
+                 show_progress: bool = True) -> None:
         super().__init__()
         self._db_path = db_path
         self._env = None
@@ -112,12 +123,21 @@ class LazyAudioDataset(data.Dataset):
         self._n_signal = n_signal
         self._sampling_rate = sampling_rate
         self._n_channels = n_channels
+        self._show_progress = show_progress
 
-        self.parse_dataset()
+        if lazy_index is not None:
+            self._keys = list(lazy_index["keys"])
+            self.items = np.asarray(lazy_index["items"], dtype=np.int64)
+        else:
+            self.parse_dataset()
 
     def parse_dataset(self):
         items = []
-        for key in tqdm(self.keys, desc='Discovering dataset'):
+        keys = self.keys
+        key_iter = keys
+        if self._show_progress:
+            key_iter = tqdm(keys, total=len(keys), desc="probe", unit="clip")
+        for key in key_iter:
             with self.env.begin() as txn:
                 ae = AudioExample.FromString(txn.get(key))
             length = float(ae.metadata['length'])

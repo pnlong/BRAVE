@@ -72,6 +72,7 @@ def finalize_training_model(
     from .fader.attributes import (
         load_attribute_stats,
         resolve_stats_path,
+        validate_discrete_sidecar,
         validate_stats_against_config,
     )
     from .fader.model import FaderRAVE
@@ -103,7 +104,7 @@ def finalize_training_model(
         raise FileNotFoundError(
             f"Missing attribute_stats.yaml in {db_path}. Run:\n"
             f"  python RAVE/scripts/precompute_descriptors.py "
-            f"--db_path {db_path} --n_signal {n_signal}"
+            f"--db_path {db_path} --config configs/brave_fader_*.gin --n_signal {n_signal}"
         )
     model.load_attribute_stats_from_file(stats_path)
     st = load_attribute_stats(stats_path)
@@ -112,6 +113,12 @@ def finalize_training_model(
         model.continuous_attributes,
         model.discrete_attributes,
         n_signal=n_signal,
+    )
+    validate_discrete_sidecar(
+        db_path,
+        model.attribute_names,
+        model.discrete_attributes,
+        model.num_classes_per_attribute,
     )
     split_info = ""
     if st.get("split"):
