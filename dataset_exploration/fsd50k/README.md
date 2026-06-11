@@ -145,6 +145,35 @@ Preprocess decodes WAV → LMDB; add **`--lazy`** only for on-the-fly decode fro
 
 **Parallelism.** Preprocess supports **`--workers`** (FFmpeg pool; default uses all CPUs). Train has **`--workers`** (PyTorch **`DataLoader`**, default **8**) and **`--gpu`**. Metrics go to Weights & Biases (`--wandb_project`, default **`brave`**). **`cannot unpack … NoneType`** in preprocess ⇒ **`ffmpeg`/`ffprobe`** failed on some staged WAV/path.
 
+### Fader + `texture_class` (texture LMDB)
+
+After preprocess, wire a 10-class discrete **`texture_class`** sidecar (classes 0–9; music/vocal 10–11 omitted by default). From **`BRAVE/`**:
+
+```bash
+export PYTHONPATH="${PWD}/RAVE:${PYTHONPATH}"
+
+python RAVE/scripts/build_lmdb_index_manifest.py \
+  --input_path="${BRAVE_STORAGE}/fsd50k_brave/texture/audio_subset" \
+  --db_path="${BRAVE_STORAGE}/fsd50k_brave/texture/preprocessed" \
+  --num_signal 131072
+
+python RAVE/scripts/build_attribute_sidecar.py \
+  --db_path="${BRAVE_STORAGE}/fsd50k_brave/texture/preprocessed" \
+  --scheme texture_class --partition dev_train
+
+python RAVE/scripts/precompute_descriptors.py \
+  --db_path=.../texture/preprocessed \
+  --continuous_attributes=rms --continuous_attributes=flatness \
+  --continuous_attributes=centroid --continuous_attributes=roughness \
+  --continuous_attributes=brightness \
+  --discrete_attributes=texture_class --train_only
+
+python RAVE/scripts/train.py --config configs/brave_fader_texture.gin \
+  --db_path=.../texture/preprocessed --name texture_fader
+```
+
+Build a texture-only audio subset first (exclude `music`, `musical_instrument`, `speech`, etc.) so LMDB indices align with the sidecar. Tag taxonomy: [`configs/fader_texture_class_tags.yaml`](configs/fader_texture_class_tags.yaml). Validate mapping: `python dataset_exploration/fsd50k/validate_texture_class_tags.py`.
+
 ### Fader + `water_scene` (optional)
 
 After preprocess, wire a 3-class discrete **`water_scene`** sidecar (storm / coastal / other). From **`BRAVE/`**:
@@ -169,7 +198,7 @@ python RAVE/scripts/train.py --config configs/brave_fader_fsd50k_water.gin \
   --db_path=.../water/preprocessed --name water_fader
 ```
 
-Tag sets: [`configs/fader_water_scene_tags.yaml`](../../configs/fader_water_scene_tags.yaml). Details: [`scratchpaper/fader_future_work.md`](../../scratchpaper/fader_future_work.md).
+Tag sets: [`configs/fader_water_scene_tags.yaml`](configs/fader_water_scene_tags.yaml), [`configs/fader_texture_class_tags.yaml`](configs/fader_texture_class_tags.yaml). Details: [`scratchpaper/fader_future_work.md`](../../scratchpaper/fader_future_work.md).
 
 ---
 

@@ -1,11 +1,10 @@
-# BRAVE + Fader Networks (standalone — includes base brave.gin)
-#   python RAVE/scripts/train.py --config configs/brave_fader.gin --name=... --db_path=...
+# BRAVE + Fader — percussive / timbral attributes (tabla, drums, tap)
+#   python RAVE/scripts/train.py --config configs/brave_fader_percussive.gin --name=... --db_path=...
 
 include "brave.gin"
 
 from __gin__ import dynamic_registration
 
-# Imports from brave.gin are not re-exported after include; repeat bindings used below.
 import rave
 import rave.training
 from rave import pqmf
@@ -24,7 +23,7 @@ rave.training.wrap_training_datasets.fader = True
 rave.training.finalize_training_model.fader = True
 rave.training.extra_training_callbacks.fader = True
 
-# rms: frame-wise librosa RMS → attr_norm (decoder) + binned attr_cls (latent CE)
+# librosa + timbral: spectral envelope + dynamics (not pitch)
 CONTINUOUS_ATTRIBUTES = ["centroid", "rms", "bandwidth", "sharpness", "booming"]
 DISCRETE_ATTRIBUTES = []
 NUM_ATTRIBUTES = 5

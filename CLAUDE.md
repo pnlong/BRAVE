@@ -94,13 +94,20 @@ python RAVE/scripts/build_attribute_sidecar.py --db_path .../preprocessed --sche
 ```
 Use `configs/brave_fader_fsd50k_water.gin.example` (copy to `.gin`; includes `brave_fader.gin`).
 
-**Export Fader TorchScript (128+D concat):**
+**Export Fader for Max/nn~ (attribute knobs):**
+```bash
+python RAVE/scripts/export_fader_nn.py \
+  --model runs/brave_fader_run --db_path /path/to/lmdb \
+  --output_path exports/fader.ts --streaming
+```
+
+**Export Fader plain TorchScript (128+D concat, Python demos):**
 ```bash
 python RAVE/scripts/export_fader_ts.py \
   --model runs/brave_fader_run --db_path /path/to/lmdb \
   --output_path exports/fader.ts
 ```
-Also writes `fader_host_controls.json` beside the `.ts`.
+Also writes `fader_host_controls.json` beside the `.ts`. See [`docs/fader_host_controls.md`](docs/fader_host_controls.md).
 
 **Subjective swap listening assets:**
 ```bash

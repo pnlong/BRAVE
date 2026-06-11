@@ -32,4 +32,4 @@ Uses the same [`AudioDescriptorProvider`](../providers/audio.py) and min/max tab
 
 See [`BRAVE/docs/fader_host_controls.md`](../../../../docs/fader_host_controls.md) for attribute order, slider ranges, and discrete class mapping. Export writes `*_host_controls.json` from [`export_fader_ts.py`](../../../scripts/export_fader_ts.py).
 
-**Note:** Vanilla RAVE Max/nn~ export ([`export.py`](../../../scripts/export.py)) does not include Fader attributes; Fader needs external concat of `attr_norm` alongside `z`.
+**Note:** Vanilla RAVE Max/nn~ export ([`export.py`](../../../scripts/export.py)) does not include Fader attributes. Use [`export_fader_nn.py`](../../../scripts/export_fader_nn.py) for nn~ with knobs, or [`export_fader_ts.py`](../../../scripts/export_fader_ts.py) for plain TorchScript.

@@ -1,0 +1,258 @@
+# FSD50K texture_class taxonomy (12 classes: 10 texture + 2 non-texture).
+# dataset_exploration/fsd50k/configs/ — used by build_attribute_sidecar.py --scheme texture_class
+#
+# Texture training: keep classes 0-9 only; exclude 10 (human/vocal) and 11 (music).
+# Multi-label clips: first matching class in priority_order wins.
+
+class_names:
+  0: water_liquid
+  1: air_wind
+  2: weather_storm
+  3: fire_explosion
+  4: nature_living
+  5: domestic_indoor
+  6: mechanical_machine
+  7: transport_vehicle
+  8: materials_impact
+  9: tonal_alert
+  10: human_vocal_body
+  11: music_percussion
+
+# Exclusion checked first so music-tagged ambience does not leak into texture buckets.
+priority_order:
+  - music_percussion
+  - human_vocal_body
+  - weather_storm
+  - water_liquid
+  - fire_explosion
+  - air_wind
+  - nature_living
+  - mechanical_machine
+  - transport_vehicle
+  - domestic_indoor
+  - materials_impact
+  - tonal_alert
+
+music_percussion:
+  - music
+  - musical_instrument
+  - percussion
+  - wind_instrument_and_woodwind_instrument
+  - plucked_string_instrument
+  - bowed_string_instrument
+  - keyboard_(musical)
+  - drum
+  - cymbal
+  - snare_drum
+  - hi-hat
+  - drum_kit
+  - bass_drum
+  - crash_cymbal
+  - mallet_percussion
+  - rattle_(instrument)
+  - tambourine
+  - tabla
+  - cowbell
+  - marimba_and_xylophone
+  - guitar
+  - electric_guitar
+  - acoustic_guitar
+  - bass_guitar
+  - piano
+  - organ
+  - harp
+  - harmonica
+  - accordion
+  - glockenspiel
+  - brass_instrument
+  - trumpet
+  - singing
+  - female_singing
+  - male_singing
+  - scratching_(performance_technique)
+  - strum
+
+human_vocal_body:
+  - human_voice
+  - speech
+  - male_speech_and_man_speaking
+  - female_speech_and_woman_speaking
+  - child_speech_and_kid_speaking
+  - laughter
+  - giggle
+  - chuckle_and_chortle
+  - applause
+  - clapping
+  - cheering
+  - crowd
+  - respiratory_sounds
+  - breathing
+  - cough
+  - sneeze
+  - sigh
+  - gasp
+  - fart
+  - burping_and_eructation
+  - chewing_and_mastication
+  - whispering
+  - shout
+  - screaming
+  - yell
+  - crying_and_sobbing
+  - conversation
+  - chatter
+  - speech_synthesizer
+  - hands
+  - walk_and_footsteps
+  - run
+  - human_group_actions
+  - finger_snapping
+  - tap
+
+weather_storm:
+  - thunderstorm
+  - thunder
+
+water_liquid:
+  - water
+  - liquid
+  - rain
+  - raindrop
+  - ocean
+  - stream
+  - drip
+  - pour
+  - splash_and_splatter
+  - sink_(filling_or_washing)
+  - bathtub_(filling_or_washing)
+  - toilet_flush
+  - water_tap_and_faucet
+  - trickle_and_dribble
+  - gurgling
+  - waves_and_surf
+  - fill_(with_liquid)
+  - boiling
+
+air_wind:
+  - wind
+  - whoosh_and_swoosh_and_swish
+  - hiss
+  - mechanical_fan
+
+fire_explosion:
+  - fire
+  - fireworks
+  - explosion
+  - gunshot_and_gunfire
+  - boom
+  - crackle
+
+nature_living:
+  - animal
+  - wild_animals
+  - domestic_animals_and_pets
+  - bird
+  - bird_vocalization_and_bird_call_and_bird_song
+  - dog
+  - cat
+  - insect
+  - frog
+  - cricket
+  - fowl
+  - chicken_and_rooster
+  - livestock_and_farm_animals_and_working_animals
+  - bark
+  - chirp_and_tweet
+  - meow
+  - purr
+  - growling
+  - crow
+  - gull_and_seagull
+
+domestic_indoor:
+  - domestic_sounds_and_home_sounds
+  - door
+  - sliding_door
+  - drawer_open_or_close
+  - cupboard_open_or_close
+  - dishes_and_pots_and_pans
+  - microwave_oven
+  - frying_(food)
+  - typing
+  - writing
+  - computer_keyboard
+  - clock
+  - tick-tock
+  - tick
+  - camera
+  - telephone
+  - typewriter
+
+mechanical_machine:
+  - mechanisms
+  - engine
+  - tools
+  - hammer
+  - drill
+  - power_tool
+  - printer
+  - sawing
+  - ratchet_and_pawl
+  - engine_starting
+  - idling
+
+transport_vehicle:
+  - vehicle
+  - motor_vehicle_(road)
+  - car
+  - bus
+  - train
+  - truck
+  - motorcycle
+  - bicycle
+  - aircraft
+  - fixed-wing_aircraft_and_airplane
+  - boat_and_water_vehicle
+  - subway_and_metro_and_underground
+  - traffic_noise_and_roadway_noise
+  - race_car_and_auto_racing
+  - skateboard
+  - car_passing_by
+  - rail_transport
+  - accelerating_and_revving_and_vroom
+  - vehicle_horn_and_car_horn_and_honking
+  - screech
+
+materials_impact:
+  - glass
+  - wood
+  - squeak
+  - tearing
+  - crumpling_and_crinkling
+  - rattle
+  - slam
+  - shatter
+  - thump_and_thud
+  - knock
+  - crushing
+  - chink_and_clink
+  - coin_(dropping)
+  - keys_jangling
+  - scissors
+  - zipper_(clothing)
+  - packing_tape_and_duct_tape
+  - crack
+  - cutlery_and_silverware
+
+tonal_alert:
+  - alarm
+  - bell
+  - siren
+  - doorbell
+  - church_bell
+  - bicycle_bell
+  - chime
+  - wind_chime
+  - gong
+  - buzz
+  - ringtone

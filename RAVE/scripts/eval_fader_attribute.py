@@ -1,26 +1,28 @@
 """
-Evaluate FaderRAVE RMS conditioning: decode with modified RMS trajectories.
+Evaluate FaderRAVE conditioning: decode with modified attribute trajectories.
 
-For each input clip, writes:
-  - PNG of the RMS curve used for decode (raw + normalized)
-  - WAV reconstruction for several RMS variants (same z, other attrs from input)
+For each input clip, ablates one continuous attribute (--attr) while keeping
+content latent z and all other attributes from the input. Writes:
+  - PNG of the ablated attribute curve (raw + normalized)
+  - WAV reconstruction for several variants
 
 Usage (from BRAVE root):
   micromamba activate brave
   export PYTHONPATH="${PWD}/RAVE:${PYTHONPATH}"
 
-  python RAVE/scripts/eval_fader_rms.py \\
+  python RAVE/scripts/eval_fader_attribute.py \\
     --model "${BRAVE_STORAGE}/tabla_ismir21/runs/tabla_fader_run_XXXXX" \\
     --db_path "${BRAVE_STORAGE}/tabla_ismir21/preprocessed" \\
+    --attr=rms \\
     --output artifacts/eval_fader_rms \\
     --max_samples 4
 
-  # Or WAV files instead of LMDB val split:
-  python RAVE/scripts/eval_fader_rms.py \\
+  python RAVE/scripts/eval_fader_attribute.py \\
     --model runs/my_fader_run \\
     --db_path /path/to/lmdb \\
+    --attr=centroid \\
     --input path/to/a.wav --input path/to/b.wav \\
-    --output artifacts/eval_fader_rms
+    --output artifacts/eval_fader_centroid
 """
 
 from __future__ import annotations
@@ -54,16 +56,17 @@ from rave.fader.providers import AudioDescriptorProvider
 FLAGS = flags.FLAGS
 
 flags.DEFINE_string("model", None, "FaderRAVE run directory or .ckpt", required=True)
+flags.DEFINE_string("attr", None, "Continuous attribute to ablate (e.g. rms, centroid)", required=True)
 flags.DEFINE_string("db_path", None, "LMDB path (for attribute_stats.yaml + val samples)")
 flags.DEFINE_multi_string("input", [], "Optional WAV paths (instead of LMDB val samples)")
-flags.DEFINE_string("output", "eval_fader_rms", "Output directory")
+flags.DEFINE_string("output", None, "Output directory (default: eval_fader_<attr>)")
 flags.DEFINE_integer("max_samples", 4, "Max clips to process (LMDB val mode)")
 flags.DEFINE_integer("n_signal", 131072, "Crop length in samples")
 flags.DEFINE_bool("gpu", False, "Use CUDA")
 
 
 @dataclass
-class RmsVariant:
+class AttrVariant:
     name: str
     description: str
     modify: Callable[[np.ndarray, Dict[str, Tuple[float, float]]], np.ndarray]
@@ -123,84 +126,110 @@ def _raw_to_attr_norm(model, raw: np.ndarray, device: torch.device) -> torch.Ten
     return attr_norm
 
 
-def _rms_row_index(model) -> int:
-    if "rms" not in model.attribute_names:
+def _attr_row_index(model, attr: str) -> int:
+    if attr not in model.attribute_names:
         raise ValueError(
-            f"model has no 'rms' attribute; names={model.attribute_names}"
+            f"Unknown attribute {attr!r}; model has {model.attribute_names}"
         )
-    return model.attribute_names.index("rms")
+    return model.attribute_names.index(attr)
 
 
-def _default_variants() -> List[RmsVariant]:
-    def extracted(rms: np.ndarray, stats: Dict) -> np.ndarray:
-        return rms.copy()
+def _validate_attr(model, attr: str) -> None:
+    if attr not in model.attribute_names:
+        raise ValueError(
+            f"Unknown attribute {attr!r}; model has {model.attribute_names}"
+        )
+    if model.attribute_kinds.get(attr) != "continuous":
+        raise ValueError(
+            f"Attribute {attr!r} is not continuous; "
+            f"kind={model.attribute_kinds.get(attr)}"
+        )
+
+
+def _default_variants(attr: str) -> List[AttrVariant]:
+    label = attr
+
+    def extracted(row: np.ndarray, stats: Dict) -> np.ndarray:
+        return row.copy()
 
     def scale(f: float):
-        def fn(rms: np.ndarray, stats: Dict) -> np.ndarray:
-            out = rms.copy()
+        def fn(row: np.ndarray, stats: Dict) -> np.ndarray:
+            out = row.copy()
             out *= f
             return out
 
         return fn
 
-    def constant_quantile(q: float, label: str):
-        def fn(rms: np.ndarray, stats: Dict) -> np.ndarray:
-            lo, hi = stats["rms"]
+    def constant_quantile(q: float):
+        def fn(row: np.ndarray, stats: Dict) -> np.ndarray:
+            lo, hi = stats[attr]
             val = lo + q * (hi - lo)
-            return np.full_like(rms, val)
+            return np.full_like(row, val)
 
         return fn
 
-    def smooth(rms: np.ndarray, stats: Dict) -> np.ndarray:
-        """Heavy low-pass on RMS row (phrase-level dynamics only)."""
-        win = max(3, rms.shape[-1] // 32) | 1
+    def smooth(row: np.ndarray, stats: Dict) -> np.ndarray:
+        win = max(3, row.shape[-1] // 32) | 1
         kernel = np.ones(win, dtype=np.float32) / win
-        return np.convolve(rms, kernel, mode="same").astype(np.float32)
+        return np.convolve(row, kernel, mode="same").astype(np.float32)
 
-    def ramp_up(rms: np.ndarray, stats: Dict) -> np.ndarray:
-        lo, hi = stats["rms"]
-        return np.linspace(lo, hi, rms.shape[-1], dtype=np.float32)
+    def ramp_up(row: np.ndarray, stats: Dict) -> np.ndarray:
+        lo, hi = stats[attr]
+        return np.linspace(lo, hi, row.shape[-1], dtype=np.float32)
 
-    def ramp_down(rms: np.ndarray, stats: Dict) -> np.ndarray:
-        lo, hi = stats["rms"]
-        return np.linspace(hi, lo, rms.shape[-1], dtype=np.float32)
+    def ramp_down(row: np.ndarray, stats: Dict) -> np.ndarray:
+        lo, hi = stats[attr]
+        return np.linspace(hi, lo, row.shape[-1], dtype=np.float32)
 
     return [
-        RmsVariant("01_extracted", "RMS from input (baseline)", extracted),
-        RmsVariant("02_rms_x0.5", "RMS × 0.5", scale(0.5)),
-        RmsVariant("03_rms_x2.0", "RMS × 2.0", scale(2.0)),
-        RmsVariant("04_rms_flat_median", "constant RMS = median of input", lambda r, s: np.full_like(r, np.median(r))),
-        RmsVariant("05_rms_flat_low", "constant RMS = train min (via stats)", constant_quantile(0.0, "low")),
-        RmsVariant("06_rms_flat_high", "constant RMS = train max (via stats)", constant_quantile(1.0, "high")),
-        RmsVariant("07_rms_smooth", "smoothed RMS envelope", smooth),
-        RmsVariant(
-            "08_rms_ramp_up",
-            "linear RMS ramp: train min → train max (stats)",
+        AttrVariant("01_extracted", f"{label} from input (baseline)", extracted),
+        AttrVariant(f"02_{attr}_x0.5", f"{label} × 0.5", scale(0.5)),
+        AttrVariant(f"03_{attr}_x2.0", f"{label} × 2.0", scale(2.0)),
+        AttrVariant(
+            f"04_{attr}_flat_median",
+            f"constant {label} = median of input",
+            lambda r, s: np.full_like(r, np.median(r)),
+        ),
+        AttrVariant(
+            f"05_{attr}_flat_low",
+            f"constant {label} = train min (via stats)",
+            constant_quantile(0.0),
+        ),
+        AttrVariant(
+            f"06_{attr}_flat_high",
+            f"constant {label} = train max (via stats)",
+            constant_quantile(1.0),
+        ),
+        AttrVariant(f"07_{attr}_smooth", f"smoothed {label} envelope", smooth),
+        AttrVariant(
+            f"08_{attr}_ramp_up",
+            f"linear {label} ramp: train min → train max (stats)",
             ramp_up,
         ),
-        RmsVariant(
-            "09_rms_ramp_down",
-            "linear RMS ramp: train max → train min (stats)",
+        AttrVariant(
+            f"09_{attr}_ramp_down",
+            f"linear {label} ramp: train max → train min (stats)",
             ramp_down,
         ),
     ]
 
 
-def _plot_rms_curve(
+def _plot_attr_curve(
     path: Path,
     times: np.ndarray,
-    raw_rms: np.ndarray,
-    attr_norm_rms: np.ndarray,
+    raw_row: np.ndarray,
+    attr_norm_row: np.ndarray,
+    attr: str,
     title: str,
     description: str,
 ) -> None:
     fig, axes = plt.subplots(2, 1, figsize=(10, 5), sharex=True)
-    axes[0].plot(times, raw_rms, color="steelblue", linewidth=1.2)
-    axes[0].set_ylabel("raw RMS")
+    axes[0].plot(times, raw_row, color="steelblue", linewidth=1.2)
+    axes[0].set_ylabel(f"raw {attr}")
     axes[0].set_title(f"{title}\n{description}")
     axes[0].grid(True, alpha=0.3)
 
-    axes[1].plot(times, attr_norm_rms, color="darkorange", linewidth=1.2)
+    axes[1].plot(times, attr_norm_row, color="darkorange", linewidth=1.2)
     axes[1].set_ylabel("attr_norm (decoder)")
     axes[1].set_xlabel("time (s)")
     axes[1].set_ylim(-1.05, 1.05)
@@ -274,10 +303,12 @@ def _iter_samples(
 @torch.no_grad()
 def _process_sample(
     model,
+    attr: str,
+    attr_idx: int,
     stem: str,
     x_raw: torch.Tensor,
     out_root: Path,
-    variants: List[RmsVariant],
+    variants: List[AttrVariant],
     device: torch.device,
 ) -> List[dict]:
     """x_raw: [1, C, T]"""
@@ -288,14 +319,13 @@ def _process_sample(
 
     t_lat = z.shape[-1]
     times = _latent_time_axis(model, t_lat)
-    rms_idx = _rms_row_index(model)
 
     mono = x_raw[0].detach().cpu().numpy()
     if mono.ndim == 2:
         mono = mono.mean(axis=0)
 
     raw_full = _extract_raw_attributes(model, mono, t_lat)
-    rms_base = raw_full[rms_idx].copy()
+    attr_base = raw_full[attr_idx].copy()
 
     min_max = {k: tuple(v) for k, v in model.min_max_features.items()}
     records = []
@@ -305,7 +335,7 @@ def _process_sample(
 
     for var in variants:
         raw_var = raw_full.copy()
-        raw_var[rms_idx] = var.modify(rms_base, min_max)
+        raw_var[attr_idx] = var.modify(attr_base, min_max)
         attr_norm = _raw_to_attr_norm(model, raw_var, device)
 
         y = model.decode(z, attr=attr_norm)
@@ -314,26 +344,28 @@ def _process_sample(
         wav_path = sample_dir / f"{var.name}.wav"
         sf.write(str(wav_path), y_np.T, model.sr)
 
-        raw_rms = raw_var[rms_idx]
-        norm_rms = attr_norm[0, rms_idx].detach().cpu().numpy()
-        png_path = sample_dir / f"{var.name}_rms.png"
-        _plot_rms_curve(
+        raw_row = raw_var[attr_idx]
+        norm_row = attr_norm[0, attr_idx].detach().cpu().numpy()
+        png_path = sample_dir / f"{var.name}_{attr}.png"
+        _plot_attr_curve(
             png_path,
             times,
-            raw_rms,
-            norm_rms,
+            raw_row,
+            norm_row,
+            attr=attr,
             title=var.name,
             description=var.description,
         )
 
         records.append({
             "sample": stem,
+            "attr": attr,
             "variant": var.name,
             "description": var.description,
             "wav": str(wav_path),
-            "rms_plot": str(png_path),
-            "raw_rms_mean": float(raw_rms.mean()),
-            "raw_rms_max": float(raw_rms.max()),
+            "attr_plot": str(png_path),
+            "raw_mean": float(raw_row.mean()),
+            "raw_max": float(raw_row.max()),
         })
 
     return records
@@ -344,24 +376,24 @@ def main(argv):
     device = torch.device("cuda" if FLAGS.gpu and torch.cuda.is_available() else "cpu")
     model = _load_fader(FLAGS.model, FLAGS.db_path, device)
 
-    if "rms" not in model.continuous_attributes:
-        print(
-            f"Warning: continuous_attributes={model.continuous_attributes} "
-            "(expected 'rms' in list)"
-        )
+    attr = FLAGS.attr
+    _validate_attr(model, attr)
+    attr_idx = _attr_row_index(model, attr)
 
-    out_root = Path(FLAGS.output)
+    out_root = Path(FLAGS.output or f"eval_fader_{attr}")
     out_root.mkdir(parents=True, exist_ok=True)
 
-    variants = _default_variants()
+    variants = _default_variants(attr)
     all_records = []
     for stem, x_raw in _iter_samples(model, device):
-        print(f"Processing {stem}...")
-        recs = _process_sample(model, stem, x_raw, out_root, variants, device)
+        print(f"Processing {stem} (ablating {attr})...")
+        recs = _process_sample(
+            model, attr, attr_idx, stem, x_raw, out_root, variants, device)
         all_records.extend(recs)
 
     manifest = {
         "model": FLAGS.model,
+        "attr": attr,
         "db_path": FLAGS.db_path,
         "n_signal": FLAGS.n_signal,
         "continuous_attributes": list(model.continuous_attributes),

@@ -1,12 +1,13 @@
 """
-Export FaderRAVE to TorchScript with attribute concat API.
+Export FaderRAVE to nn~-compatible TorchScript with attribute knobs.
 
 Usage (BRAVE root):
   export PYTHONPATH="${PWD}/RAVE:${PYTHONPATH}"
-  python RAVE/scripts/export_fader_ts.py \\
-    --model runs/brave_fader_run \\
-    --stats_path /path/to/lmdb/attribute_stats.yaml \\
-    --output_path exports/fader.ts
+  python RAVE/scripts/export_fader_nn.py \\
+    --model runs/brave_fader_texture \\
+    --db_path /path/to/lmdb \\
+    --output_path exports/fader_texture.ts \\
+    --streaming
 """
 
 from __future__ import annotations
@@ -23,12 +24,13 @@ import gin
 import torch
 from absl import app, flags, logging
 
+import cached_conv as cc
 import rave
-from rave.fader.attributes import resolve_stats_path
+from rave.fader.attributes import load_attribute_stats, resolve_stats_path
 from rave.fader.export.host_controls import write_host_controls_json
+from rave.fader.export.nn_module import ScriptedFaderRAVE
 from rave.fader.export.trace_model import build_trace_model
 from rave.fader.model import FaderRAVE
-import cached_conv as cc
 
 FLAGS = flags.FLAGS
 
@@ -36,12 +38,14 @@ flags.DEFINE_string("model", required=True, help="FaderRAVE run dir or ckpt")
 flags.DEFINE_string("output_path", required=True, help="Output .ts path")
 flags.DEFINE_string("stats_path", default=None, help="attribute_stats.yaml")
 flags.DEFINE_string("db_path", default=None, help="LMDB to find stats")
+flags.DEFINE_bool("streaming", default=False, help="Enable cached conv streaming")
+flags.DEFINE_integer("channels", default=None, help="Output channels for export")
 
 
 @torch.no_grad()
 def main(argv):
     del argv
-    cc.use_cached_conv(False)
+    cc.use_cached_conv(FLAGS.streaming)
     torch.set_default_dtype(torch.float32)
 
     model_path = FLAGS.model
@@ -70,17 +74,28 @@ def main(argv):
 
     trace = build_trace_model(model, stats, deterministic=True)
     trace.eval()
-    scripted = torch.jit.script(trace)
-    os.makedirs(os.path.dirname(FLAGS.output_path) or ".", exist_ok=True)
-    scripted.save(FLAGS.output_path)
-    logging.info("saved TorchScript to %s", FLAGS.output_path)
 
-    # --- Ship stats yaml beside .ts for runtime unnormalize ---
+    stats_data = load_attribute_stats(stats)
+    scripted = ScriptedFaderRAVE(
+        core=trace,
+        min_max_features=stats_data["min_max_features"],
+        continuous_attributes=stats_data.get("continuous_attributes", []),
+        n_channels=model.n_channels,
+        target_channels=FLAGS.channels or model.n_channels,
+    )
+    scripted.eval()
+
+    x = torch.zeros(1, model.n_channels, 2**14)
+    scripted(x)
+
+    os.makedirs(os.path.dirname(FLAGS.output_path) or ".", exist_ok=True)
+    scripted.export_to_ts(FLAGS.output_path)
+    logging.info("saved nn~ TorchScript to %s", FLAGS.output_path)
+
     stats_out = os.path.splitext(FLAGS.output_path)[0] + "_attribute_stats.yaml"
     shutil.copy2(stats, stats_out)
     logging.info("copied stats to %s", stats_out)
 
-    stats_data = load_attribute_stats(stats)
     host_out = write_host_controls_json(FLAGS.output_path, stats, trace)
     logging.info("wrote host controls to %s", host_out)
 

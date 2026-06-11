@@ -11,7 +11,7 @@ Frame-wise features extracted from **mono** audio and resampled to latent length
 
 ## Available descriptor names
 
-**Librosa** (native sample rate): `rms`, `zcr`, `f0`, `centroid`, `bandwidth`, `rolloff`, `flatness`
+**Librosa** (native sample rate): `rms`, `zcr`, `f0` (log1p YIN), `chroma_class` (argmax chroma CQT, 0–11), `centroid`, `bandwidth`, `rolloff`, `flatness`
 
 **Timbral** (upsampled to 44.1 kHz when needed): `booming`, `brightness`, `depth`, `hardness`, `reverb`, `roughness`, `sharpness`, `warmth`
 
@@ -28,7 +28,7 @@ mono waveform (samples)
   → stack in gin attribute order → (D_cont, T_lat)
 ```
 
-Default training list (see [`brave_fader.gin`](../../../../configs/brave_fader.gin)): `centroid`, `rms`, `bandwidth`, `sharpness`, `booming`.
+Gin presets: [`brave_fader_percussive.gin`](../../../../configs/brave_fader_percussive.gin); [`brave_fader_pitched.gin`](../../../../configs/brave_fader_pitched.gin); [`brave_fader_texture.gin`](../../../../configs/brave_fader_texture.gin) (`rms`, `flatness`, `centroid`, `roughness`, `brightness`).
 
 **RMS** is frame-wise librosa RMS — decoder control + binned latent CE; optional `rms_gate` binning in precompute. This is separate from RAVE’s `reject_silent` dataset filter.
 

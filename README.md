@@ -125,6 +125,8 @@ python RAVE/scripts/export.py --run=path/to/model_checkpoint.ckpt
 
 This stores a TorchScript `(.ts)` model next to the checkpoint file which you can load in your selected application. Use `--streaming` for realtime-safe cached convolutions (see [RAVE README](./RAVE/README.md)).
 
+**Fader models (128+D with attribute knobs):** use [`RAVE/scripts/export_fader_nn.py`](./RAVE/scripts/export_fader_nn.py), not `export.py`. See [`docs/fader_host_controls.md`](./docs/fader_host_controls.md).
+
 
 ## Cite Us
 

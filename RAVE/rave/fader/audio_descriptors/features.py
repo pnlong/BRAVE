@@ -21,6 +21,10 @@ from .timbral_models import (
 import torchaudio.transforms as T
 import torch
 
+# Pitched f0: YIN range (Hz) and log1p compression for stable min/max stats
+F0_YIN_FMIN = 50.0
+F0_YIN_FMAX = 2000.0
+
 
 def compute_timbral(y: np.ndarray,
                     sr: int,
@@ -119,8 +123,14 @@ def compute_librosa(y: np.ndarray,
     if "zcr" in descriptors:
         features["zcr"] = librosa.feature.zero_crossing_rate(y)
     if "f0" in descriptors:
-        features["f0"] = librosa.yin(y, fmin=50, fmax=5000,
-                                     sr=sr)[np.newaxis, :]
+        f0 = librosa.yin(
+            y, fmin=F0_YIN_FMIN, fmax=F0_YIN_FMAX, sr=sr)
+        f0 = np.where(np.isfinite(f0), f0, 0.0)
+        features["f0"] = np.log1p(f0).astype(np.float64)[np.newaxis, :]
+    if "chroma_class" in descriptors:
+        chroma = librosa.feature.chroma_cqt(y=y, sr=sr)
+        features["chroma_class"] = chroma.argmax(axis=0).astype(np.float64)[
+            np.newaxis, :]
     # Spectral features
     S, phase = librosa.magphase(librosa.stft(y=y))
     # Compute all descriptors
