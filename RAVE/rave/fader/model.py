@@ -69,6 +69,8 @@ class FaderRAVE(RAVE):
         n_lat_dis_steps: int = 1,
         rave_mode: bool = False,
         attribute_stats_path: Optional[str] = None,
+        waveform_canonicalizer: Optional[nn.Module] = None,
+        latent_canonicalizer: Optional[nn.Module] = None,
         **kwargs,
     ):
         # --- Base RAVE (encoder, widened decoder via gin, audio discriminator) ---
@@ -92,6 +94,8 @@ class FaderRAVE(RAVE):
         self.lambda_delay = lambda_delay
         self.lambda_factor = 0.0  # ramped by LambdaWarmupCallback
         self.attribute_stats_path = attribute_stats_path
+        self.waveform_canonicalizer = waveform_canonicalizer
+        self.latent_canonicalizer = latent_canonicalizer
 
         # --- Discrete heads need per-name class counts (default binary=2) ---
         self.discrete_num_classes: Dict[str, int] = dict(discrete_num_classes or {})
@@ -214,6 +218,34 @@ class FaderRAVE(RAVE):
             device=z.device,
             dtype=z.dtype,
         )
+
+    def encode(self, x, return_mb: bool = False):
+        if self.waveform_canonicalizer is not None:
+            x = self.waveform_canonicalizer(x)
+        return super().encode(x, return_mb=return_mb)
+
+    def encode_with_warp(
+        self,
+        x: torch.Tensor,
+        *,
+        return_mb: bool = False,
+        apply_latent_warp: bool = True,
+    ):
+        """Encode with optional waveform + latent canonicalizers."""
+        x_in = x
+        if self.waveform_canonicalizer is not None:
+            x_in = self.waveform_canonicalizer(x_in)
+        if return_mb:
+            z, x_mb = super().encode(x_in, return_mb=True)
+        else:
+            z = super().encode(x_in, return_mb=False)
+            x_mb = None
+        z, reg = self.encoder.reparametrize(z)[:2]
+        if apply_latent_warp and self.latent_canonicalizer is not None:
+            z = self.latent_canonicalizer(z)
+        if return_mb:
+            return z, reg, x_mb, x_in
+        return z, reg
 
     def decode_neutral(self, z: torch.Tensor) -> torch.Tensor:
         """

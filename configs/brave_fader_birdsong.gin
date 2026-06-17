@@ -1,0 +1,96 @@
+# BRAVE + Fader — natural environmental audio (birdsong, field recordings)
+#
+# Continuous spectral / envelope controls only (no FSD50K discrete sidecar).
+# Full preprocess:
+#   python RAVE/scripts/preprocess_fader.py \\
+#     --input_path .../audio_subset \\
+#     --db_path .../preprocessed_denoised \\
+#     --config configs/brave_fader_birdsong.gin \\
+#     --denoise
+#
+# Train:
+#   python RAVE/scripts/train.py \\
+#     --config configs/brave_fader_birdsong.gin \\
+#     --name birdsong_fader_denoised \\
+#     --db_path .../preprocessed_denoised
+
+include "brave.gin"
+
+from __gin__ import dynamic_registration
+
+import rave
+import rave.training
+from rave import pqmf
+from rave import core
+from rave import blocks
+from rave import discriminator
+
+import rave.fader.model
+import rave.fader.dataset
+import rave.fader.callbacks
+import rave.fader.latent_discriminator
+import rave.fader.providers
+
+rave.training.build_training_model.fader = True
+rave.training.wrap_training_datasets.fader = True
+rave.training.finalize_training_model.fader = True
+rave.training.extra_training_callbacks.fader = True
+
+# envelope + spectral texture (no pitch, no FSD discrete class)
+CONTINUOUS_ATTRIBUTES = ["rms", "flatness", "centroid", "roughness", "brightness"]
+DISCRETE_ATTRIBUTES = []
+NUM_ATTRIBUTES = 5
+DECODER_LATENT_SIZE = 133
+
+blocks.Generator.latent_size = %DECODER_LATENT_SIZE
+
+rave.fader.model.FaderRAVE:
+    latent_size = %LATENT_SIZE
+    pqmf = @pqmf.CachedPQMF
+    sampling_rate = %SAMPLING_RATE
+    encoder = @blocks.VariationalEncoder
+    decoder = @blocks.Generator
+    discriminator = @discriminator.MultiScaleDiscriminator
+    phase_1_duration = %PHASE_1_DURATION
+    gan_loss = @core.hinge_gan
+    valid_signal_crop = False
+    feature_matching_fun = @feature_matching/core.mean_difference
+    num_skipped_features = 0
+    audio_distance = @core.AudioDistanceV1
+    multiband_audio_distance = @core.AudioDistanceV1
+    continuous_attributes = %CONTINUOUS_ATTRIBUTES
+    discrete_attributes = %DISCRETE_ATTRIBUTES
+    num_classes = 16
+    num_lat_dis_layers = 2
+    lambda_inf = 0.5
+    lambda_delay = %LAMBDA_DELAY
+    n_lat_dis_steps = 1
+    rave_mode = False
+    weights = {
+        'feature_matching': 10,
+        'latent_adversarial': 1.0,
+    }
+
+rave.fader.providers.build_attribute_loader:
+    continuous_attributes = %CONTINUOUS_ATTRIBUTES
+    discrete_attributes = %DISCRETE_ATTRIBUTES
+    use_audio_descriptors = True
+    cache_descriptors = True
+    cache_max_entries = 4096
+
+rave.fader.dataset.wrap_fader_dataset:
+    continuous_attributes = %CONTINUOUS_ATTRIBUTES
+    discrete_attributes = %DISCRETE_ATTRIBUTES
+    enabled = True
+    n_bands = %N_BAND
+    ratios = %RATIOS
+
+rave.fader.callbacks.LambdaWarmupCallback:
+    lambda_inf = 0.5
+    lambda_delay = %LAMBDA_DELAY
+
+rave.fader.latent_discriminator.LatentDiscriminator:
+    latent_size = %LATENT_SIZE
+    num_attributes = %NUM_ATTRIBUTES
+    num_classes = 16
+    num_layers = 2

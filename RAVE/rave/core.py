@@ -245,12 +245,12 @@ def mean_difference(target: torch.Tensor,
     if norm == 'L1':
         diff = diff.abs().mean()
         if relative:
-            diff = diff / target.abs().mean()
+            diff = diff / target.abs().mean().clamp_min(1e-7)
         return diff
     elif norm == 'L2':
         diff = (diff * diff).mean()
         if relative:
-            diff = diff / (target * target).mean()
+            diff = diff / (target * target).mean().clamp_min(1e-14)
         return diff
     else:
         raise Exception(f'Norm must be either L1 or L2, got {norm}')

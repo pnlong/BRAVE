@@ -22,6 +22,7 @@ from absl import app, flags
 from tqdm import tqdm
 from udls.generated import AudioExample
 
+from rave.preprocess_denoise import DenoiseConfig
 from rave.preprocess_plan import (
     AudioPack,
     AudioProbe,
@@ -80,6 +81,29 @@ flags.DEFINE_bool('pad_short_remainder',
                   default=False,
                   help='Zero-pad the final undersized short-file pack to one chunk')
 flags.DEFINE_bool('no_progress', False, 'Disable progress bars')
+flags.DEFINE_bool(
+    'denoise',
+    default=False,
+    help='Apply stationary spectral noise reduction before writing LMDB chunks',
+)
+flags.DEFINE_float(
+    'denoise_strength',
+    default=0.75,
+    help='Noise gate strength in [0, 1] when --denoise is set',
+)
+flags.DEFINE_float(
+    'denoise_noise_sec',
+    default=0.0,
+    help='Estimate noise floor from the first N seconds only (0 = whole clip)',
+)
+
+
+def build_denoise_config() -> DenoiseConfig:
+    return DenoiseConfig(
+        enabled=FLAGS.denoise,
+        strength=FLAGS.denoise_strength,
+        noise_sec=FLAGS.denoise_noise_sec,
+    )
 
 
 def load_audio_chunk(path: str, n_signal: int,
@@ -183,15 +207,27 @@ def process_audio_array(audio: Tuple[int, bytes],
 WorkItem = Tuple[str, Union[AudioProbe, AudioPack]]
 
 
-def load_work_chunks(item: WorkItem, n_signal: int, sr: int, channels: int) -> Iterable[bytes]:
+def load_work_chunks(
+    item: WorkItem,
+    n_signal: int,
+    sr: int,
+    channels: int,
+    denoise: DenoiseConfig,
+) -> Iterable[bytes]:
     kind, data = item
     if kind == 'long':
         probe: AudioProbe = data
         yield from iter_long_file_chunks(
-            probe.path, n_signal, sr, channels, probe.channels)
+            probe.path,
+            n_signal,
+            sr,
+            channels,
+            probe.channels,
+            denoise=denoise,
+        )
     elif kind == 'pack':
         pack: AudioPack = data
-        yield from iter_pack_chunks(pack, n_signal, sr, channels)
+        yield from iter_pack_chunks(pack, n_signal, sr, channels, denoise=denoise)
 
 
 def process_lazy_entry(entry: Tuple[int, WorkItem], env: lmdb.Environment) -> float:
@@ -359,11 +395,13 @@ def main(argv):
         print(f"ffprobe failed on {probe_failures} file(s).")
 
     n_seconds = 0.0
+    denoise = build_denoise_config()
     chunk_load = partial(
         load_work_chunks,
         n_signal=FLAGS.num_signal,
         sr=FLAGS.sampling_rate,
         channels=FLAGS.channels,
+        denoise=denoise,
     )
 
     if not FLAGS.lazy:
@@ -428,7 +466,12 @@ def main(argv):
         stats.stored_sec = n_seconds
 
     print_preprocess_summary(
-        stats, FLAGS.sampling_rate, FLAGS.num_signal, FLAGS.lazy)
+        stats,
+        FLAGS.sampling_rate,
+        FLAGS.num_signal,
+        FLAGS.lazy,
+        denoise=denoise,
+    )
 
     with open(os.path.join(FLAGS.output_path, 'metadata.yaml'), 'w') as metadata:
         yaml.safe_dump({
@@ -436,6 +479,9 @@ def main(argv):
             'channels': FLAGS.channels,
             'n_seconds': n_seconds,
             'sr': FLAGS.sampling_rate,
+            'denoise': FLAGS.denoise,
+            'denoise_strength': FLAGS.denoise_strength,
+            'denoise_noise_sec': FLAGS.denoise_noise_sec,
         }, metadata)
     pool.close()
     env.close()

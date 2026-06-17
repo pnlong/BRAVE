@@ -5,7 +5,7 @@
 From `BRAVE/RAVE` with `PYTHONPATH` including this directory:
 
 ```bash
-python -m pytest tests/test_preprocess_plan.py -v
+python -m pytest tests/test_preprocess_plan.py tests/test_preprocess_denoise.py -v
 ```
 
 ## Preprocess integration (short files)
@@ -39,13 +39,28 @@ python scripts/preprocess.py \
 
 Short files alone should contribute zero chunks unless padded.
 
+## Optional denoise (`--denoise`)
+
+Stationary spectral gating before LMDB write (useful for noisy environmental texture ablations):
+
+```bash
+python scripts/preprocess.py \
+  --input_path=/path/to/wavs \
+  --output_path=/path/to/preprocessed_denoised.lmdb \
+  --denoise \
+  --denoise_strength=0.75
+```
+
+`metadata.yaml` in the LMDB folder records `denoise`, `denoise_strength`, and `denoise_noise_sec`.
+Set `--denoise_noise_sec=0.5` to estimate the noise floor from clip starts only.
+
 ## Training RMS gate
 
 With a preprocessed dataset and gin config enabling `dataset.maybe_reject_silent`, training uses the gate on the **train** split only. Override from CLI:
 
 ```bash
 python scripts/train.py --config=../../configs/brave.gin ... --noreject_silent
-python scripts/train.py ... --reject_silent --reject_silent_rms_db=-45
+python scripts/train.py ... --reject_silent --reject_silent_rms_db=-35
 ```
 
-`configs/brave.gin` sets `enabled = True` and `rms_db_threshold = -50.0` by default.
+`configs/brave.gin` sets `enabled = True`, `rms_db_threshold = -40.0`, and `max_tries = 16` by default.

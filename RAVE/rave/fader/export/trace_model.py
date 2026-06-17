@@ -16,7 +16,7 @@ Port of neurorave realtime/trace.py for BRAVE FaderRAVE.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import gin
 import torch
@@ -44,11 +44,15 @@ class FaderTraceModel(nn.Module):
         latent_size: int,
         sr: int,
         deterministic: bool = True,
+        waveform_canonicalizer: Optional[nn.Module] = None,
+        latent_canonicalizer: Optional[nn.Module] = None,
     ) -> None:
         super().__init__()
         self.encoder = encoder
         self.decoder = decoder
         self.pqmf = pqmf
+        self.waveform_canonicalizer = waveform_canonicalizer
+        self.latent_canonicalizer = latent_canonicalizer
         self.attribute_names = list(attribute_names)
         self.attribute_kinds = dict(attribute_kinds)
         self.discrete_num_classes = dict(discrete_num_classes)
@@ -92,6 +96,8 @@ class FaderTraceModel(nn.Module):
         return out
 
     def _encode_core(self, x: torch.Tensor) -> torch.Tensor:
+        if self.waveform_canonicalizer is not None:
+            x = self.waveform_canonicalizer(x)
         # --- PQMF encode → VAE latent (deterministic mean if configured) ---
         if self.pqmf is not None:
             x = self.pqmf(x)
@@ -100,8 +106,13 @@ class FaderTraceModel(nn.Module):
             mean, scale = torch.split(z, z.shape[1] // 2, dim=1)
             std = nn.functional.softplus(scale) + 1e-4
             if self.deterministic:
-                return mean
-            return mean + torch.randn_like(mean) * std
+                z = mean
+            else:
+                z = mean + torch.randn_like(mean) * std
+        else:
+            z = z
+        if self.latent_canonicalizer is not None:
+            z = self.latent_canonicalizer(z)
         return z
 
     @torch.jit.export
@@ -152,4 +163,6 @@ def build_trace_model(
         latent_size=fader_model.latent_size,
         sr=fader_model.sr,
         deterministic=deterministic,
+        waveform_canonicalizer=getattr(fader_model, "waveform_canonicalizer", None),
+        latent_canonicalizer=getattr(fader_model, "latent_canonicalizer", None),
     )

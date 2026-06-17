@@ -388,8 +388,8 @@ class RejectSilentDataset(data.Dataset):
     def __init__(
         self,
         dataset: data.Dataset,
-        rms_db_threshold: float = -50.0,
-        max_tries: int = 8,
+        rms_db_threshold: float = -40.0,
+        max_tries: int = 16,
         seed: int = 42,
     ) -> None:
         super().__init__()
@@ -416,8 +416,8 @@ class RejectSilentDataset(data.Dataset):
 def maybe_reject_silent(
     dataset: data.Dataset,
     enabled: bool = False,
-    rms_db_threshold: float = -50.0,
-    max_tries: int = 8,
+    rms_db_threshold: float = -40.0,
+    max_tries: int = 16,
 ) -> data.Dataset:
     if not enabled:
         return dataset

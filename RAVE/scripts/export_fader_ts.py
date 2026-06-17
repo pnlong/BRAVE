@@ -36,6 +36,21 @@ flags.DEFINE_string("model", required=True, help="FaderRAVE run dir or ckpt")
 flags.DEFINE_string("output_path", required=True, help="Output .ts path")
 flags.DEFINE_string("stats_path", default=None, help="attribute_stats.yaml")
 flags.DEFINE_string("db_path", default=None, help="LMDB to find stats")
+flags.DEFINE_string(
+    "waveform_canonicalizer",
+    default=None,
+    help="waveform_canonicalizer.ckpt to embed in export",
+)
+flags.DEFINE_string(
+    "latent_canonicalizer",
+    default=None,
+    help="latent_canonicalizer.ckpt to embed in export",
+)
+flags.DEFINE_string(
+    "fader_config",
+    default=None,
+    help="Fader gin config (required with canonicalizer ckpt if not in run config)",
+)
 
 
 @torch.no_grad()
@@ -58,6 +73,12 @@ def main(argv):
     model = FaderRAVE()
     model = model.load_from_checkpoint(run)
     model.eval()
+
+    if FLAGS.waveform_canonicalizer or FLAGS.latent_canonicalizer:
+        from rave.fader.canonicalizer_config import load_canonicalizer_onto_model
+
+        ckpt = FLAGS.waveform_canonicalizer or FLAGS.latent_canonicalizer
+        load_canonicalizer_onto_model(model, ckpt)
 
     stats = resolve_stats_path(FLAGS.db_path, FLAGS.stats_path)
     if stats is None:

@@ -17,10 +17,12 @@ from load_model import (
     apply_latent_mask,
     build_constant_attr,
     compression_ratio,
+    encode_to_latent_with_warp,
     extract_normalized_attributes,
     has_pca,
     is_fader_model,
     load_audio,
+    load_fader_with_canonicalizer,
     load_model,
     load_rave,
     pca_display_dims,
@@ -136,6 +138,9 @@ def run_reconstruction(
     clip_percentiles: tuple[float, float] = (2.0, 98.0),
     stats_path: str | Path | None = None,
     db_path: str | Path | None = None,
+    waveform_canonicalizer: str | Path | None = None,
+    latent_canonicalizer: str | Path | None = None,
+    fader_config: str | Path | None = None,
     attr_mode: str = "extract",
     swap_input: str | Path | None = None,
     attr_constant: str = "",
@@ -151,8 +156,20 @@ def run_reconstruction(
     if not input_path.is_file():
         raise FileNotFoundError(f"input audio not found: {input_path}")
 
-    model = load_model(
-        model_path, use_gpu=use_gpu, stats_path=stats_path, db_path=db_path)
+    if waveform_canonicalizer or latent_canonicalizer:
+        bundle = load_fader_with_canonicalizer(
+            model_path,
+            config_path=fader_config,
+            db_path=db_path,
+            stats_path=stats_path,
+            waveform_canonicalizer_ckpt=waveform_canonicalizer,
+            latent_canonicalizer_ckpt=latent_canonicalizer,
+            use_gpu=use_gpu,
+        )
+        model = bundle.model
+    else:
+        model = load_model(
+            model_path, use_gpu=use_gpu, stats_path=stats_path, db_path=db_path)
     device = next(model.parameters()).device
     x = load_audio(input_path, model, device=device)
     swap_x = None
@@ -160,7 +177,8 @@ def run_reconstruction(
         swap_x = load_audio(swap_input, model, device=device)
 
     with torch.no_grad():
-        z = model.encode_to_latent(x[None], use_mean=(latent_mode == "mean"))
+        z = encode_to_latent_with_warp(
+            model, x[None], use_mean=(latent_mode == "mean"))
         latent_dim, time_frames = z.shape[-2], z.shape[-1]
         mask = build_mask(
             mask_style,
@@ -383,6 +401,21 @@ def parse_args() -> argparse.Namespace:
         help="LMDB path to find attribute_stats.yaml for FaderRAVE",
     )
     p.add_argument(
+        "--fader-config",
+        default=None,
+        help="Fader gin config for canonicalizer manifest validation",
+    )
+    p.add_argument(
+        "--waveform-canonicalizer",
+        default=None,
+        help="waveform_canonicalizer.ckpt path",
+    )
+    p.add_argument(
+        "--latent-canonicalizer",
+        default=None,
+        help="latent_canonicalizer.ckpt path (mutually exclusive with waveform)",
+    )
+    p.add_argument(
         "--attr-mode",
         choices=ATTR_MODES,
         default="extract",
@@ -420,6 +453,9 @@ def main() -> None:
         clip_percentiles=tuple(args.clip_percentile),
         stats_path=args.stats_path,
         db_path=args.db_path,
+        waveform_canonicalizer=args.waveform_canonicalizer,
+        latent_canonicalizer=args.latent_canonicalizer,
+        fader_config=args.fader_config,
         attr_mode=args.attr_mode,
         swap_input=args.swap_input,
         attr_constant=args.attr_constant,

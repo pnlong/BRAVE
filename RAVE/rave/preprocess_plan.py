@@ -10,6 +10,8 @@ from typing import Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+from .preprocess_denoise import DenoiseConfig, denoise_pcm
+
 
 @dataclass(frozen=True)
 class AudioProbe:
@@ -158,6 +160,7 @@ def decode_path_pcm(
     sr: int,
     channels: int,
     input_channels: int,
+    denoise: DenoiseConfig = DenoiseConfig.disabled(),
 ) -> np.ndarray:
     """Decode file to shape (channels, n_samples) float32 in [-1, 1]."""
     channel_map = _channel_map(input_channels, channels)
@@ -182,18 +185,20 @@ def decode_path_pcm(
     if not channel_data:
         return np.zeros((channels, 0), dtype=np.float32)
     n = min(len(c) for c in channel_data)
-    return np.stack([c[:n] for c in channel_data], axis=0)
+    pcm = np.stack([c[:n] for c in channel_data], axis=0)
+    return denoise_pcm(pcm, sr, denoise)
 
 
 def concat_pack_pcm(
     pack: AudioPack,
     sr: int,
     channels: int,
+    denoise: DenoiseConfig = DenoiseConfig.disabled(),
 ) -> np.ndarray:
     parts = []
     for member in pack.members:
         pcm = decode_path_pcm(
-            member.path, sr, channels, member.channels)
+            member.path, sr, channels, member.channels, denoise=denoise)
         if pcm.shape[-1] > 0:
             parts.append(pcm)
     if not parts:
@@ -223,10 +228,11 @@ def iter_pack_chunks(
     n_signal: int,
     sr: int,
     channels: int,
+    denoise: DenoiseConfig = DenoiseConfig.disabled(),
 ) -> Iterable[bytes]:
     """Yield LMDB chunks from a packed group (non-lazy: 2*n_signal samples per chunk)."""
     chunk_samples = 2 * n_signal
-    pcm = concat_pack_pcm(pack, sr, channels)
+    pcm = concat_pack_pcm(pack, sr, channels, denoise=denoise)
     offset = 0
     while offset + chunk_samples <= pcm.shape[-1]:
         yield pcm_to_chunk_bytes(pcm[:, offset:offset + chunk_samples], chunk_samples)
@@ -239,8 +245,19 @@ def iter_long_file_chunks(
     sr: int,
     channels: int,
     input_channels: int,
+    denoise: DenoiseConfig = DenoiseConfig.disabled(),
 ) -> Iterable[bytes]:
     """Stream chunks from one file (same byte layout as load_audio_chunk)."""
+    chunk_samples = 2 * n_signal
+    if denoise.enabled:
+        pcm = decode_path_pcm(path, sr, channels, input_channels, denoise=denoise)
+        offset = 0
+        while offset + chunk_samples <= pcm.shape[-1]:
+            yield pcm_to_chunk_bytes(
+                pcm[:, offset:offset + chunk_samples], chunk_samples)
+            offset += chunk_samples
+        return
+
     channel_map = _channel_map(input_channels, channels)
     processes = []
     for i in range(channels):
@@ -301,7 +318,13 @@ def compute_discarded_seconds(
     return tail_samples / sr, remainder_samples / sr
 
 
-def print_preprocess_summary(stats: PreprocessStats, sr: int, num_signal: int, lazy: bool) -> None:
+def print_preprocess_summary(
+    stats: PreprocessStats,
+    sr: int,
+    num_signal: int,
+    lazy: bool,
+    denoise: DenoiseConfig = DenoiseConfig.disabled(),
+) -> None:
     chunk_sec = min_samples_for_mode(num_signal, lazy) / sr
     lengths = sorted(stats.file_lengths_sec)
     n = len(lengths)
@@ -347,6 +370,12 @@ def print_preprocess_summary(stats: PreprocessStats, sr: int, num_signal: int, l
     print(f'    tail waste (long files):    {stats.tail_discarded_sec:.2f} s')
     print(f'    short remainders:           {stats.remainder_discarded_sec:.2f} s')
     print(f'  chunk size:                   {chunk_sec:.6f} s ({min_samples_for_mode(num_signal, lazy)} samples @ {sr} Hz)')
+    if denoise.enabled:
+        print(
+            f'  denoise:                      on '
+            f'(strength={denoise.strength:.2f}, '
+            f'noise_sec={denoise.noise_sec:.2f})'
+        )
     if n:
         print('  file length distribution (s):')
         print(f'    min / max:                  {lengths[0]:.4f} / {lengths[-1]:.4f}')

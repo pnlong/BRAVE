@@ -1,0 +1,72 @@
+# Stage-1 input canonicalizer training (waveform or latent warp on frozen FaderRAVE)
+# Usage:
+#   python RAVE/scripts/train_canonicalizer.py \
+#     --config configs/brave_canonicalizer.gin \
+#     --fader_config configs/brave_fader_pitched.gin \
+#     --ckpt runs/birdsong.ckpt --db_path /data/birdsong_lmdb \
+#     --ood_path ood_samples --canonicalizer_type waveform --name wf_canon
+
+include "brave.gin"
+
+from __gin__ import dynamic_registration
+
+import rave
+import rave.training
+from rave import pqmf
+from rave import core
+from rave import blocks
+from rave import discriminator
+from rave import dsp
+
+import rave.fader.model
+import rave.fader.dataset
+import rave.fader.canonicalizer_dataset
+import rave.fader.canonicalizer_trainer
+import rave.fader.latent_domain_discriminator
+import rave.fader.waveform_canonicalizer
+import rave.fader.latent_canonicalizer
+
+rave.training.build_training_model.fader = True
+rave.training.wrap_training_datasets.fader = True
+rave.training.finalize_training_model.fader = True
+
+# --- Waveform canonicalizer (EQ + optional reverb) ---
+dsp.BiquadBank:
+    sample_rate = %SAMPLING_RATE
+    n_bands = 6
+    min_freq = 80.0
+    max_freq = 12000.0
+    max_gain_db = 12.0
+
+dsp.CausalReverb:
+    sample_rate = %SAMPLING_RATE
+
+rave.fader.waveform_canonicalizer.WaveformCanonicalizer:
+    eq = @dsp.BiquadBank
+    reverb = @dsp.CausalReverb
+    use_reverb = True
+
+rave.fader.latent_canonicalizer.LatentCanonicalizer:
+    latent_size = %LATENT_SIZE
+
+rave.fader.latent_domain_discriminator.LatentDomainDiscriminator:
+    latent_size = %LATENT_SIZE
+    base_channels = 128
+    num_layers = 3
+
+rave.fader.canonicalizer_trainer.CanonicalizerTrainer:
+    lambda_identity = 10.0
+    lambda_latent_stat = 1.0
+    lambda_descriptor = 0.5
+    lambda_latent_adv = 0.1
+    lambda_rms_recon = 1.0
+    recon_ood_mode = "rms"
+    recon_in_domain_mode = "stft"
+    lr = 1e-3
+    disc_lr = 2e-4
+    unfreeze_encoder = False
+    encoder_lr = 1e-5
+    latent_domain_disc = @rave.fader.latent_domain_discriminator.LatentDomainDiscriminator
+
+rave.fader.canonicalizer_dataset.build_canonicalizer_dataset:
+    in_domain_fraction = 0.8

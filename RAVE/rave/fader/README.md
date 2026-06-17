@@ -65,6 +65,7 @@ Use standalone [`BRAVE/configs/brave_fader.gin`](../../../configs/brave_fader.gi
 
 | Script | Purpose |
 |--------|---------|
+| `RAVE/scripts/preprocess_fader.py` | Full Fader prep: LMDB + manifest + optional sidecar + `attribute_stats.yaml` |
 | `RAVE/scripts/precompute_descriptors.py` | Train-split min/max + bin edges → `attribute_stats.yaml` |
 | `RAVE/scripts/train.py` | Standard entry; loads stats when Fader enabled |
 | `RAVE/scripts/build_lmdb_index_manifest.py` | LMDB index → source path (FSD50k sidecars) |

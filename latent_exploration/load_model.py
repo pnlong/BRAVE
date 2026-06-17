@@ -10,6 +10,7 @@ Handles:
 from __future__ import annotations
 
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional, Union
 
@@ -26,6 +27,16 @@ if _RAVE.is_dir() and str(_RAVE) not in sys.path:
     sys.path.insert(0, str(_RAVE))
 
 import rave  # noqa: E402
+
+
+@dataclass
+class FaderBundle:
+    """Loaded FaderRAVE plus optional canonicalizer warps and domain metadata."""
+
+    model: Any
+    domain_profile: Optional[Any] = None
+    waveform_canonicalizer: Optional[torch.nn.Module] = None
+    latent_canonicalizer: Optional[torch.nn.Module] = None
 
 
 def gin_operative_config_str_from_file(config_path: Path) -> str:
@@ -124,6 +135,105 @@ def load_model(
         device = torch.device("cpu")
     model = model.to(device)
     return model
+
+
+def _attach_canonicalizer_warp(
+    model,
+    state_dict: dict,
+    canonicalizer_type: str,
+) -> None:
+    from rave.fader.canonicalizer_config import attach_canonicalizer_to_model
+
+    attach_canonicalizer_to_model(model, state_dict, canonicalizer_type)
+
+
+def load_fader_with_canonicalizer(
+    model_path: str | Path,
+    *,
+    config_path: Optional[str | Path] = None,
+    db_path: Optional[str | Path] = None,
+    stats_path: Optional[str | Path] = None,
+    waveform_canonicalizer_ckpt: Optional[str | Path] = None,
+    latent_canonicalizer_ckpt: Optional[str | Path] = None,
+    use_gpu: bool = False,
+    validate_manifest: bool = True,
+) -> FaderBundle:
+    """
+    Load FaderRAVE and optionally attach waveform or latent canonicalizer weights.
+    """
+    if waveform_canonicalizer_ckpt and latent_canonicalizer_ckpt:
+        raise ValueError("Pass at most one of waveform_canonicalizer_ckpt, latent_canonicalizer_ckpt")
+
+    from rave.fader.canonicalizer_config import (
+        build_domain_profile,
+        load_canonicalizer_checkpoint,
+        validate_manifest as _validate_manifest,
+    )
+
+    model_path = Path(model_path)
+    if config_path is None:
+        config_path = rave.core.search_for_config(str(model_path))
+    if config_path is None:
+        raise FileNotFoundError(f"config not found near {model_path}")
+
+    profile = None
+    if db_path is not None:
+        profile = build_domain_profile(config_path, db_path, stats_path=stats_path)
+
+    model = load_model(
+        model_path,
+        use_gpu=use_gpu,
+        stats_path=stats_path,
+        db_path=db_path,
+    )
+    if not is_fader_model(model):
+        raise TypeError("load_fader_with_canonicalizer requires FaderRAVE checkpoint")
+
+    wf_ckpt = Path(waveform_canonicalizer_ckpt) if waveform_canonicalizer_ckpt else None
+    lat_ckpt = Path(latent_canonicalizer_ckpt) if latent_canonicalizer_ckpt else None
+    ckpt_path = wf_ckpt or lat_ckpt
+
+    wf_mod = None
+    lat_mod = None
+    if ckpt_path is not None:
+        state, manifest = load_canonicalizer_checkpoint(ckpt_path)
+        if validate_manifest and profile is not None:
+            _validate_manifest(
+                manifest,
+                config_path=config_path,
+                ckpt_path=model_path,
+                db_path=db_path,
+                strict=False,
+            )
+        _attach_canonicalizer_warp(model, state, manifest.canonicalizer_type)
+        if manifest.canonicalizer_type == "waveform":
+            wf_mod = model.waveform_canonicalizer
+        else:
+            lat_mod = model.latent_canonicalizer
+
+    return FaderBundle(
+        model=model,
+        domain_profile=profile,
+        waveform_canonicalizer=wf_mod,
+        latent_canonicalizer=lat_mod,
+    )
+
+
+def encode_to_latent_with_warp(
+    model,
+    waveform: torch.Tensor,
+    *,
+    use_mean: bool = True,
+) -> torch.Tensor:
+    """Encode [C,T] or [1,C,T] with optional canonicalizers attached."""
+    if waveform.dim() == 2:
+        waveform = waveform.unsqueeze(0)
+    if is_fader_model(model) and (
+        model.waveform_canonicalizer is not None or model.latent_canonicalizer is not None
+    ):
+        z, _ = model.encode_with_warp(waveform)
+        return z
+    return model.encode_to_latent(waveform, use_mean=use_mean)
 
 
 def load_rave(model_path: str | Path, use_gpu: bool = False) -> rave.RAVE:
