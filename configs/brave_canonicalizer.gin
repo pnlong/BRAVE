@@ -22,6 +22,7 @@ import rave.fader.model
 import rave.fader.dataset
 import rave.fader.canonicalizer_dataset
 import rave.fader.canonicalizer_trainer
+import rave.fader.ir_augmentation
 import rave.fader.latent_domain_discriminator
 import rave.fader.waveform_canonicalizer
 import rave.fader.latent_canonicalizer
@@ -70,3 +71,7 @@ rave.fader.canonicalizer_trainer.CanonicalizerTrainer:
 
 rave.fader.canonicalizer_dataset.build_canonicalizer_dataset:
     in_domain_fraction = 0.8
+    ir_path = ""
+    ir_prob = 0.0
+    ir_wet_min = 0.15
+    ir_wet_max = 0.55

@@ -13,6 +13,7 @@ import torchaudio
 from torch.utils import data
 
 from .attributes import latent_length_from_config
+from .ir_augmentation import ImpulseResponseAug
 from .providers import AudioDescriptorProvider
 
 # Batch domain tags (generic — not tied to a specific OOD source)
@@ -32,6 +33,7 @@ class OodWavDataset(data.Dataset):
         continuous_attributes: Sequence[str],
         discrete_attributes: Sequence[str],
         latent_length: int,
+        ir_augment: Optional[ImpulseResponseAug] = None,
     ) -> None:
         self.ood_path = Path(ood_path)
         self.sr = sampling_rate
@@ -39,6 +41,8 @@ class OodWavDataset(data.Dataset):
         self.latent_length = latent_length
         self.continuous_attributes = list(continuous_attributes)
         self.discrete_attributes = list(discrete_attributes)
+        self._ir_augment = ir_augment if (
+            ir_augment is not None and ir_augment.enabled) else None
         self._provider = AudioDescriptorProvider(
             continuous_attributes=self.continuous_attributes,
             sampling_rate=sampling_rate,
@@ -64,7 +68,10 @@ class OodWavDataset(data.Dataset):
         if mono.shape[-1] > self.n_signal:
             start = random.randint(0, mono.shape[-1] - self.n_signal)
             mono = mono[:, start:start + self.n_signal]
-        return mono.numpy()
+        audio = mono.numpy()
+        if self._ir_augment is not None:
+            audio = self._ir_augment.maybe_apply(audio)
+        return audio
 
     def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor, str]:
         audio_np = self._load_wav(self._files[index % len(self._files)])
@@ -123,11 +130,26 @@ def build_canonicalizer_dataset(
     discrete_attributes: Sequence[str],
     ood_path: str,
     in_domain_fraction: float = 0.8,
+    ir_path: str = "",
+    ir_prob: float = 0.0,
+    ir_wet_min: float = 0.15,
+    ir_wet_max: float = 0.55,
     *,
     train_fraction: Optional[float] = None,
 ) -> MixedCanonicalizerDataset:
     frac = train_fraction if train_fraction is not None else in_domain_fraction
     t_lat = latent_length_from_config(n_signal, n_bands, ratios)
+    ir_aug = None
+    if ir_prob > 0.0:
+        ir_aug = ImpulseResponseAug(
+            ir_path=ir_path or None,
+            sampling_rate=sampling_rate,
+            prob=ir_prob,
+            wet_min=ir_wet_min,
+            wet_max=ir_wet_max,
+        )
+        if not ir_aug.enabled:
+            ir_aug = None
     ood_ds = OodWavDataset(
         ood_path=ood_path,
         sampling_rate=sampling_rate,
@@ -135,6 +157,7 @@ def build_canonicalizer_dataset(
         continuous_attributes=continuous_attributes,
         discrete_attributes=discrete_attributes,
         latent_length=t_lat,
+        ir_augment=ir_aug,
     )
     return MixedCanonicalizerDataset(
         in_domain_dataset=train_dataset,

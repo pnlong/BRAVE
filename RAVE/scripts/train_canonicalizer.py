@@ -68,6 +68,18 @@ def parse_args():
     p.add_argument("--wandb", action="store_true", help="Log to Weights & Biases")
     p.add_argument("--wandb_project", default="brave-canonicalizer")
     p.add_argument("--wandb_offline", action="store_true")
+    p.add_argument(
+        "--ir_path",
+        default=None,
+        help="Directory of room IR .wav files for OOD augmentation",
+    )
+    p.add_argument(
+        "--ir_prob",
+        type=float,
+        default=None,
+        help="Probability of IR aug on OOD clips (default: gin, usually 0.5 when ir_path set)",
+    )
+    p.add_argument("--no_ir", action="store_true", help="Disable OOD IR augmentation")
     return p.parse_args()
 
 
@@ -160,6 +172,21 @@ def main():
     cont = model.continuous_attributes
     disc = model.discrete_attributes
 
+    ir_kwargs: dict = {}
+    if args.no_ir:
+        ir_kwargs["ir_prob"] = 0.0
+    else:
+        if args.ir_path is not None:
+            ir_kwargs["ir_path"] = args.ir_path
+            if args.ir_prob is None:
+                ir_kwargs["ir_prob"] = 0.5
+        if args.ir_prob is not None:
+            ir_kwargs["ir_prob"] = args.ir_prob
+
+    if ir_kwargs.get("ir_prob", 0.0) > 0.0:
+        ir_src = ir_kwargs.get("ir_path") or "(synthetic fallback)"
+        print(f"OOD IR augmentation: prob={ir_kwargs['ir_prob']} path={ir_src}")
+
     mixed = build_canonicalizer_dataset(
         train_dataset=train_wrapped,
         ood_path=args.ood_path,
@@ -169,6 +196,7 @@ def main():
         ratios=ratios,
         continuous_attributes=cont,
         discrete_attributes=disc,
+        **ir_kwargs,
     )
     val_mixed = build_canonicalizer_dataset(
         train_dataset=val_wrapped,
@@ -180,6 +208,7 @@ def main():
         continuous_attributes=cont,
         discrete_attributes=disc,
         in_domain_fraction=0.5,
+        ir_prob=0.0,
     )
 
     num_workers = 0 if sys.platform == "darwin" else args.workers
