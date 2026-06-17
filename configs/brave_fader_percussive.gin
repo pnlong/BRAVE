@@ -50,7 +50,7 @@ rave.fader.model.FaderRAVE:
     num_classes = 16
     num_lat_dis_layers = 2
     lambda_inf = 0.5
-    lambda_delay = 15000
+    lambda_delay = %LAMBDA_DELAY
     n_lat_dis_steps = 1
     rave_mode = False
     weights = {
@@ -74,7 +74,7 @@ rave.fader.dataset.wrap_fader_dataset:
 
 rave.fader.callbacks.LambdaWarmupCallback:
     lambda_inf = 0.5
-    lambda_delay = 15000
+    lambda_delay = %LAMBDA_DELAY
 
 rave.fader.latent_discriminator.LatentDiscriminator:
     latent_size = %LATENT_SIZE

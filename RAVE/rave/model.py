@@ -458,12 +458,13 @@ class RAVE(pl.LightningModule):
         # LOGGING
         log_train(self, "beta_factor", self.beta_factor)
 
-        if self.warmed_up:
+        if self.warmed_up and not is_gen_step:
             log_train(self, "loss_dis", loss_dis)
             log_train(self, "pred_real", pred_real.mean())
             log_train(self, "pred_fake", pred_fake.mean())
 
-        log_train_dict(self, loss_gen)
+        if is_gen_step:
+            log_train_dict(self, loss_gen)
         p.tick('logging')
 
     def validation_step(self, x, batch_idx):

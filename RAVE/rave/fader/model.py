@@ -41,7 +41,6 @@ from .attributes import (
     discrete_index_to_decoder_float,
     load_attribute_stats,
     per_attribute_accuracies,
-    per_attribute_ce_losses,
     quantify,
     resolve_attribute_config,
     save_attribute_stats,
@@ -66,7 +65,7 @@ class FaderRAVE(RAVE):
         num_classes: int = 16,
         num_lat_dis_layers: int = 2,
         lambda_inf: float = 0.5,
-        lambda_delay: int = 15000,
+        lambda_delay: int = 2000,
         n_lat_dis_steps: int = 1,
         rave_mode: bool = False,
         attribute_stats_path: Optional[str] = None,
@@ -296,23 +295,21 @@ class FaderRAVE(RAVE):
             attr_norm = torch.zeros_like(attr_norm)
         return attr_norm, attr_cls
 
-    def _log_per_attribute_metrics(
+    def _log_aggregate_attribute_metrics(
         self,
         attr_cls_pred: List[torch.Tensor],
         attr_cls: torch.Tensor,
         prefix: str,
     ) -> None:
-        """Log per-attribute CE and accuracy to W&B."""
-        ce = per_attribute_ce_losses(
-            attr_cls_pred, attr_cls, self.attribute_names)
-        acc = per_attribute_accuracies(
-            attr_cls_pred, attr_cls, self.attribute_names)
+        """Log mean attribute CE and accuracy to W&B."""
         from ..train_logging import log_train
 
-        for name, val in ce.items():
-            log_train(self, f"fader/{prefix}_ce_{name}", val)
-        for name, val in acc.items():
-            log_train(self, f"fader/{prefix}_acc_{name}", val)
+        ce = attribute_classification_loss(attr_cls_pred, attr_cls)
+        per_acc = per_attribute_accuracies(
+            attr_cls_pred, attr_cls, self.attribute_names)
+        acc = sum(per_acc.values()) / max(len(per_acc), 1)
+        log_train(self, f"fader/{prefix}_ce", ce)
+        log_train(self, f"fader/{prefix}_acc", acc)
 
     def lat_dis_step(
         self,
@@ -334,7 +331,7 @@ class FaderRAVE(RAVE):
         # --- +CE: improve attribute prediction from content latent ---
         attr_cls_pred = self.latent_discriminator(z)
         latent_dis = attribute_classification_loss(attr_cls_pred, attr_cls)
-        self._log_per_attribute_metrics(attr_cls_pred, attr_cls, "latent")
+        self._log_aggregate_attribute_metrics(attr_cls_pred, attr_cls, "latent")
 
         lat_dis_opt.zero_grad()
         latent_dis.backward()
@@ -408,7 +405,8 @@ class FaderRAVE(RAVE):
             # --- Phase 1: encoder adversary via -CE on z ---
             attr_cls_pred = self.latent_discriminator(z)
             lat_dis_loss = -attribute_classification_loss(attr_cls_pred, attr_cls)
-            self._log_per_attribute_metrics(attr_cls_pred, attr_cls, "latent_gen")
+            self._log_aggregate_attribute_metrics(
+                attr_cls_pred, attr_cls, "latent_gen")
         else:
             # --- Phase 2: latent adversarial finished; skip -CE (z detached, no encoder grad) ---
             log_train(self, "fader/latent_adversarial_active", 0.0)
@@ -530,12 +528,13 @@ class FaderRAVE(RAVE):
             log_train(self, "fader/latent_dis_loss_dis", lat_dis_loss_dis)
             log_train(self, "fader/latent_adversarial_active", 1.0)
 
-        if self.warmed_up:
+        if self.warmed_up and not is_gen_step:
             log_train(self, "loss_dis", loss_dis)
             log_train(self, "pred_real", pred_real.mean())
             log_train(self, "pred_fake", pred_fake.mean())
 
-        log_train_dict(self, loss_gen)
+        if is_gen_step:
+            log_train_dict(self, loss_gen)
 
     def validation_step(self, batch, batch_idx):
         """Validation with conditional decode; attrs required like training."""

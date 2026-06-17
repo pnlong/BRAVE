@@ -11,9 +11,8 @@ VAL_PREFIX = "val/"
 
 _RECON_PREFIXES = ("multiband_", "fullband_")
 
-# Explicit flags so W&B receives time series under manual optimization and when
-# len(train) < Trainer.log_every_n_steps (common for small LMDBs + large batch).
-_LOG_KWARGS = dict(on_step=True, on_epoch=True, logger=True, sync_dist=False)
+# Step-only training scalars keep W&B charts readable (no duplicate epoch curves).
+_LOG_KWARGS = dict(on_step=True, on_epoch=False, logger=True, sync_dist=False)
 _VAL_KWARGS = dict(on_step=False, on_epoch=True, logger=True, sync_dist=False)
 
 
