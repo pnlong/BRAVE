@@ -6,13 +6,14 @@ Run from the BRAVE repo root::
 
   export PYTHONPATH="${PWD}/RAVE:${PYTHONPATH}"
 
-**Continuous-only** (birdsong, field recordings)::
+**Continuous-only** (birdsong, field recordings) — optional **PCEN** suppresses steady
+environmental noise and boosts transients (bird calls) before LMDB write::
 
   python RAVE/scripts/preprocess_fader.py \\
-    --input_path .../audio_subset \\
-    --db_path .../preprocessed_denoised \\
+    --input_path .../yt_birdsong/audio \\
+    --db_path .../yt_birdsong/preprocessed \\
     --config configs/brave_fader_birdsong.gin \\
-    --denoise
+    --pcen --normalize
 
 **Discrete sidecar** (FSD50K ``texture_class`` or ``water_scene``) — use a gin config
 that lists the discrete attribute and pass ``--sidecar_scheme`` matching it::
@@ -160,6 +161,25 @@ def main() -> None:
     parser.add_argument("--denoise", action="store_true")
     parser.add_argument("--denoise_strength", type=float, default=0.75)
     parser.add_argument("--denoise_noise_sec", type=float, default=0.0)
+    parser.add_argument("--pcen", action="store_true",
+                        help="PCEN: suppress steady noise, boost transients (birdsong)")
+    parser.add_argument("--pcen_n_mels", type=int, default=128)
+    parser.add_argument("--pcen_gain", type=float, default=0.98)
+    parser.add_argument("--pcen_bias", type=float, default=2.0)
+    parser.add_argument("--pcen_power", type=float, default=0.5)
+    parser.add_argument("--pcen_time_constant", type=float, default=0.4)
+    parser.add_argument("--pcen_max_gain", type=float, default=10.0)
+    parser.add_argument(
+        "--normalize",
+        action="store_true",
+        help="Peak-normalize each LMDB chunk (same rule as train.py --normalize)",
+    )
+    parser.add_argument(
+        "--normalize_max_gain_db",
+        type=float,
+        default=30.0,
+        help="Max gain in dB when --normalize is set",
+    )
     parser.add_argument(
         "--sidecar_scheme",
         default=None,
@@ -254,6 +274,17 @@ def main() -> None:
             cmd.append("--denoise")
             cmd.append(f"--denoise_strength={args.denoise_strength}")
             cmd.append(f"--denoise_noise_sec={args.denoise_noise_sec}")
+        if args.pcen:
+            cmd.append("--pcen")
+            cmd.append(f"--pcen_n_mels={args.pcen_n_mels}")
+            cmd.append(f"--pcen_gain={args.pcen_gain}")
+            cmd.append(f"--pcen_bias={args.pcen_bias}")
+            cmd.append(f"--pcen_power={args.pcen_power}")
+            cmd.append(f"--pcen_time_constant={args.pcen_time_constant}")
+            cmd.append(f"--pcen_max_gain={args.pcen_max_gain}")
+        if args.normalize:
+            cmd.append("--normalize")
+            cmd.append(f"--normalize_max_gain_db={args.normalize_max_gain_db}")
         _run(cmd)
 
     if not args.skip_manifest:

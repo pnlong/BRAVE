@@ -51,3 +51,31 @@ def rms_recon_l1(
     r_y = frame_rms_curve(y[..., :t], n_frames)
     r_t = frame_rms_curve(target[..., :t], n_frames)
     return F.l1_loss(r_y, r_t)
+
+
+def split_vae_posterior(
+    z_raw: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Split encoder output into diagonal Gaussian posterior parameters.
+
+    Matches ``VariationalEncoder.reparametrize`` in ``rave.blocks``.
+    """
+    mean, scale = z_raw.chunk(2, dim=1)
+    std = F.softplus(scale) + 1e-4
+    logvar = (2.0 * std.log())
+    return mean, logvar
+
+
+def vae_kl_to_standard_normal(
+    mean: torch.Tensor,
+    logvar: torch.Tensor,
+) -> torch.Tensor:
+    """
+    KL(q(z|x) || N(0, I)) for factorized q with diagonal covariance.
+
+    Same formula as ``VariationalEncoder.reparametrize`` (summed over latent
+    channels, mean over batch).
+    """
+    var = logvar.exp()
+    return (mean.pow(2) + var - logvar - 1).sum(1).mean()

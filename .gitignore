@@ -174,5 +174,6 @@ dataset_exploration/*/artifacts/exported_models/
 dataset_exploration/*/artifacts/listen_samples/
 latent_exploration/artifacts/
 tap_samples/
+tap_samples
 scratchpaper/
 artifacts/

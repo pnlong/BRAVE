@@ -1,63 +1,54 @@
-"""Tests for OOD WAV sidecar dataset with optional IR augmentation."""
-
-import tempfile
-from pathlib import Path
+"""Tests for OOD Fader LMDB dataset wrapper."""
 
 import numpy as np
-import pytest
-import soundfile as sf
+import torch
 
-from rave.fader.canonicalizer_dataset import DOMAIN_OOD, OodWavDataset
+from rave.fader.canonicalizer_dataset import DOMAIN_OOD, OodFaderDataset
+from rave.fader.dataset import FaderAttributeDataset
 from rave.fader.ir_augmentation import ImpulseResponseAug, synthetic_room_ir
 
 
-@pytest.fixture
-def ood_dir():
-    with tempfile.TemporaryDirectory() as td:
-        p = Path(td) / "clip.wav"
-        sr = 44100
-        t = np.linspace(0, 1.0, sr, endpoint=False)
-        audio = (0.3 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
-        sf.write(str(p), audio, sr)
-        yield td
+class _MockAudioDataset(torch.utils.data.Dataset):
+    def __len__(self) -> int:
+        return 2
+
+    def __getitem__(self, index: int) -> np.ndarray:
+        rng = np.random.default_rng(index)
+        return rng.standard_normal((1, 4096)).astype(np.float32)
 
 
-@pytest.fixture
-def ir_dir():
-    with tempfile.TemporaryDirectory() as td:
-        sr = 44100
-        sf.write(str(Path(td) / "room.wav"), synthetic_room_ir(sr), sr)
-        yield td
+class _MockAttributeLoader:
+    sr = 44100
+
+    def load(self, index: int, audio: np.ndarray, sr: int | None = None) -> np.ndarray:
+        return np.zeros((2, 32), dtype=np.float32)
 
 
-def test_ood_wav_dataset_loads(ood_dir):
-    ds = OodWavDataset(
-        ood_path=ood_dir,
-        sampling_rate=44100,
-        n_signal=4096,
-        continuous_attributes=["rms", "centroid"],
-        discrete_attributes=[],
-        latent_length=32,
+def _make_fader_dataset() -> FaderAttributeDataset:
+    return FaderAttributeDataset(
+        base_dataset=_MockAudioDataset(),
+        attribute_loader=_MockAttributeLoader(),
     )
+
+
+def test_ood_fader_dataset_loads():
+    ds = OodFaderDataset(_make_fader_dataset())
     audio, attr, domain = ds[0]
     assert domain == DOMAIN_OOD
     assert audio.shape[-1] == 4096
-    assert attr.shape[0] == 2
-    assert attr.shape[1] == 32
+    assert attr.shape == (2, 32)
 
 
-def test_ood_wav_dataset_ir_augment(ood_dir, ir_dir):
+def test_ood_fader_dataset_ir_augment():
     ir_aug = ImpulseResponseAug(
-        ir_path=ir_dir, sampling_rate=44100, prob=1.0)
-    ds = OodWavDataset(
-        ood_path=ood_dir,
+        ir_path=None,
         sampling_rate=44100,
-        n_signal=4096,
-        continuous_attributes=["rms"],
-        discrete_attributes=[],
-        latent_length=32,
-        ir_augment=ir_aug,
+        prob=1.0,
+        use_synthetic_fallback=True,
     )
-    audio, _, domain = ds[0]
+    base = _make_fader_dataset()
+    dry = base[0][0].numpy()
+    ds = OodFaderDataset(base, ir_augment=ir_aug)
+    wet, _, domain = ds[0]
     assert domain == DOMAIN_OOD
-    assert audio.shape[-1] == 4096
+    assert not np.allclose(wet.numpy(), dry)

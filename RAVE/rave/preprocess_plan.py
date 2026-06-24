@@ -11,6 +11,8 @@ from typing import Iterable, List, Optional, Sequence, Tuple
 import numpy as np
 
 from .preprocess_denoise import DenoiseConfig, denoise_pcm
+from .preprocess_normalize import NormalizeConfig, normalize_pcm
+from .preprocess_pcen import PcenConfig, pcen_pcm
 
 
 @dataclass(frozen=True)
@@ -161,6 +163,7 @@ def decode_path_pcm(
     channels: int,
     input_channels: int,
     denoise: DenoiseConfig = DenoiseConfig.disabled(),
+    pcen: PcenConfig = PcenConfig.disabled(),
 ) -> np.ndarray:
     """Decode file to shape (channels, n_samples) float32 in [-1, 1]."""
     channel_map = _channel_map(input_channels, channels)
@@ -186,7 +189,8 @@ def decode_path_pcm(
         return np.zeros((channels, 0), dtype=np.float32)
     n = min(len(c) for c in channel_data)
     pcm = np.stack([c[:n] for c in channel_data], axis=0)
-    return denoise_pcm(pcm, sr, denoise)
+    pcm = denoise_pcm(pcm, sr, denoise)
+    return pcen_pcm(pcm, sr, pcen)
 
 
 def concat_pack_pcm(
@@ -194,11 +198,13 @@ def concat_pack_pcm(
     sr: int,
     channels: int,
     denoise: DenoiseConfig = DenoiseConfig.disabled(),
+    pcen: PcenConfig = PcenConfig.disabled(),
 ) -> np.ndarray:
     parts = []
     for member in pack.members:
         pcm = decode_path_pcm(
-            member.path, sr, channels, member.channels, denoise=denoise)
+            member.path, sr, channels, member.channels,
+            denoise=denoise, pcen=pcen)
         if pcm.shape[-1] > 0:
             parts.append(pcm)
     if not parts:
@@ -211,13 +217,18 @@ def concat_pack_pcm(
     return merged
 
 
-def pcm_to_chunk_bytes(pcm: np.ndarray, chunk_samples_per_ch: int) -> bytes:
+def pcm_to_chunk_bytes(
+    pcm: np.ndarray,
+    chunk_samples_per_ch: int,
+    normalize: NormalizeConfig = NormalizeConfig.disabled(),
+) -> bytes:
     """Interleave channels into preprocess chunk bytes (n_signal*4 per channel read)."""
     channels, n = pcm.shape
     chunk = pcm[:, :chunk_samples_per_ch]
     if chunk.shape[-1] < chunk_samples_per_ch:
         pad = np.zeros((channels, chunk_samples_per_ch - chunk.shape[-1]), dtype=np.float32)
         chunk = np.concatenate([chunk, pad], axis=-1)
+    chunk = normalize_pcm(chunk, normalize)
     int16 = np.floor(chunk * (2**15 - 1)).astype(np.int16)
     # load_audio_chunk joins per-channel reads; each channel contributes chunk_samples*2 bytes
     return b''.join(int16[i].tobytes() for i in range(channels))
@@ -229,13 +240,19 @@ def iter_pack_chunks(
     sr: int,
     channels: int,
     denoise: DenoiseConfig = DenoiseConfig.disabled(),
+    pcen: PcenConfig = PcenConfig.disabled(),
+    normalize: NormalizeConfig = NormalizeConfig.disabled(),
 ) -> Iterable[bytes]:
     """Yield LMDB chunks from a packed group (non-lazy: 2*n_signal samples per chunk)."""
     chunk_samples = 2 * n_signal
-    pcm = concat_pack_pcm(pack, sr, channels, denoise=denoise)
+    pcm = concat_pack_pcm(pack, sr, channels, denoise=denoise, pcen=pcen)
     offset = 0
     while offset + chunk_samples <= pcm.shape[-1]:
-        yield pcm_to_chunk_bytes(pcm[:, offset:offset + chunk_samples], chunk_samples)
+        yield pcm_to_chunk_bytes(
+            pcm[:, offset:offset + chunk_samples],
+            chunk_samples,
+            normalize=normalize,
+        )
         offset += chunk_samples
 
 
@@ -246,15 +263,21 @@ def iter_long_file_chunks(
     channels: int,
     input_channels: int,
     denoise: DenoiseConfig = DenoiseConfig.disabled(),
+    pcen: PcenConfig = PcenConfig.disabled(),
+    normalize: NormalizeConfig = NormalizeConfig.disabled(),
 ) -> Iterable[bytes]:
     """Stream chunks from one file (same byte layout as load_audio_chunk)."""
     chunk_samples = 2 * n_signal
-    if denoise.enabled:
-        pcm = decode_path_pcm(path, sr, channels, input_channels, denoise=denoise)
+    if denoise.enabled or pcen.enabled or normalize.enabled:
+        pcm = decode_path_pcm(
+            path, sr, channels, input_channels, denoise=denoise, pcen=pcen)
         offset = 0
         while offset + chunk_samples <= pcm.shape[-1]:
             yield pcm_to_chunk_bytes(
-                pcm[:, offset:offset + chunk_samples], chunk_samples)
+                pcm[:, offset:offset + chunk_samples],
+                chunk_samples,
+                normalize=normalize,
+            )
             offset += chunk_samples
         return
 
@@ -324,6 +347,8 @@ def print_preprocess_summary(
     num_signal: int,
     lazy: bool,
     denoise: DenoiseConfig = DenoiseConfig.disabled(),
+    pcen: PcenConfig = PcenConfig.disabled(),
+    normalize: NormalizeConfig = NormalizeConfig.disabled(),
 ) -> None:
     chunk_sec = min_samples_for_mode(num_signal, lazy) / sr
     lengths = sorted(stats.file_lengths_sec)
@@ -375,6 +400,18 @@ def print_preprocess_summary(
             f'  denoise:                      on '
             f'(strength={denoise.strength:.2f}, '
             f'noise_sec={denoise.noise_sec:.2f})'
+        )
+    if pcen.enabled:
+        print(
+            f'  pcen:                         on '
+            f'(n_mels={pcen.n_mels}, gain={pcen.gain:.2f}, '
+            f'time_constant={pcen.time_constant:.2f}, '
+            f'max_gain={pcen.max_gain:.1f})'
+        )
+    if normalize.enabled:
+        print(
+            f'  normalize:                    on '
+            f'(max_gain_db={normalize.max_gain_db:.1f})'
         )
     if n:
         print('  file length distribution (s):')

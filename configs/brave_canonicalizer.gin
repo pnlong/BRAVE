@@ -2,9 +2,9 @@
 # Usage:
 #   python RAVE/scripts/train_canonicalizer.py \
 #     --config configs/brave_canonicalizer.gin \
-#     --fader_config configs/brave_fader_pitched.gin \
+#     --fader_config configs/brave_fader_birdsong.gin \
 #     --ckpt runs/birdsong.ckpt --db_path /data/birdsong_lmdb \
-#     --ood_path ood_samples --canonicalizer_type waveform --name wf_canon
+#     --ood_db_path /data/tap_preprocessed --canonicalizer_type waveform --name wf_canon
 
 include "brave.gin"
 
@@ -22,6 +22,7 @@ import rave.fader.model
 import rave.fader.dataset
 import rave.fader.canonicalizer_dataset
 import rave.fader.canonicalizer_trainer
+import rave.fader.canonicalizer_callbacks
 import rave.fader.ir_augmentation
 import rave.fader.latent_domain_discriminator
 import rave.fader.waveform_canonicalizer
@@ -56,22 +57,30 @@ rave.fader.latent_domain_discriminator.LatentDomainDiscriminator:
     num_layers = 3
 
 rave.fader.canonicalizer_trainer.CanonicalizerTrainer:
-    lambda_identity = 10.0
-    lambda_latent_stat = 1.0
+    # Stability-tuned defaults (shared warp + latent D): strong identity anchor,
+    # envelope recon on both domains, weak adversary, slower warp/D updates.
+    lambda_identity = 50.0
+    lambda_latent_kl = 0.0
     lambda_descriptor = 0.5
-    lambda_latent_adv = 0.1
+    lambda_latent_adv = 0.01
     lambda_rms_recon = 1.0
     recon_ood_mode = "rms"
-    recon_in_domain_mode = "stft"
-    lr = 1e-3
-    disc_lr = 2e-4
+    recon_in_domain_mode = "rms"
+    lr = 1e-4
+    disc_lr = 1e-4
+    encode_use_mean = True
     unfreeze_encoder = False
     encoder_lr = 1e-5
     latent_domain_disc = @rave.fader.latent_domain_discriminator.LatentDomainDiscriminator
 
 rave.fader.canonicalizer_dataset.build_canonicalizer_dataset:
     in_domain_fraction = 0.8
+
+rave.fader.canonicalizer_dataset.make_ir_augment:
     ir_path = ""
     ir_prob = 0.0
     ir_wet_min = 0.15
     ir_wet_max = 0.55
+
+rave.fader.canonicalizer_callbacks.CanonicalizerValVizCallback:
+    num_audio_samples = 8

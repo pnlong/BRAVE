@@ -8,7 +8,7 @@ from typing import Sequence
 import gin
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+import torchaudio.functional as AF
 
 
 def _peaking_biquad_coeffs(
@@ -56,33 +56,17 @@ class BiquadFilter(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: (B, C, T)
         gain = torch.tanh(self.gain_db) * self.max_gain_db
-        if gain.abs().item() < 1e-6:
-            return x
+        y_filt = self._apply_biquad(x, gain)
+        # Soft bypass: exact identity at gain=0, but gain_db stays in the graph.
+        alpha = torch.tanh((gain.abs() / self.max_gain_db) * 5.0)
+        return x + alpha * (y_filt - x)
+
+    def _apply_biquad(self, x: torch.Tensor, gain: torch.Tensor) -> torch.Tensor:
         b, a = _peaking_biquad_coeffs(
             self.sample_rate, self.center_freq, self.q, gain.squeeze())
         b = b.to(dtype=x.dtype, device=x.device)
         a = a.to(dtype=x.dtype, device=x.device)
-
-        y = x
-        x_1 = torch.zeros(x.shape[0], x.shape[1], 1, device=x.device, dtype=x.dtype)
-        x_2 = torch.zeros_like(x_1)
-        y_1 = torch.zeros_like(x_1)
-        y_2 = torch.zeros_like(x_1)
-
-        outs = []
-        for t in range(x.shape[-1]):
-            xt = y[..., t:t + 1]
-            yt = (
-                b[..., 0:1] * xt
-                + b[..., 1:2] * x_1
-                + b[..., 2:3] * x_2
-                - a[..., 1:2] * y_1
-                - a[..., 2:3] * y_2
-            )
-            x_2, x_1 = x_1, xt
-            y_2, y_1 = y_1, yt
-            outs.append(yt)
-        return torch.cat(outs, dim=-1)
+        return AF.lfilter(x, a, b, clamp=False)
 
 
 @gin.configurable

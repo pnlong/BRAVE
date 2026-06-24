@@ -7,6 +7,37 @@ from typing import Sequence
 import gin
 import torch
 import torch.nn as nn
+import torchaudio.functional as AF
+
+
+def _lfilter(x: torch.Tensor, b: torch.Tensor, a: torch.Tensor) -> torch.Tensor:
+    dtype = x.dtype
+    device = x.device
+    return AF.lfilter(x, a.to(dtype=dtype, device=device), b.to(dtype=dtype, device=device), clamp=False)
+
+
+def _comb_filter(x: torch.Tensor, delay_samples: int, feedback: torch.Tensor) -> torch.Tensor:
+    """y[n] = x[n] + fb * y[n - delay]."""
+    d = delay_samples
+    fb = feedback.reshape(()).to(dtype=x.dtype, device=x.device)
+    a = x.new_zeros(d + 1)
+    a[0] = 1.0
+    a[d] = -fb
+    b = x.new_zeros(d + 1)
+    b[0] = 1.0
+    return _lfilter(x, b, a)
+
+
+def _allpass_filter(x: torch.Tensor, delay_samples: int, gain: torch.Tensor) -> torch.Tensor:
+    """y[n] = x[n-d] + g * (x[n] - x[n-d])."""
+    d = delay_samples
+    g = gain.reshape(()).to(dtype=x.dtype, device=x.device)
+    a = x.new_zeros(d + 1)
+    a[0] = 1.0
+    b = x.new_zeros(d + 1)
+    b[0] = g
+    b[d] = 1.0 - g
+    return _lfilter(x, b, a)
 
 
 class _CombFilter(nn.Module):
@@ -14,25 +45,10 @@ class _CombFilter(nn.Module):
         super().__init__()
         self.delay_samples = delay_samples
         self.feedback = nn.Parameter(torch.tensor([feedback], dtype=torch.float32))
-        self.register_buffer("_buf", torch.zeros(1, 1, delay_samples), persistent=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x: (B, C, T)
-        b, c, t = x.shape
-        if self._buf.shape[0] != b or self._buf.shape[1] != c:
-            self._buf = torch.zeros(b, c, self.delay_samples, device=x.device, dtype=x.dtype)
-
         fb = torch.sigmoid(self.feedback) * 0.85
-        out = []
-        buf = self._buf
-        d = self.delay_samples
-        for i in range(t):
-            delayed = buf[..., :1]
-            sample = x[..., i:i + 1] + fb * delayed
-            out.append(sample)
-            buf = torch.cat([buf[..., 1:], sample], dim=-1)
-        self._buf = buf.detach()
-        return torch.cat(out, dim=-1)
+        return _comb_filter(x, self.delay_samples, fb)
 
 
 class _AllpassFilter(nn.Module):
@@ -40,24 +56,10 @@ class _AllpassFilter(nn.Module):
         super().__init__()
         self.delay_samples = delay_samples
         self.gain = nn.Parameter(torch.tensor([gain], dtype=torch.float32))
-        self.register_buffer("_buf", torch.zeros(1, 1, delay_samples), persistent=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        b, c, t = x.shape
-        if self._buf.shape[0] != b or self._buf.shape[1] != c:
-            self._buf = torch.zeros(b, c, self.delay_samples, device=x.device, dtype=x.dtype)
-
         g = torch.sigmoid(self.gain) * 0.7
-        out = []
-        buf = self._buf
-        for i in range(t):
-            delayed = buf[..., :1]
-            sample_in = x[..., i:i + 1]
-            ap_out = delayed + g * (sample_in - delayed)
-            out.append(ap_out)
-            buf = torch.cat([buf[..., 1:], sample_in], dim=-1)
-        self._buf = buf.detach()
-        return torch.cat(out, dim=-1)
+        return _allpass_filter(x, self.delay_samples, g)
 
 
 @gin.configurable
@@ -84,14 +86,11 @@ class CausalReverb(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         wet = torch.sigmoid(self.wet_logit)
-        if wet.item() < 1e-6:
-            return x
-
-        rev = x
         comb_sum = 0.0
         for comb in self.combs:
             comb_sum = comb_sum + comb(x)
         rev = comb_sum / len(self.combs)
         for ap in self.allpasses:
             rev = ap(rev)
-        return (1.0 - wet) * x + wet * rev
+        # Residual form: exact dry pass-through when wet=0, wet_logit stays in the graph.
+        return x + wet * (rev - x)

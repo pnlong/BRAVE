@@ -2,14 +2,14 @@
 Optional integration training smoke test.
 
 Set RUN_CANONICALIZER_TRAIN=1 and provide:
-  FADER_CKPT, DB_PATH, FADER_CONFIG, OOD_PATH
+  FADER_CKPT, DB_PATH, OOD_DB_PATH, FADER_CONFIG
 
 Example:
   RUN_CANONICALIZER_TRAIN=1 \\
   FADER_CKPT=runs/birdsong.ckpt \\
   DB_PATH=/data/birdsong_lmdb \\
-  FADER_CONFIG=configs/brave_fader_pitched.gin \\
-  OOD_PATH=ood_samples \\
+  OOD_DB_PATH=/data/tap_preprocessed \\
+  FADER_CONFIG=configs/brave_fader_birdsong.gin \\
   pytest RAVE/tests/test_canonicalizer_train_smoke.py -v
 """
 
@@ -25,11 +25,11 @@ _BRAVE = Path(__file__).resolve().parents[2]
 
 @pytest.mark.skipif(
     os.environ.get("RUN_CANONICALIZER_TRAIN") != "1",
-    reason="Set RUN_CANONICALIZER_TRAIN=1 with FADER_CKPT, DB_PATH, FADER_CONFIG, OOD_PATH",
+    reason="Set RUN_CANONICALIZER_TRAIN=1 with FADER_CKPT, DB_PATH, OOD_DB_PATH, FADER_CONFIG",
 )
 def test_train_canonicalizer_smoke():
     env = os.environ.copy()
-    required = ["FADER_CKPT", "DB_PATH", "FADER_CONFIG", "OOD_PATH"]
+    required = ["FADER_CKPT", "DB_PATH", "OOD_DB_PATH", "FADER_CONFIG"]
     for k in required:
         assert k in env, f"missing env {k}"
 
@@ -44,8 +44,8 @@ def test_train_canonicalizer_smoke():
         env["FADER_CKPT"],
         "--db_path",
         env["DB_PATH"],
-        "--ood_path",
-        env["OOD_PATH"],
+        "--ood_db_path",
+        env["OOD_DB_PATH"],
         "--canonicalizer_type",
         "waveform",
         "--name",

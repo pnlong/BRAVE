@@ -139,3 +139,22 @@ def mono_waveform(wav: torch.Tensor) -> np.ndarray:
     if wav.dim() == 1:
         return wav.detach().cpu().numpy()
     return wav.mean(dim=0).detach().cpu().numpy()
+
+
+def concat_val_audio_triplets(
+    samples: Sequence[tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
+    *,
+    max_samples: int = 8,
+) -> np.ndarray:
+    """
+    Concatenate validation clips for W&B: per sample ``input | pre_encoder | recon``,
+    then stack up to ``max_samples`` clips (same layout as RAVE ``audio_val``).
+    """
+    chunks: list[np.ndarray] = []
+    for x_in, x_pre, y_recon in samples[:max_samples]:
+        chunks.append(mono_waveform(x_in))
+        chunks.append(mono_waveform(x_pre))
+        chunks.append(mono_waveform(y_recon))
+    if not chunks:
+        return np.array([], dtype=np.float32)
+    return np.concatenate(chunks)

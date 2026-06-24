@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Precompute backbone latent mean/std for canonicalizer L_latent_stat."""
+"""Precompute backbone latent mean/std (eval diagnostics; e.g. eval_canonicalizer)."""
 
 from __future__ import annotations
 

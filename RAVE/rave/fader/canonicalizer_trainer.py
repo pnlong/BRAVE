@@ -10,12 +10,15 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from ..core import hinge_gan
 from ..model import _pqmf_decode
 from .attributes import compute_descriptor_matrix
 from .canonicalizer_config import DomainProfile
 from .canonicalizer_dataset import DOMAIN_IN, DOMAIN_OOD
-from .canonicalizer_losses import rms_recon_l1
+from .canonicalizer_losses import (
+    rms_recon_l1,
+    split_vae_posterior,
+    vae_kl_to_standard_normal,
+)
 from .latent_domain_discriminator import LatentDomainDiscriminator
 
 
@@ -34,10 +37,9 @@ class CanonicalizerTrainer(pl.LightningModule):
         warp: nn.Module,
         canonicalizer_type: str,
         domain_profile: DomainProfile,
-        latent_mean: Optional[torch.Tensor] = None,
         latent_domain_disc: Optional[LatentDomainDiscriminator] = None,
         lambda_identity: float = 10.0,
-        lambda_latent_stat: float = 1.0,
+        lambda_latent_kl: float = 0.0,
         lambda_descriptor: float = 0.5,
         lambda_latent_adv: float = 0.1,
         lambda_rms_recon: float = 1.0,
@@ -47,6 +49,7 @@ class CanonicalizerTrainer(pl.LightningModule):
         disc_lr: float = 2e-4,
         unfreeze_encoder: bool = False,
         encoder_lr: float = 1e-5,
+        encode_use_mean: bool = True,
     ) -> None:
         super().__init__()
         if canonicalizer_type not in ("waveform", "latent"):
@@ -56,9 +59,11 @@ class CanonicalizerTrainer(pl.LightningModule):
         self.warp = warp
         self.canonicalizer_type = canonicalizer_type
         self.domain_profile = domain_profile
+        if latent_domain_disc is not None and isinstance(latent_domain_disc, type):
+            latent_domain_disc = latent_domain_disc()
         self.latent_domain_disc = latent_domain_disc
         self.lambda_identity = lambda_identity
-        self.lambda_latent_stat = lambda_latent_stat
+        self.lambda_latent_kl = lambda_latent_kl
         self.lambda_descriptor = lambda_descriptor
         self.lambda_latent_adv = lambda_latent_adv
         self.lambda_rms_recon = lambda_rms_recon
@@ -72,11 +77,8 @@ class CanonicalizerTrainer(pl.LightningModule):
         self.disc_lr = disc_lr
         self.unfreeze_encoder = unfreeze_encoder
         self.encoder_lr = encoder_lr
+        self.encode_use_mean = encode_use_mean
 
-        self.register_buffer(
-            "latent_mean",
-            latent_mean if latent_mean is not None else torch.zeros(fader.latent_size),
-        )
         desc_means = domain_profile.descriptor_mean_vector()
         self.register_buffer("descriptor_means", desc_means)
 
@@ -119,6 +121,24 @@ class CanonicalizerTrainer(pl.LightningModule):
         warp_opt, disc_opt = opts
         return warp_opt, disc_opt
 
+    def _encode_latent(
+        self,
+        x: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+        """Encode to content latent; optionally use VAE mean (no sampling)."""
+        z_raw, x_multiband = self.fader.encode(x, return_mb=True)
+        z_identity_ref = None
+        if self.encode_use_mean:
+            from .. import blocks
+
+            if isinstance(self.fader.encoder, blocks.VariationalEncoder):
+                z = z_raw.chunk(2, dim=1)[0]
+            else:
+                z, _ = self.fader.encoder.reparametrize(z_raw)[:2]
+        else:
+            z, _ = self.fader.encoder.reparametrize(z_raw)[:2]
+        return z, x_multiband, z_identity_ref
+
     def _forward_recon(
         self,
         x_raw: torch.Tensor,
@@ -130,14 +150,12 @@ class CanonicalizerTrainer(pl.LightningModule):
 
         if self.canonicalizer_type == "waveform":
             x_enc_in = self.warp(x_raw)
-            z, x_multiband = self.fader.encode(x_enc_in, return_mb=True)
-            z, _z_pre = self.fader.encoder.reparametrize(z)[:2]
+            z, x_multiband, _ = self._encode_latent(x_enc_in)
             x_compare = x_raw
             z_identity_ref = None
         else:
             x_enc_in = x_raw
-            z, x_multiband = self.fader.encode(x_raw, return_mb=True)
-            z, _z_pre = self.fader.encoder.reparametrize(z)[:2]
+            z, x_multiband, _ = self._encode_latent(x_raw)
             z_identity_ref = z
             z = self.warp(z)
             x_compare = x_raw
@@ -192,6 +210,29 @@ class CanonicalizerTrainer(pl.LightningModule):
             loss_rms = rms_recon_l1(y_raw[mask], x_cmp[mask], n_frames)
         return loss_stft, loss_rms
 
+    def _ood_posterior_kl(self, x_ood: torch.Tensor) -> torch.Tensor:
+        """
+        Per-sample KL(q(z|x) || N(0,I)) on OOD inputs.
+
+        Waveform warp: posterior of encode(warp(x)).
+        Latent warp: posterior mean is warped; encoder variance is unchanged.
+        """
+        from .. import blocks
+
+        if not isinstance(self.fader.encoder, blocks.VariationalEncoder):
+            return torch.tensor(0.0, device=x_ood.device)
+
+        if self.canonicalizer_type == "waveform":
+            x_enc = self.warp(x_ood)
+        else:
+            x_enc = x_ood
+
+        z_raw, _ = self.fader.encode(x_enc, return_mb=True)
+        mean, logvar = split_vae_posterior(z_raw)
+        if self.canonicalizer_type == "latent":
+            mean = self.warp(mean)
+        return vae_kl_to_standard_normal(mean, logvar)
+
     def _descriptor_loss(self, x_warped: torch.Tensor) -> torch.Tensor:
         attrs = self.domain_profile.descriptor_loss_attrs
         if not attrs:
@@ -201,30 +242,41 @@ class CanonicalizerTrainer(pl.LightningModule):
         vec = torch.tensor(mat.mean(axis=1), device=x_warped.device, dtype=x_warped.dtype)
         return F.mse_loss(vec, self.descriptor_means.to(x_warped.device))
 
-    def _latent_domain_adv(
+    def _latent_domain_adv_d(
         self,
         z: torch.Tensor,
         in_mask: torch.Tensor,
         ood_mask: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Returns (discriminator_loss, generator_adversarial_loss)."""
+    ) -> torch.Tensor:
+        """Discriminator hinge loss; inputs detached from the generator."""
         zero = torch.tensor(0.0, device=z.device)
         if (
             self.latent_domain_disc is None
             or not in_mask.any()
             or not ood_mask.any()
         ):
-            return zero, zero
+            return zero
 
         z_real = z[in_mask].detach()
-        z_fake = z[ood_mask]
+        z_fake = z[ood_mask].detach()
         score_real = self.latent_domain_disc(z_real)
-        score_fake_d = self.latent_domain_disc(z_fake.detach())
-        loss_d, _ = hinge_gan(score_real, score_fake_d)
+        score_fake_d = self.latent_domain_disc(z_fake)
+        return (
+            torch.relu(1 - score_real).mean()
+            + torch.relu(1 + score_fake_d).mean()
+        )
 
-        score_fake_g = self.latent_domain_disc(z_fake)
-        loss_adv = -score_fake_g.mean()
-        return loss_d, loss_adv
+    def _latent_domain_adv_g(
+        self,
+        z: torch.Tensor,
+        ood_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        """Generator adversarial term — call after the D optimizer step."""
+        zero = torch.tensor(0.0, device=z.device)
+        if self.latent_domain_disc is None or not ood_mask.any():
+            return zero
+        score_fake_g = self.latent_domain_disc(z[ood_mask])
+        return -score_fake_g.mean()
 
     def training_step(self, batch, batch_idx):
         warp_opt, disc_opt = self._optimizers()
@@ -235,6 +287,7 @@ class CanonicalizerTrainer(pl.LightningModule):
         x_raw, attr_raw, domain = batch
         x_raw = x_raw.to(self.device)
         attr_raw = attr_raw.to(self.device)
+        batch_size = x_raw.size(0)
         is_in = [d == DOMAIN_IN for d in domain]
         in_mask = torch.tensor(is_in, device=self.device)
         ood_mask = ~in_mask
@@ -253,7 +306,7 @@ class CanonicalizerTrainer(pl.LightningModule):
         loss_recon = loss_recon_stft + self.lambda_rms_recon * loss_recon_rms
 
         loss_id = torch.tensor(0.0, device=self.device)
-        loss_lat = torch.tensor(0.0, device=self.device)
+        loss_kl = torch.tensor(0.0, device=self.device)
         loss_desc = torch.tensor(0.0, device=self.device)
 
         if in_mask.any():
@@ -263,39 +316,42 @@ class CanonicalizerTrainer(pl.LightningModule):
                 loss_id = F.mse_loss(z[in_mask], z_identity_ref[in_mask])
 
         if ood_mask.any():
-            z_ood = z[ood_mask].mean(dim=(0, 2))
-            loss_lat = F.mse_loss(z_ood, self.latent_mean)
+            if self.lambda_latent_kl > 0:
+                loss_kl = self._ood_posterior_kl(x_raw[ood_mask])
             if self.canonicalizer_type == "waveform":
                 loss_desc = self._descriptor_loss(x_enc_in[ood_mask])
 
-        loss_d, loss_adv = self._latent_domain_adv(z, in_mask, ood_mask)
+        loss_d = self._latent_domain_adv_d(z, in_mask, ood_mask)
 
         if disc_opt is not None and loss_d.requires_grad:
             disc_opt.zero_grad()
             self.manual_backward(loss_d)
             disc_opt.step()
 
+        loss_adv = self._latent_domain_adv_g(z, ood_mask)
+
         loss = (
             loss_recon
             + self.lambda_identity * loss_id
-            + self.lambda_latent_stat * loss_lat
+            + self.lambda_latent_kl * loss_kl
             + self.lambda_descriptor * loss_desc
             + self.lambda_latent_adv * loss_adv
         )
 
         warp_opt.zero_grad()
-        self.manual_backward(loss)
-        warp_opt.step()
+        if loss.requires_grad:
+            self.manual_backward(loss)
+            warp_opt.step()
 
-        self.log("canon/loss", loss, prog_bar=True)
-        self.log("canon/recon", loss_recon)
-        self.log("canon/recon_stft", loss_recon_stft)
-        self.log("canon/recon_rms", loss_recon_rms)
-        self.log("canon/identity", loss_id)
-        self.log("canon/latent_stat", loss_lat)
-        self.log("canon/descriptor", loss_desc)
-        self.log("canon/latent_adv", loss_adv)
-        self.log("canon/latent_disc", loss_d)
+        self.log("canon/loss", loss, prog_bar=True, batch_size=batch_size)
+        self.log("canon/recon", loss_recon, batch_size=batch_size)
+        self.log("canon/recon_stft", loss_recon_stft, batch_size=batch_size)
+        self.log("canon/recon_rms", loss_recon_rms, batch_size=batch_size)
+        self.log("canon/identity", loss_id, batch_size=batch_size)
+        self.log("canon/latent_kl", loss_kl, batch_size=batch_size)
+        self.log("canon/descriptor", loss_desc, batch_size=batch_size)
+        self.log("canon/latent_adv", loss_adv, batch_size=batch_size)
+        self.log("canon/latent_disc", loss_d, batch_size=batch_size)
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -303,13 +359,21 @@ class CanonicalizerTrainer(pl.LightningModule):
         x_raw, attr_raw, domain = batch
         x_raw = x_raw.to(self.device)
         attr_raw = attr_raw.to(self.device)
+        batch_size = x_raw.size(0)
 
         with torch.no_grad():
-            z, x_cmp, _, y_raw, _, _, _ = self._forward_recon(x_raw, attr_raw)
+            z, x_cmp, _, y_raw, _, x_enc_in, _ = self._forward_recon(x_raw, attr_raw)
 
         loss = self.fader.audio_distance(x_cmp, y_raw)
         val_loss = sum(loss.values())
-        self.log("val/loss", val_loss, on_step=False, on_epoch=True, prog_bar=True)
+        self.log(
+            "val/loss",
+            val_loss,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+            batch_size=batch_size,
+        )
 
         domains = list(domain) if isinstance(domain, (list, tuple)) else [domain]
-        return z.detach(), domains
+        return z.detach(), domains, x_raw.detach(), x_enc_in.detach(), y_raw.detach()

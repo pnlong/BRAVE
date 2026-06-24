@@ -71,8 +71,6 @@ def build_domain_profile(
 ) -> DomainProfile:
     config_path = Path(config_path)
     db_path = Path(db_path)
-    gin.clear_config()
-    gin.parse_config_file(str(config_path))
 
     stats_file = resolve_stats_path(str(db_path), str(stats_path) if stats_path else None)
     if stats_file is None:
@@ -119,11 +117,12 @@ class CanonicalizerManifest:
     backbone_config: str
     backbone_ckpt: str
     db_path: str
+    ood_db_path: str = ""
     use_reverb: bool = True
     stats_hash: str = ""
 
     def to_dict(self) -> dict:
-        return {
+        out = {
             "canonicalizer_type": self.canonicalizer_type,
             "backbone_config": self.backbone_config,
             "backbone_ckpt": self.backbone_ckpt,
@@ -131,6 +130,9 @@ class CanonicalizerManifest:
             "use_reverb": self.use_reverb,
             "stats_hash": self.stats_hash,
         }
+        if self.ood_db_path:
+            out["ood_db_path"] = self.ood_db_path
+        return out
 
     @classmethod
     def from_dict(cls, data: dict) -> "CanonicalizerManifest":
@@ -139,6 +141,7 @@ class CanonicalizerManifest:
             backbone_config=data["backbone_config"],
             backbone_ckpt=data["backbone_ckpt"],
             db_path=data["db_path"],
+            ood_db_path=data.get("ood_db_path", ""),
             use_reverb=bool(data.get("use_reverb", True)),
             stats_hash=data.get("stats_hash", ""),
         )

@@ -23,6 +23,8 @@ from tqdm import tqdm
 from udls.generated import AudioExample
 
 from rave.preprocess_denoise import DenoiseConfig
+from rave.preprocess_normalize import NormalizeConfig
+from rave.preprocess_pcen import PcenConfig
 from rave.preprocess_plan import (
     AudioPack,
     AudioProbe,
@@ -96,6 +98,51 @@ flags.DEFINE_float(
     default=0.0,
     help='Estimate noise floor from the first N seconds only (0 = whole clip)',
 )
+flags.DEFINE_bool(
+    'normalize',
+    default=False,
+    help='Peak-normalize each LMDB chunk (same rule as train.py --normalize)',
+)
+flags.DEFINE_float(
+    'normalize_max_gain_db',
+    default=30.0,
+    help='Max gain in dB when --normalize is set',
+)
+flags.DEFINE_bool(
+    'pcen',
+    default=False,
+    help='Apply PCEN (per-channel energy normalization) before writing LMDB chunks',
+)
+flags.DEFINE_integer(
+    'pcen_n_mels',
+    default=128,
+    help='Mel bands for --pcen',
+)
+flags.DEFINE_float(
+    'pcen_gain',
+    default=0.98,
+    help='PCEN AGC strength (librosa pcen gain)',
+)
+flags.DEFINE_float(
+    'pcen_bias',
+    default=2.0,
+    help='PCEN bias floor',
+)
+flags.DEFINE_float(
+    'pcen_power',
+    default=0.5,
+    help='PCEN compression exponent',
+)
+flags.DEFINE_float(
+    'pcen_time_constant',
+    default=0.4,
+    help='PCEN smoothing time constant (seconds)',
+)
+flags.DEFINE_float(
+    'pcen_max_gain',
+    default=10.0,
+    help='Cap linear STFT gain from PCEN ratio (0 = no cap)',
+)
 
 
 def build_denoise_config() -> DenoiseConfig:
@@ -103,6 +150,25 @@ def build_denoise_config() -> DenoiseConfig:
         enabled=FLAGS.denoise,
         strength=FLAGS.denoise_strength,
         noise_sec=FLAGS.denoise_noise_sec,
+    )
+
+
+def build_normalize_config() -> NormalizeConfig:
+    return NormalizeConfig(
+        enabled=FLAGS.normalize,
+        max_gain_db=FLAGS.normalize_max_gain_db,
+    )
+
+
+def build_pcen_config() -> PcenConfig:
+    return PcenConfig(
+        enabled=FLAGS.pcen,
+        n_mels=FLAGS.pcen_n_mels,
+        gain=FLAGS.pcen_gain,
+        bias=FLAGS.pcen_bias,
+        power=FLAGS.pcen_power,
+        time_constant=FLAGS.pcen_time_constant,
+        max_gain=FLAGS.pcen_max_gain,
     )
 
 
@@ -213,6 +279,8 @@ def load_work_chunks(
     sr: int,
     channels: int,
     denoise: DenoiseConfig,
+    pcen: PcenConfig,
+    normalize: NormalizeConfig,
 ) -> Iterable[bytes]:
     kind, data = item
     if kind == 'long':
@@ -224,10 +292,14 @@ def load_work_chunks(
             channels,
             probe.channels,
             denoise=denoise,
+            pcen=pcen,
+            normalize=normalize,
         )
     elif kind == 'pack':
         pack: AudioPack = data
-        yield from iter_pack_chunks(pack, n_signal, sr, channels, denoise=denoise)
+        yield from iter_pack_chunks(
+            pack, n_signal, sr, channels,
+            denoise=denoise, pcen=pcen, normalize=normalize)
 
 
 def process_lazy_entry(entry: Tuple[int, WorkItem], env: lmdb.Environment) -> float:
@@ -396,12 +468,16 @@ def main(argv):
 
     n_seconds = 0.0
     denoise = build_denoise_config()
+    pcen = build_pcen_config()
+    normalize = build_normalize_config()
     chunk_load = partial(
         load_work_chunks,
         n_signal=FLAGS.num_signal,
         sr=FLAGS.sampling_rate,
         channels=FLAGS.channels,
         denoise=denoise,
+        pcen=pcen,
+        normalize=normalize,
     )
 
     if not FLAGS.lazy:
@@ -471,6 +547,8 @@ def main(argv):
         FLAGS.num_signal,
         FLAGS.lazy,
         denoise=denoise,
+        pcen=pcen,
+        normalize=normalize,
     )
 
     with open(os.path.join(FLAGS.output_path, 'metadata.yaml'), 'w') as metadata:
@@ -482,6 +560,8 @@ def main(argv):
             'denoise': FLAGS.denoise,
             'denoise_strength': FLAGS.denoise_strength,
             'denoise_noise_sec': FLAGS.denoise_noise_sec,
+            'normalize': FLAGS.normalize,
+            'normalize_max_gain_db': FLAGS.normalize_max_gain_db,
         }, metadata)
     pool.close()
     env.close()
