@@ -16,6 +16,8 @@
 
 set -euo pipefail
 
+source ~/.bashrc
+
 BRAVE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_NAME="brave"
 CUDA_TARGET="auto"
