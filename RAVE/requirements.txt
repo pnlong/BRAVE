@@ -1,0 +1,21 @@
+# PL 1.9 / lightning_fabric still use pkg_resources; setuptools>=81 warns on import.
+setuptools>=65,<81
+absl-py>=1.2.0
+einops>=0.5.0
+gin-config
+GPUtil>=1.4.0
+librosa>=0.9.2
+numpy>=1.23.3
+pytorch_lightning==1.9.0
+PyYAML>=6.0
+scikit_learn>=1.1.2
+scipy==1.10.0
+torch
+tqdm>=4.64.1
+udls>=1.0.1
+cached-conv>=2.5.0
+nn-tilde>=1.5.2
+torchaudio
+wandb
+pytest>=7.2.2
+Flask>=2.2.3

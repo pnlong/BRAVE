@@ -6,6 +6,7 @@ lightning_logs/
 *libtorch*
 *.wav
 *.txt
+!requirements.txt
 runs
 *.npy
 *.yaml
