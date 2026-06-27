@@ -241,6 +241,18 @@ def main() -> None:
         help="Skip attribute_stats.yaml",
     )
     parser.add_argument(
+        "--max_stored_sec",
+        type=float,
+        default=0.0,
+        help="Cap stored LMDB audio duration (passed to preprocess.py; 0 = no limit)",
+    )
+    parser.add_argument(
+        "--subset_seed",
+        type=int,
+        default=None,
+        help="Shuffle input files before LMDB planning (passed to preprocess.py)",
+    )
+    parser.add_argument(
         "--no_train_only",
         action="store_true",
         help="Precompute stats on full LMDB, not train split only",
@@ -285,6 +297,10 @@ def main() -> None:
         if args.normalize:
             cmd.append("--normalize")
             cmd.append(f"--normalize_max_gain_db={args.normalize_max_gain_db}")
+        if args.max_stored_sec > 0:
+            cmd.append(f"--max_stored_sec={args.max_stored_sec}")
+        if args.subset_seed is not None:
+            cmd.append(f"--subset_seed={args.subset_seed}")
         _run(cmd)
 
     if not args.skip_manifest:
@@ -327,6 +343,7 @@ def main() -> None:
             f"--db_path={db_path}",
             f"--config={config}",
             f"--n_signal={args.num_signal}",
+            *worker_args,
         ]
         if not args.no_train_only:
             pre_cmd.append("--train_only")

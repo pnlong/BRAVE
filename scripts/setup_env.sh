@@ -127,9 +127,13 @@ RESOLVED_CUDA="$(detect_cuda)"
 INDEX="$(pytorch_index "${RESOLVED_CUDA}")"
 
 if [[ "${SKIP_TORCH}" -eq 0 ]]; then
-  log "installing torch + torchaudio from ${INDEX}"
+  # Pin matching versions: nn-tilde requires torch==2.5; force-reinstall so a
+  # torchaudio wheel from PyPI (installed via requirements.txt) is not kept
+  # when torch is upgraded from the CUDA index.
+  log "installing torch==2.5.0 + torchaudio==2.5.0 from ${INDEX}"
   python -m pip install --upgrade pip
-  python -m pip install --upgrade torch torchaudio --index-url "${INDEX}"
+  python -m pip install --force-reinstall \
+    "torch==2.5.0" "torchaudio==2.5.0" --index-url "${INDEX}"
 else
   log "skipping torch/torchaudio reinstall (--skip-torch)"
 fi

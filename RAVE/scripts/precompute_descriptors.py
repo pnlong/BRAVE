@@ -295,6 +295,12 @@ def _worker_count(workers: int) -> int:
         return 1
     if workers > 0:
         return workers
+    slurm = os.environ.get("SLURM_CPUS_PER_TASK")
+    if slurm:
+        try:
+            return max(1, int(slurm))
+        except ValueError:
+            pass
     return max(1, os.cpu_count() or 1)
 
 

@@ -2,6 +2,7 @@ import functools
 import multiprocessing
 import os
 import pathlib
+import random
 import sys
 
 _RAVE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -142,6 +143,16 @@ flags.DEFINE_float(
     'pcen_max_gain',
     default=10.0,
     help='Cap linear STFT gain from PCEN ratio (0 = no cap)',
+)
+flags.DEFINE_float(
+    'max_stored_sec',
+    default=0.0,
+    help='Stop after storing this many seconds of audio (0 = no limit)',
+)
+flags.DEFINE_integer(
+    'subset_seed',
+    default=None,
+    help='Shuffle input files before planning (recommended with a stored-sec cap)',
 )
 
 
@@ -427,6 +438,12 @@ def main(argv):
         probes.append(AudioProbe(path=path, length_sec=length, channels=channels))
         file_lengths.append(length)
 
+    max_stored_sec = FLAGS.max_stored_sec
+
+    if FLAGS.subset_seed is not None:
+        rng = random.Random(FLAGS.subset_seed)
+        rng.shuffle(probes)
+
     plan = build_preprocess_plan(
         probes,
         FLAGS.sampling_rate,
@@ -492,13 +509,23 @@ def main(argv):
         sample_iter = processed_samples
         if FLAGS.no_progress:
             last_id = -1
+            stopped_early = False
             for audio_id in sample_iter:
+                if (max_stored_sec > 0
+                        and (audio_id + 1) * chunk_seconds > max_stored_sec):
+                    stopped_early = True
+                    break
                 last_id = audio_id
                 n_seconds = chunk_seconds * (audio_id + 1)
                 if total_chunks and audio_id + 1 > total_chunks:
                     pass
             stats.chunks_written = last_id + 1 if last_id >= 0 else 0
             stats.stored_sec = stats.chunks_written * chunk_seconds
+            if stopped_early:
+                print(
+                    f'stored-sec cap reached ({max_stored_sec:.2f} s); '
+                    f'wrote {stats.chunks_written} chunks '
+                    f'({stats.stored_sec:.2f} s)')
         else:
             pbar = tqdm(
                 sample_iter,
@@ -507,7 +534,12 @@ def main(argv):
                 unit="chunk",
             )
             last_id = -1
+            stopped_early = False
             for audio_id in pbar:
+                if (max_stored_sec > 0
+                        and (audio_id + 1) * chunk_seconds > max_stored_sec):
+                    stopped_early = True
+                    break
                 last_id = audio_id
                 n_seconds = chunk_seconds * (audio_id + 1)
                 pbar.set_description(
@@ -518,14 +550,26 @@ def main(argv):
             pbar.close()
             stats.chunks_written = last_id + 1 if last_id >= 0 else 0
             stats.stored_sec = stats.chunks_written * chunk_seconds
+            if stopped_early:
+                print(
+                    f'stored-sec cap reached ({max_stored_sec:.2f} s); '
+                    f'wrote {stats.chunks_written} chunks '
+                    f'({stats.stored_sec:.2f} s)')
     else:
         lazy_entries = enumerate(work_items)
         processed = map(partial(process_lazy_entry, env=env), lazy_entries)
         entry_iter = processed
         n_seconds = 0.0
+        entries_written = 0
+        stopped_early = False
         if FLAGS.no_progress:
             for length in entry_iter:
+                if (max_stored_sec > 0
+                        and n_seconds + length > max_stored_sec):
+                    stopped_early = True
+                    break
                 n_seconds += length
+                entries_written += 1
         else:
             pbar = tqdm(
                 entry_iter,
@@ -534,12 +578,21 @@ def main(argv):
                 unit="entry",
             )
             for length in pbar:
+                if (max_stored_sec > 0
+                        and n_seconds + length > max_stored_sec):
+                    stopped_early = True
+                    break
                 n_seconds += length
+                entries_written += 1
                 pbar.set_description(
                     f'preprocess ({timedelta(seconds=n_seconds)} audio)')
             pbar.close()
-        stats.chunks_written = len(work_items)
+        stats.chunks_written = entries_written
         stats.stored_sec = n_seconds
+        if stopped_early:
+            print(
+                f'stored-sec cap reached ({max_stored_sec:.2f} s); '
+                f'wrote {entries_written} lazy entries ({n_seconds:.2f} s)')
 
     print_preprocess_summary(
         stats,
@@ -551,18 +604,23 @@ def main(argv):
         normalize=normalize,
     )
 
+    meta = {
+        'lazy': FLAGS.lazy,
+        'channels': FLAGS.channels,
+        'n_seconds': n_seconds,
+        'sr': FLAGS.sampling_rate,
+        'denoise': FLAGS.denoise,
+        'denoise_strength': FLAGS.denoise_strength,
+        'denoise_noise_sec': FLAGS.denoise_noise_sec,
+        'normalize': FLAGS.normalize,
+        'normalize_max_gain_db': FLAGS.normalize_max_gain_db,
+    }
+    if max_stored_sec > 0:
+        meta['max_stored_sec'] = max_stored_sec
+    if FLAGS.subset_seed is not None:
+        meta['subset_seed'] = FLAGS.subset_seed
     with open(os.path.join(FLAGS.output_path, 'metadata.yaml'), 'w') as metadata:
-        yaml.safe_dump({
-            'lazy': FLAGS.lazy,
-            'channels': FLAGS.channels,
-            'n_seconds': n_seconds,
-            'sr': FLAGS.sampling_rate,
-            'denoise': FLAGS.denoise,
-            'denoise_strength': FLAGS.denoise_strength,
-            'denoise_noise_sec': FLAGS.denoise_noise_sec,
-            'normalize': FLAGS.normalize,
-            'normalize_max_gain_db': FLAGS.normalize_max_gain_db,
-        }, metadata)
+        yaml.safe_dump(meta, metadata)
     pool.close()
     env.close()
 

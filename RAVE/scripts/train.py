@@ -186,7 +186,7 @@ def main(argv):
             FLAGS.override,
         )
 
-    model = rave.training.build_training_model(n_channels=FLAGS.channels)
+    model = rave.training.build_training_model(n_channels=n_channels)
     if FLAGS.derivative:
         model.integrator = rave.dataset.get_derivator_integrator(model.sr)[1]
 
