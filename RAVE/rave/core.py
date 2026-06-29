@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from pathlib import Path
 from random import random
 from typing import Callable, Optional, Sequence, Union
@@ -120,6 +121,66 @@ def search_for_run(run_path, name=None):
     else:
         print('No checkpoint found')
     return None
+
+
+_WANDB_RUN_ID_FILE = "wandb_run_id.txt"
+_WANDB_RUN_DIR_PATTERN = re.compile(r"^run-\d{8}_\d{6}-(.+)$")
+
+
+def run_dir_from_checkpoint(ckpt_path: str) -> str:
+    if os.path.isfile(ckpt_path):
+        return os.path.abspath(os.path.dirname(ckpt_path))
+    return os.path.abspath(ckpt_path)
+
+
+def find_wandb_run_id(run_dir: str) -> Optional[str]:
+    """Return W&B run id saved for a training run directory, if known."""
+    run_dir = os.path.abspath(run_dir)
+    id_file = os.path.join(run_dir, _WANDB_RUN_ID_FILE)
+    if os.path.isfile(id_file):
+        run_id = Path(id_file).read_text(encoding="utf-8").strip()
+        if run_id:
+            return run_id
+    wandb_root = Path(run_dir) / "wandb"
+    if not wandb_root.is_dir():
+        return None
+    matches = []
+    for entry in wandb_root.iterdir():
+        match = _WANDB_RUN_DIR_PATTERN.match(entry.name)
+        if match:
+            matches.append((entry.stat().st_mtime, match.group(1)))
+    if not matches:
+        return None
+    matches.sort()
+    return matches[-1][1]
+
+
+def write_wandb_run_id(run_dir: str, run_id: str) -> None:
+    path = os.path.join(run_dir, _WANDB_RUN_ID_FILE)
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(run_id.strip() + "\n")
+
+
+class SaveWandbRunIdCallback(pl.Callback):
+    """Persist W&B run id beside checkpoints for SLURM resume."""
+
+    def __init__(self, run_dir: str) -> None:
+        super().__init__()
+        self._run_dir = run_dir
+
+    def on_fit_start(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
+        logger = trainer.logger
+        if logger is None or not hasattr(logger, "experiment"):
+            return
+        experiment = logger.experiment
+        run_id = getattr(experiment, "id", None)
+        if not run_id:
+            return
+        id_file = os.path.join(self._run_dir, _WANDB_RUN_ID_FILE)
+        if os.path.isfile(id_file):
+            return
+        write_wandb_run_id(self._run_dir, run_id)
+        print(f"W&B: saved run id to {id_file}")
 
 
 def setup_gpu():

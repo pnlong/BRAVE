@@ -1,4 +1,4 @@
-# Source after: conda activate brave
+# Source after: micromamba activate brave
 #   source /path/to/BRAVE/scripts/env.sh
 #
 # Adds vendored RAVE to PYTHONPATH for train/preprocess scripts.

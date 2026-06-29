@@ -79,6 +79,11 @@ flags.DEFINE_string('wandb_project',
 flags.DEFINE_string('wandb_entity',
                     default=None,
                     help='Weights & Biases entity (team or user)')
+flags.DEFINE_string(
+    'wandb_run_id',
+    default=None,
+    help='Resume a specific W&B run id (auto-detected from --ckpt run dir when omitted)',
+)
 flags.DEFINE_bool('wandb_offline',
                   default=False,
                   help='Log to W&B in offline mode')
@@ -250,8 +255,18 @@ def main(argv):
 
     gin_hash = hashlib.md5(
         gin.operative_config_str().encode()).hexdigest()[:10]
-    RUN_NAME = f'{FLAGS.name}_{gin_hash}'
-    RUN_DIR = os.path.join(FLAGS.out_path, RUN_NAME)
+    ckpt_path = rave.core.search_for_run(FLAGS.ckpt)
+    if ckpt_path:
+        resume_run_dir = rave.core.run_dir_from_checkpoint(ckpt_path)
+        if os.path.isfile(os.path.join(resume_run_dir, "config.gin")):
+            RUN_DIR = resume_run_dir
+            RUN_NAME = os.path.basename(RUN_DIR)
+        else:
+            RUN_NAME = f'{FLAGS.name}_{gin_hash}'
+            RUN_DIR = os.path.join(FLAGS.out_path, RUN_NAME)
+    else:
+        RUN_NAME = f'{FLAGS.name}_{gin_hash}'
+        RUN_DIR = os.path.join(FLAGS.out_path, RUN_NAME)
     os.makedirs(RUN_DIR, exist_ok=True)
     print(f'Run directory: {RUN_DIR}')
 
@@ -288,11 +303,25 @@ def main(argv):
 
     accelerator = None
     devices = None
+    strategy = None
     if FLAGS.gpu == [-1]:
         pass
     elif torch.cuda.is_available():
         accelerator = "cuda"
         devices = FLAGS.gpu or rave.core.setup_gpu()
+        if isinstance(devices, int):
+            n_devices = devices if devices > 0 else 1
+        elif isinstance(devices, (list, tuple)):
+            n_devices = len(devices)
+        else:
+            n_devices = 1
+        if n_devices > 1:
+            strategy = "ddp"
+            print(
+                f'Multi-GPU DDP: {n_devices} devices, '
+                f'per-GPU batch={FLAGS.batch}, '
+                f'global batch≈{FLAGS.batch * n_devices}',
+            )
     elif torch.backends.mps.is_available():
         print(
             "Training on mac is not available yet. Use --gpu -1 to train on CPU (not recommended)."
@@ -308,6 +337,7 @@ def main(argv):
         rave.model.QuantizeCallback(),
         # rave.core.LoggerCallback(rave.core.ProgressLogger(RUN_NAME)),
         rave.model.BetaWarmupCallback(),
+        rave.core.SaveWandbRunIdCallback(RUN_DIR),
     ]
     callbacks.extend(rave.training.extra_training_callbacks())
 
@@ -329,10 +359,19 @@ def main(argv):
     if FLAGS.wandb_entity:
         wandb_kwargs['entity'] = FLAGS.wandb_entity
 
+    wandb_run_id = FLAGS.wandb_run_id
+    if wandb_run_id is None and ckpt_path is not None:
+        wandb_run_id = rave.core.find_wandb_run_id(RUN_DIR)
+    if wandb_run_id:
+        wandb_kwargs['id'] = wandb_run_id
+        wandb_kwargs['resume'] = 'must'
+        print(f'W&B: resuming run id={wandb_run_id}')
+
     trainer = pl.Trainer(
         logger=pl.loggers.WandbLogger(**wandb_kwargs),
         accelerator=accelerator,
         devices=devices,
+        strategy=strategy,
         callbacks=callbacks,
         max_epochs=300000,
         max_steps=FLAGS.max_steps,
@@ -342,7 +381,7 @@ def main(argv):
         **val_check,
     )
 
-    run = rave.core.search_for_run(FLAGS.ckpt)
+    run = ckpt_path
     if run is not None:
         print('loading state from file %s'%run)
         loaded = torch.load(run, map_location='cpu')

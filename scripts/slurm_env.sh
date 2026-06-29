@@ -1,88 +1,48 @@
-# Source from SLURM batch scripts (non-interactive shells skip conda in ~/.bashrc):
+# Source from SLURM batch scripts (non-interactive shells skip ~/.bashrc):
 #   source "${BRAVE_ROOT}/scripts/slurm_env.sh"
 #
-# Compute nodes often set HOME=/tmp/home/$USER and do not mount AFS. Install a
-# shared-storage env once on the login node:
-#   ./scripts/setup_env_compute.sh
+# Expects micromamba on hai-res shared storage (visible on compute nodes).
 #
 # Optional overrides:
-#   BRAVE_PYTHON=/path/to/brave/env/bin/python
-#   CONDA_BASE=/path/to/miniconda3
-#   CONDA_ENV=brave
+#   MAMBA_EXE=/path/to/micromamba
+#   MAMBA_ROOT_PREFIX=/path/to/micromamba/root
+#   MAMBA_ENV=brave
 
-_slurm_env_name="${CONDA_ENV:-brave}"
+set -euo pipefail
 
-if [[ -z "${BRAVE_ROOT:-}" ]]; then
-  if [[ -n "${BASH_SOURCE[0]:-}" && "${BASH_SOURCE[0]}" != "${0}" ]]; then
-    BRAVE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-  else
-    echo "error: set BRAVE_ROOT before sourcing slurm_env.sh" >&2
-    exit 1
-  fi
-  export BRAVE_ROOT
-fi
+: "${BRAVE_ROOT:?set BRAVE_ROOT before sourcing slurm_env.sh}"
 
-_slurm_try_python() {
-  local py="$1"
-  [[ -n "${py}" && -x "${py}" ]] || return 1
-  export BRAVE_PYTHON="${py}"
-  export PATH="$(dirname "${py}"):${PATH}"
-  return 0
-}
+MAMBA_ENV="${MAMBA_ENV:-brave}"
 
-_slurm_activate_brave() {
-  local candidate
-  local conda_base
-  local -a python_candidates=(
-    "${BRAVE_PYTHON:-}"
-    "${BRAVE_ROOT}/../conda/envs/${_slurm_env_name}/bin/python"
-    "/data/hai-res/p1long/conda/envs/${_slurm_env_name}/bin/python"
-    "/data/scratch-fast/p1long/conda/envs/${_slurm_env_name}/bin/python"
-    "${HOME}/.conda/envs/${_slurm_env_name}/bin/python"
-    "/afs/csail.mit.edu/u/${USER}/.conda/envs/${_slurm_env_name}/bin/python"
-    "${HOME}/miniconda3/envs/${_slurm_env_name}/bin/python"
-    "/afs/csail.mit.edu/u/${USER}/miniconda3/envs/${_slurm_env_name}/bin/python"
-  )
-
-  for candidate in "${python_candidates[@]}"; do
-    if _slurm_try_python "${candidate}"; then
-      return 0
-    fi
-  done
-
-  local -a conda_bases=(
-    "${CONDA_BASE:-}"
-    "${BRAVE_ROOT}/../miniconda3"
-    "/data/hai-res/p1long/miniconda3"
-    "${HOME}/miniconda3"
-    "/afs/csail.mit.edu/u/${USER}/miniconda3"
-  )
-
-  for conda_base in "${conda_bases[@]}"; do
-    [[ -n "${conda_base}" && -f "${conda_base}/etc/profile.d/conda.sh" ]] || continue
-    # shellcheck disable=SC1091
-    source "${conda_base}/etc/profile.d/conda.sh"
-    conda activate "${_slurm_env_name}"
-    if command -v python >/dev/null 2>&1; then
-      export BRAVE_PYTHON="$(command -v python)"
-      return 0
-    fi
-  done
-
-  echo "error: could not find brave python env on shared storage" >&2
-  echo "  HOME=${HOME:-<unset>} USER=${USER:-<unset>}" >&2
-  echo "  BRAVE_ROOT=${BRAVE_ROOT}" >&2
-  echo "  expected: ${BRAVE_ROOT}/../conda/envs/${_slurm_env_name}/bin/python" >&2
-  echo "  Compute nodes cannot use AFS home; run once on the login node:" >&2
-  echo "    ${BRAVE_ROOT}/scripts/setup_env_compute.sh" >&2
-  return 1
-}
-
-_slurm_activate_brave || exit 1
+# shellcheck disable=SC1091
+source "${BRAVE_ROOT}/scripts/micromamba_env.sh"
+micromamba activate "${MAMBA_ENV}"
 
 # shellcheck disable=SC1091
 source "${BRAVE_ROOT}/scripts/env.sh"
 
-echo "using python: ${BRAVE_PYTHON}"
+echo "micromamba: ${MAMBA_ROOT_PREFIX} (${MAMBA_ENV})"
+echo "python: $(command -v python)"
 
-unset _slurm_env_name _slurm_try_python _slurm_activate_brave
+# Build --gpu args for RAVE/scripts/train.py (DEFINE_multi_integer gpu).
+# Set GPUS=0,1 or sbatch --gres=gpu:N and leave GPUS unset to use 0..N-1.
+# Legacy single-GPU: GPU=0
+slurm_build_gpu_train_args() {
+  local -n _out=$1
+  _out=()
+  if [[ -n "${GPUS:-}" ]]; then
+    local _ids _g
+    IFS=',' read -ra _ids <<< "${GPUS}"
+    for _g in "${_ids[@]}"; do
+      _out+=(--gpu="${_g}")
+    done
+  elif [[ -n "${GPU:-}" ]]; then
+    _out+=(--gpu="${GPU}")
+  else
+    local _n="${SLURM_GPUS_ON_NODE:-${SLURM_GPUS:-1}}"
+    local _i
+    for ((_i = 0; _i < _n; _i++)); do
+      _out+=(--gpu="${_i}")
+    done
+  fi
+}
