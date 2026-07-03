@@ -383,8 +383,15 @@ class RAVE(pl.LightningModule):
 
         feature_matching_distance = 0.
 
+        is_gen_step = not (
+            not (batch_idx % self.update_discriminator_every) and self.warmed_up)
+
         if self.warmed_up:  # DISCRIMINATION
-            xy = torch.cat([x_raw, y_raw], 0)
+            # Disc steps must not backprop into the generator; gen steps need grad.
+            if is_gen_step:
+                xy = torch.cat([x_raw, y_raw], 0)
+            else:
+                xy = torch.cat([x_raw.detach(), y_raw.detach()], 0)
             features = self.discriminator(xy)
 
             feature_real, feature_fake = self.split_features(features)
@@ -436,8 +443,6 @@ class RAVE(pl.LightningModule):
             loss_gen['adversarial'] = self.weights['adversarial'] * loss_adv
 
         # OPTIMIZATION
-        is_gen_step = not (
-            not (batch_idx % self.update_discriminator_every) and self.warmed_up)
         if not is_gen_step:
             dis_opt.zero_grad()
             loss_dis.backward()

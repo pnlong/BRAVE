@@ -11,6 +11,7 @@ import gin
 import pytorch_lightning as pl
 import torch
 from absl import flags, app
+from pytorch_lightning.strategies import DDPStrategy
 from torch.utils.data import DataLoader
 
 import rave
@@ -316,9 +317,11 @@ def main(argv):
         else:
             n_devices = 1
         if n_devices > 1:
-            strategy = "ddp"
+            # Alternating gen/disc optimizers leave D unused on gen steps (and
+            # vice versa). Required for phase-2 GAN training under DDP.
+            strategy = DDPStrategy(find_unused_parameters=True)
             print(
-                f'Multi-GPU DDP: {n_devices} devices, '
+                f'Multi-GPU DDP (find_unused_parameters=True): {n_devices} devices, '
                 f'per-GPU batch={FLAGS.batch}, '
                 f'global batch≈{FLAGS.batch * n_devices}',
             )
