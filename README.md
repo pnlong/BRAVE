@@ -93,12 +93,53 @@ Checkpoints and run metadata are written under `--out_path` (default `runs/`). V
 
 ## Exporting BRAVE for Real-Time Inference
 
-### Low-latency BRAVE Plugin
+### Quick start — Max 9 (recommended)
+
+One command exports a **bundle folder** with the nn~ model and a pre-wired `play.maxpat`:
+
+```bash
+export PYTHONPATH="${PWD}/RAVE:${PYTHONPATH}"
+
+python scripts/export_model.py \
+  --model runs/YOUR_RUN \
+  --db_path /path/to/lmdb \
+  --output_dir exports/YOUR_RUN
+```
+
+Copy `exports/YOUR_RUN/` to your Mac, then open `play.maxpat` in Max 9. See [`RAVE/rave/fader/export/README.md`](./RAVE/rave/fader/export/README.md#max-9--nn-bundles) for the one-time nn~ install and load checklist.
+
+The export prints an `scp` one-liner when it finishes.
+
+### Which export path?
+
+| You trained… | Canonicalizer? | Where it runs | Command / output |
+|--------------|----------------|---------------|------------------|
+| BRAVE (no Fader) | — | Max nn~ | `export_model.py` → `model.ts` + `play.maxpat` |
+| FaderRAVE | no | Max nn~ | same (auto-detected) |
+| FaderRAVE | yes (`*canonicalizer.ckpt` in run dir) | Max nn~ | same (`--canonicalizer auto`, default) |
+| FaderRAVE | yes | Python demo | `export_model.py --host ts` |
+| BRAVE or Fader | — | Minifusion plugin | `export_model.py --host h5` → `model.h5` |
+
+Fader attribute knobs are documented in [`docs/fader_host_controls.md`](./docs/fader_host_controls.md) (not required to get sound from `play.maxpat`).
+
+### Max load checklist
+
+1. Copy the bundle folder to `~/Documents/Max 9/Packages/nn_tilde/models/`
+2. Open `play.maxpat` from that folder
+3. Enable audio at **44100 Hz** and turn on **ezdac~**
+
+### Low-latency BRAVE Plugin (Minifusion)
 
 The [Minifusion plugin](https://minifusion.live) can run BRAVE models at < 10 ms latency and low jitter (~3 ms).
 
-Use the `export_brave_plugin.py` utility to export a trained model. This requires a BRAVE checkpoint (`.ckpt`) from training above.  
-It does not work with models exported to TorchScript (`.ts`).
+```bash
+python scripts/export_model.py \
+  --model runs/YOUR_RUN \
+  --host h5 \
+  --output_dir exports/YOUR_RUN
+```
+
+Or directly:
 
 ```bash
 python ./scripts/export_brave_plugin.py --model path/to/model_checkpoint.ckpt --output_path ./exported_model.h5
@@ -106,26 +147,26 @@ python ./scripts/export_brave_plugin.py --model path/to/model_checkpoint.ckpt --
 
 **NOTE:** BRAVE works better when run at its original sampling rate. For best results, make sure that you run the plugin **at the same sample rate as the data used to train it**.
 
-### Standard RAVE Export Method
+### Advanced export scripts
 
-BRAVE is compatible with many creative coding tools and plugins that use RAVE models. You can export a BRAVE model to work with some great tools created by the community, such as:
+[`scripts/export_model.py`](./scripts/export_model.py) is the default entry point. Lower-level scripts (called internally or for power users):
 
- - [nn~](https://github.com/acids-ircam/nn_tilde) for Max-MSP & PureData
- - [SuperCollider](https://github.com/victor-shepardson/rave-supercollider) UGen
- - IRCAM's [RAVE VST](https://forum.ircam.fr/projects/detail/rave-vst/)
- - And probably some more
+| Script | Model | Target |
+|--------|-------|--------|
+| [`RAVE/scripts/export.py`](./RAVE/scripts/export.py) | Vanilla 128-D RAVE | Max nn~ (no Fader attributes) |
+| [`RAVE/scripts/export_fader_nn.py`](./RAVE/scripts/export_fader_nn.py) | FaderRAVE | Max nn~ with attribute knobs |
+| [`RAVE/scripts/export_fader_ts.py`](./RAVE/scripts/export_fader_ts.py) | FaderRAVE | Plain TorchScript (`forward(x, attr)`) |
+| [`scripts/export_brave_plugin.py`](./scripts/export_brave_plugin.py) | BRAVE / Fader | Minifusion HDF5 |
 
-Please note these might show **higher latency** than the BRAVE Plugin due to a different audio buffering strategy.
+BRAVE is also compatible with [SuperCollider](https://github.com/victor-shepardson/rave-supercollider), IRCAM's [RAVE VST](https://forum.ircam.fr/projects/detail/rave-vst/), and other RAVE TorchScript hosts via [`RAVE/scripts/export.py`](./RAVE/scripts/export.py). These may show **higher latency** than the BRAVE plugin due to a different audio buffering strategy.
 
 ```bash
 export PYTHONPATH="${PWD}/RAVE:${PYTHONPATH}"
 
-python RAVE/scripts/export.py --run=path/to/model_checkpoint.ckpt
+python RAVE/scripts/export.py --run=path/to/model_checkpoint.ckpt --streaming
 ```
 
-This stores a TorchScript `(.ts)` model next to the checkpoint file which you can load in your selected application. Use `--streaming` for realtime-safe cached convolutions (see [RAVE README](./RAVE/README.md)).
-
-**Fader models (128+D with attribute knobs):** use [`RAVE/scripts/export_fader_nn.py`](./RAVE/scripts/export_fader_nn.py), not `export.py`. See [`docs/fader_host_controls.md`](./docs/fader_host_controls.md).
+**Do not use `export.py` for Fader models** — use `export_model.py` or `export_fader_nn.py` instead.
 
 
 ## Cite Us

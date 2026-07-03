@@ -156,9 +156,23 @@ def find_wandb_run_id(run_dir: str) -> Optional[str]:
 
 
 def write_wandb_run_id(run_dir: str, run_id: str) -> None:
+    run_id = str(run_id).strip()
+    if not run_id:
+        raise ValueError("wandb run id must be a non-empty string")
     path = os.path.join(run_dir, _WANDB_RUN_ID_FILE)
     with open(path, "w", encoding="utf-8") as handle:
-        handle.write(run_id.strip() + "\n")
+        handle.write(run_id + "\n")
+
+
+def _resolve_wandb_run_id(experiment) -> Optional[str]:
+    """Return W&B run id string from a logger experiment/run object."""
+    run_id = getattr(experiment, "id", None)
+    if run_id is None:
+        return None
+    if callable(run_id):
+        run_id = run_id()
+    run_id = str(run_id).strip()
+    return run_id or None
 
 
 class SaveWandbRunIdCallback(pl.Callback):
@@ -169,11 +183,12 @@ class SaveWandbRunIdCallback(pl.Callback):
         self._run_dir = run_dir
 
     def on_fit_start(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
+        if getattr(trainer, "global_rank", 0) != 0:
+            return
         logger = trainer.logger
         if logger is None or not hasattr(logger, "experiment"):
             return
-        experiment = logger.experiment
-        run_id = getattr(experiment, "id", None)
+        run_id = _resolve_wandb_run_id(logger.experiment)
         if not run_id:
             return
         id_file = os.path.join(self._run_dir, _WANDB_RUN_ID_FILE)

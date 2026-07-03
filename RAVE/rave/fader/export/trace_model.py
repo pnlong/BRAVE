@@ -22,7 +22,7 @@ import gin
 import torch
 import torch.nn as nn
 
-from ..attributes import discrete_index_to_decoder_float, load_attribute_stats
+from ..attributes import load_attribute_stats
 
 
 class FaderTraceModel(nn.Module):
@@ -62,15 +62,29 @@ class FaderTraceModel(nn.Module):
 
         # --- Register min/max as buffers for JIT normalize ---
         mm = []
+        is_cont: List[float] = []
+        n_cls_row: List[float] = []
         for name in self.attribute_names:
             if self.attribute_kinds.get(name) == "continuous":
                 lo, hi = min_max_features.get(name, (0.0, 1.0))
                 mm.append([lo, hi])
+                is_cont.append(1.0)
+                n_cls_row.append(2.0)
             else:
                 mm.append([0.0, 1.0])
+                is_cont.append(0.0)
+                n_cls_row.append(float(discrete_num_classes.get(name, 2)))
         self.register_buffer(
             "min_max_features",
             torch.tensor(mm, dtype=torch.float32),
+        )
+        self.register_buffer(
+            "is_continuous",
+            torch.tensor(is_cont, dtype=torch.float32),
+        )
+        self.register_buffer(
+            "discrete_n_classes",
+            torch.tensor(n_cls_row, dtype=torch.float32),
         )
         self.register_buffer(
             "num_attributes",
@@ -84,16 +98,16 @@ class FaderTraceModel(nn.Module):
     @torch.jit.export
     def normalize_all(self, attr: torch.Tensor) -> torch.Tensor:
         """Normalize raw attr (B, D, T) to [-1,1] for decoder concat."""
-        out = attr.clone()
-        for i, name in enumerate(self.attribute_names):
-            if self.attribute_kinds.get(name) == "continuous":
-                lo, hi = self.min_max_features[i, 0], self.min_max_features[i, 1]
-                out[:, i] = 2.0 * ((out[:, i] - lo) / (hi - lo + 1e-8) - 0.5)
-            else:
-                n_cls = self.discrete_num_classes.get(name, 2)
-                idx = out[:, i].long()
-                out[:, i] = discrete_index_to_decoder_float(idx, n_cls)
-        return out
+        lo = self.min_max_features[:, 0].view(1, -1, 1)
+        hi = self.min_max_features[:, 1].view(1, -1, 1)
+        cont = 2.0 * ((attr - lo) / (hi - lo + 1e-8) - 0.5)
+
+        n_cls = self.discrete_n_classes.view(1, -1, 1).clamp(min=2.0)
+        idx = attr.long().clamp(min=0)
+        disc = 2.0 * (idx.float() / (n_cls - 1.0)) - 1.0
+
+        mask = self.is_continuous.view(1, -1, 1) > 0.5
+        return torch.where(mask, cont, disc)
 
     def _encode_core(self, x: torch.Tensor) -> torch.Tensor:
         if self.waveform_canonicalizer is not None:

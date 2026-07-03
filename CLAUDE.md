@@ -42,9 +42,18 @@ python RAVE/scripts/train.py --config=configs/brave.gin --name=my_run --db_path=
 ```
 Training runs for 1.5M steps; the checkpoint used for evaluation is `epoch_1500000.ckpt`.
 
+**Export for realtime (Max nn~ bundle — recommended):**
+```bash
+python scripts/export_model.py \
+  --model runs/my_run --db_path /path/to/lmdb \
+  --output_dir exports/my_run
+```
+Writes `model.ts`, sidecars, and pre-wired `play.maxpat`. See [`RAVE/rave/fader/export/README.md`](RAVE/rave/fader/export/README.md#max-9--nn-bundles).
+
 **Export for Minifusion plugin** (requires `.ckpt`, not `.ts`):
 ```bash
-python ./scripts/export_brave_plugin.py --model path/to/model.ckpt --output_path ./exported_model.h5
+python scripts/export_model.py --model path/to/model.ckpt --host h5 --output_dir exports/my_run
+# or: python ./scripts/export_brave_plugin.py --model path/to/model.ckpt --output_path ./exported_model.h5
 ```
 
 ## Fader Networks training
@@ -94,20 +103,20 @@ python RAVE/scripts/build_attribute_sidecar.py --db_path .../preprocessed --sche
 ```
 Use `configs/brave_fader_fsd50k_water.gin.example` (copy to `.gin`; includes `brave_fader.gin`).
 
-**Export Fader for Max/nn~ (attribute knobs):**
+**Export Fader for Max/nn~ (attribute knobs + play.maxpat):**
 ```bash
-python RAVE/scripts/export_fader_nn.py \
+python scripts/export_model.py \
   --model runs/brave_fader_run --db_path /path/to/lmdb \
-  --output_path exports/fader.ts --streaming
+  --output_dir exports/brave_fader_run
 ```
+Lower-level: `RAVE/scripts/export_fader_nn.py` (canonicalizer: `--canonicalizer auto`).
 
 **Export Fader plain TorchScript (128+D concat, Python demos):**
 ```bash
-python RAVE/scripts/export_fader_ts.py \
-  --model runs/brave_fader_run --db_path /path/to/lmdb \
-  --output_path exports/fader.ts
+python scripts/export_model.py --model runs/brave_fader_run --host ts \
+  --db_path /path/to/lmdb --output_dir exports/brave_fader_run
 ```
-Also writes `fader_host_controls.json` beside the `.ts`. See [`docs/fader_host_controls.md`](docs/fader_host_controls.md).
+Also writes `model_host_controls.json`. See [`docs/fader_host_controls.md`](docs/fader_host_controls.md).
 
 **Subjective swap listening assets:**
 ```bash

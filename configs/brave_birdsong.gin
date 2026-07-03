@@ -1,0 +1,25 @@
+# Unconditional BRAVE on yt_birdsong (128-D, no Fader attributes).
+#
+# Same LMDB as the Fader birdsong run (PCEN + normalize):
+#   /data/scratch-fast/p1long/BRAVE/yt_birdsong/preprocessed_pcen
+#
+# Submit (recommended — avoids broken multiline sbatch --export):
+#   bash scripts/submit_yt_birdsong_train.sh
+#
+# Or export vars in your shell, then sbatch (must be ONE line for --export):
+#   export DB_PATH=/data/scratch-fast/p1long/BRAVE/yt_birdsong/preprocessed_pcen
+#   export RUN_NAME=yt_birdsong_run
+#   export CONFIG=configs/brave_birdsong.gin
+#   export OUT_PATH=/data/scratch-fast/p1long/BRAVE/yt_birdsong/runs
+#   unset CKPT WANDB_RUN_ID
+#   sbatch scripts/train.sbatch
+#
+# Log: logs/train-<jobid>.log — check first lines for DB_PATH / RUN_NAME.
+#
+# After ~1.5M steps, export for Max/nn~:
+#   python scripts/export_model.py \
+#     --model /data/scratch-fast/p1long/BRAVE/yt_birdsong/runs/yt_birdsong_run/best.ckpt \
+#     --output_dir /data/scratch-fast/p1long/BRAVE/exports/yt_birdsong_run \
+#     --host nn
+
+include "brave.gin"

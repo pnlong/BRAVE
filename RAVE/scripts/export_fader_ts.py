@@ -14,97 +14,112 @@ from __future__ import annotations
 import os
 import shutil
 import sys
+from pathlib import Path
+from typing import Optional
 
 _RAVE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _RAVE_ROOT not in sys.path:
     sys.path.insert(0, _RAVE_ROOT)
 
-import gin
 import torch
 from absl import app, flags, logging
 
-import rave
-from rave.fader.attributes import resolve_stats_path
-from rave.fader.export.host_controls import write_host_controls_json
-from rave.fader.export.trace_model import build_trace_model
-from rave.fader.model import FaderRAVE
 import cached_conv as cc
+from rave.fader.export.host_controls import write_host_controls_json
+from rave.fader.export.load_for_export import (
+    load_fader_for_export,
+    resolve_canonicalizer_ckpt,
+    strip_weight_norm,
+)
+from rave.fader.export.trace_model import build_trace_model
 
-FLAGS = flags.FLAGS
 
-flags.DEFINE_string("model", required=True, help="FaderRAVE run dir or ckpt")
-flags.DEFINE_string("output_path", required=True, help="Output .ts path")
-flags.DEFINE_string("stats_path", default=None, help="attribute_stats.yaml")
-flags.DEFINE_string("db_path", default=None, help="LMDB to find stats")
-flags.DEFINE_string(
-    "waveform_canonicalizer",
-    default=None,
-    help="waveform_canonicalizer.ckpt to embed in export",
-)
-flags.DEFINE_string(
-    "latent_canonicalizer",
-    default=None,
-    help="latent_canonicalizer.ckpt to embed in export",
-)
-flags.DEFINE_string(
-    "fader_config",
-    default=None,
-    help="Fader gin config (required with canonicalizer ckpt if not in run config)",
-)
+def _define_flags():
+    flags.DEFINE_string("model", None, "FaderRAVE run dir or ckpt", required=True)
+    flags.DEFINE_string("output_path", None, "Output .ts path", required=True)
+    flags.DEFINE_string("stats_path", default=None, help="attribute_stats.yaml")
+    flags.DEFINE_string("db_path", default=None, help="LMDB to find stats")
+    flags.DEFINE_string(
+        "waveform_canonicalizer",
+        default=None,
+        help="waveform_canonicalizer.ckpt to embed in export",
+    )
+    flags.DEFINE_string(
+        "latent_canonicalizer",
+        default=None,
+        help="latent_canonicalizer.ckpt to embed in export",
+    )
+    flags.DEFINE_string(
+        "canonicalizer",
+        default="none",
+        help="auto | none | path to canonicalizer ckpt",
+    )
+    flags.DEFINE_string(
+        "fader_config",
+        default=None,
+        help="Fader gin config (required with canonicalizer ckpt if not in run config)",
+    )
+
+
+@torch.no_grad()
+def export_fader_ts(
+    model_path: str,
+    output_path: str,
+    *,
+    db_path: Optional[str] = None,
+    stats_path: Optional[str] = None,
+    canonicalizer: str = "none",
+    waveform_canonicalizer: Optional[str] = None,
+    latent_canonicalizer: Optional[str] = None,
+) -> Path:
+    cc.use_cached_conv(False)
+    torch.set_default_dtype(torch.float32)
+
+    canon_ckpt = resolve_canonicalizer_ckpt(
+        model_path,
+        mode=canonicalizer,
+        waveform_canonicalizer=waveform_canonicalizer,
+        latent_canonicalizer=latent_canonicalizer,
+    )
+    model, _run, stats = load_fader_for_export(
+        model_path,
+        db_path=db_path,
+        stats_path=stats_path,
+        canonicalizer_ckpt=canon_ckpt,
+    )
+    strip_weight_norm(model)
+
+    trace = build_trace_model(model, stats, deterministic=True)
+    trace.eval()
+    scripted = torch.jit.script(trace)
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    scripted.save(str(output_path))
+    logging.info("saved TorchScript to %s", output_path)
+
+    stats_out = Path(str(output_path.with_suffix("")) + "_attribute_stats.yaml")
+    shutil.copy2(stats, stats_out)
+    logging.info("copied stats to %s", stats_out)
+
+    write_host_controls_json(output_path, stats, trace)
+    return output_path
 
 
 @torch.no_grad()
 def main(argv):
     del argv
-    cc.use_cached_conv(False)
-    torch.set_default_dtype(torch.float32)
-
-    model_path = FLAGS.model
-    config_path = rave.core.search_for_config(model_path)
-    if config_path is None:
-        logging.error("config not found for %s", model_path)
-        return
-    gin.parse_config_file(config_path)
-    run = rave.core.search_for_run(model_path)
-    if run is None:
-        logging.error("checkpoint not found for %s", model_path)
-        return
-
-    model = FaderRAVE()
-    model = model.load_from_checkpoint(run)
-    model.eval()
-
-    if FLAGS.waveform_canonicalizer or FLAGS.latent_canonicalizer:
-        from rave.fader.canonicalizer_config import load_canonicalizer_onto_model
-
-        ckpt = FLAGS.waveform_canonicalizer or FLAGS.latent_canonicalizer
-        load_canonicalizer_onto_model(model, ckpt)
-
-    stats = resolve_stats_path(FLAGS.db_path, FLAGS.stats_path)
-    if stats is None:
-        logging.error("attribute_stats.yaml not found")
-        return
-
-    for m in model.modules():
-        if hasattr(m, "weight_g"):
-            torch.nn.utils.remove_weight_norm(m)
-
-    trace = build_trace_model(model, stats, deterministic=True)
-    trace.eval()
-    scripted = torch.jit.script(trace)
-    os.makedirs(os.path.dirname(FLAGS.output_path) or ".", exist_ok=True)
-    scripted.save(FLAGS.output_path)
-    logging.info("saved TorchScript to %s", FLAGS.output_path)
-
-    # --- Ship stats yaml beside .ts for runtime unnormalize ---
-    stats_out = os.path.splitext(FLAGS.output_path)[0] + "_attribute_stats.yaml"
-    shutil.copy2(stats, stats_out)
-    logging.info("copied stats to %s", stats_out)
-
-    stats_data = load_attribute_stats(stats)
-    host_out = write_host_controls_json(FLAGS.output_path, stats, trace)
-    logging.info("wrote host controls to %s", host_out)
+    export_fader_ts(
+        flags.FLAGS.model,
+        flags.FLAGS.output_path,
+        db_path=flags.FLAGS.db_path,
+        stats_path=flags.FLAGS.stats_path,
+        canonicalizer=flags.FLAGS.canonicalizer,
+        waveform_canonicalizer=flags.FLAGS.waveform_canonicalizer,
+        latent_canonicalizer=flags.FLAGS.latent_canonicalizer,
+    )
 
 
 if __name__ == "__main__":
+    _define_flags()
     app.run(main)

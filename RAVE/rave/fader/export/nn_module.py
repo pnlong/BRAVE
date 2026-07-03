@@ -7,13 +7,18 @@ drive per-attribute sliders and optional torch-native extraction.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import nn_tilde
 import torch
 import torch.nn as nn
 
-from .torch_descriptors import TorchDescriptorExtract
+from .torch_descriptors import (
+    TORCH_EXTRACTABLE,
+    TorchDescriptorExtract,
+    calibrate_torch_descriptor_extract,
+)
 from .trace_model import FaderTraceModel
 
 
@@ -28,7 +33,77 @@ def _default_raw_value(
     return 0.0
 
 
-class ScriptedFaderRAVE(nn_tilde.Module):
+def _reader_method_source(
+    method_name: str,
+    attr_names: Sequence[str],
+    *,
+    suffix: str = "",
+) -> str:
+    lines = [f"    def {method_name}(self, idx: int) -> float:"]
+    for i, name in enumerate(attr_names):
+        lines.append(f"        if idx == {i}:")
+        lines.append(f"            return self.{name}{suffix}[0]")
+    lines.append("        return 0.0")
+    return "\n".join(lines)
+
+
+def write_scripted_fader_module(
+    module_path: Path,
+    attr_names: Sequence[str],
+) -> None:
+    """Write a TorchScript-friendly ScriptedFaderRAVE subclass with literal attr reads."""
+    methods = "\n\n".join([
+        _reader_method_source("_read_value", attr_names),
+        _reader_method_source("_read_scale", attr_names, suffix="_scale"),
+        _reader_method_source("_read_override", attr_names, suffix="_override"),
+    ])
+    module_path.write_text(
+        "# Auto-generated for TorchScript export — do not edit.\n"
+        "from __future__ import annotations\n\n"
+        "import torch\n\n"
+        "from rave.fader.export.nn_module import ScriptedFaderRAVEBase\n\n\n"
+        f"class ScriptedFaderRAVE(ScriptedFaderRAVEBase):\n{methods}\n",
+        encoding="utf-8",
+    )
+
+
+def load_scripted_fader_class(module_path: Path) -> type:
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        f"scripted_fader_{module_path.stem}",
+        module_path,
+    )
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load generated module from {module_path}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.ScriptedFaderRAVE
+
+
+def create_scripted_fader_rave(
+    core: FaderTraceModel,
+    min_max_features: Dict[str, Tuple[float, float]],
+    continuous_attributes: Sequence[str],
+    n_channels: int = 1,
+    target_channels: Optional[int] = None,
+    *,
+    generated_module_path: Optional[Path] = None,
+) -> nn_tilde.Module:
+    if generated_module_path is None:
+        raise ValueError("generated_module_path is required for TorchScript export")
+    write_scripted_fader_module(generated_module_path, core.attribute_names)
+    cls = load_scripted_fader_class(generated_module_path)
+    return cls(
+        core,
+        min_max_features,
+        continuous_attributes,
+        n_channels=n_channels,
+        target_channels=target_channels,
+    )
+
+
+class ScriptedFaderRAVEBase(nn_tilde.Module):
     """
     nn~-compatible Fader model with per-attribute knobs.
 
@@ -54,6 +129,9 @@ class ScriptedFaderRAVE(nn_tilde.Module):
         self.target_channels = target_channels or n_channels
         self.continuous_attributes = list(continuous_attributes)
         self.min_max_features = dict(min_max_features)
+        self._torch_extract_names = [
+            n for n in self.continuous_attributes if n in TORCH_EXTRACTABLE
+        ]
 
         kinds = core.attribute_kinds
         for name in core.attribute_names:
@@ -63,12 +141,20 @@ class ScriptedFaderRAVE(nn_tilde.Module):
             self.register_attribute(f"{name}_scale", 1.0)
             self.register_attribute(f"{name}_override", False)
 
-        self.register_attribute("attr_mode", 0)
+        self.register_attribute("attr_mode", 2)
+
+        cont_idx = {n: i for i, n in enumerate(self._torch_extract_names)}
+        cont_rows = [cont_idx.get(name, -1) for name in core.attribute_names]
+        self.register_buffer(
+            "_cont_extract_row",
+            torch.tensor(cont_rows, dtype=torch.long),
+        )
 
         self.extractor = TorchDescriptorExtract(
-            continuous_attributes=self.continuous_attributes,
+            continuous_attributes=self._torch_extract_names,
             sr=core.sr,
         )
+        calibrate_torch_descriptor_extract(self.extractor, sr=core.sr)
 
         x_len = 2**14
         x = torch.zeros(1, n_channels, x_len)
@@ -125,9 +211,6 @@ class ScriptedFaderRAVE(nn_tilde.Module):
             ],
         )
 
-    def _read_attr_scalar(self, name: str) -> torch.Tensor:
-        return getattr(self, name)[0]
-
     def _build_manual_raw(
         self,
         batch: int,
@@ -137,17 +220,27 @@ class ScriptedFaderRAVE(nn_tilde.Module):
     ) -> torch.Tensor:
         d_total = int(self.core.num_attributes.item())
         raw = torch.zeros(batch, d_total, t_lat, device=device, dtype=dtype)
-        for i, name in enumerate(self.core.attribute_names):
-            val = self._read_attr_scalar(name)
-            raw[:, i, :] = val
+        for i in range(d_total):
+            raw[:, i, :] = self._read_value(i)
         return raw
 
     def _apply_scales(self, attr_norm: torch.Tensor) -> torch.Tensor:
         out = attr_norm.clone()
-        for i, name in enumerate(self.core.attribute_names):
-            scale = self._read_attr_scalar(f"{name}_scale")
+        d_total = int(self.core.num_attributes.item())
+        for i in range(d_total):
+            scale = self._read_scale(i)
             out[:, i, :] = out[:, i, :] * scale
         return out
+
+    def _extract_history_ready(self) -> bool:
+        return int(self.extractor._hist_len.item()) >= int(self.extractor.max_history)
+
+    def _clamp_raw(self, raw: torch.Tensor) -> torch.Tensor:
+        lo = self.core.min_max_features[:, 0].view(1, -1, 1)
+        hi = self.core.min_max_features[:, 1].view(1, -1, 1)
+        cont = self.core.is_continuous.view(1, -1, 1) > 0.5
+        clamped = torch.clamp(raw, lo, hi)
+        return torch.where(cont, clamped, raw)
 
     def _merge_raw(
         self,
@@ -156,31 +249,30 @@ class ScriptedFaderRAVE(nn_tilde.Module):
         manual: torch.Tensor,
     ) -> torch.Tensor:
         mode = int(self.attr_mode[0])
-        batch = x.shape[0]
-        device = x.device
-        dtype = x.dtype
+        d_total = int(self.core.num_attributes.item())
 
         if mode == 1:
             return manual
 
         cont_raw = self.extractor(x, t_lat)
         extracted = torch.zeros_like(manual)
-        cont_idx = {n: i for i, n in enumerate(self.continuous_attributes)}
-        for i, name in enumerate(self.core.attribute_names):
-            if name in cont_idx:
-                extracted[:, i, :] = cont_raw[:, cont_idx[name], :]
+        history_ready = self._extract_history_ready()
+        for i in range(d_total):
+            row = int(self._cont_extract_row[i].item())
+            if row >= 0 and history_ready:
+                extracted[:, i, :] = cont_raw[:, row, :]
+            else:
+                extracted[:, i, :] = manual[:, i, :]
 
         if mode == 2:
-            for i, name in enumerate(self.core.attribute_names):
-                kind = self.core.attribute_kinds.get(name, "continuous")
-                if kind != "continuous":
+            for i in range(d_total):
+                if self.core.is_continuous[i] <= 0.5:
                     extracted[:, i, :] = manual[:, i, :]
             return extracted
 
         raw = extracted.clone()
-        for i, name in enumerate(self.core.attribute_names):
-            override = self._read_attr_scalar(f"{name}_override") != 0
-            if override:
+        for i in range(d_total):
+            if self._read_override(i) != 0:
                 raw[:, i, :] = manual[:, i, :]
         return raw
 
@@ -199,7 +291,9 @@ class ScriptedFaderRAVE(nn_tilde.Module):
         manual = self._build_manual_raw(
             z.shape[0], t_lat, z.device, z.dtype)
         raw = self._merge_raw(x, t_lat, manual)
+        raw = self._clamp_raw(raw)
         attr_norm = self._apply_scales(self.core.normalize_all(raw))
+        attr_norm = attr_norm.clamp(-1.0, 1.0)
         z_c = torch.cat([z, attr_norm], dim=1)
         y = self.decode(z_c)
         if self.target_channels < y.shape[1]:
@@ -214,3 +308,7 @@ class ScriptedFaderRAVE(nn_tilde.Module):
     def set_attr_mode(self, mode: int) -> int:
         self.attr_mode = (int(mode),)
         return 0
+
+
+# Backwards-compatible alias; prefer create_scripted_fader_rave() for export.
+ScriptedFaderRAVE = ScriptedFaderRAVEBase

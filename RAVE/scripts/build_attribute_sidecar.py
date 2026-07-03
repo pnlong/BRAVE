@@ -38,6 +38,7 @@ from tqdm import tqdm
 from fsd50k_manifest import clip_id_from_fname_cell, csv_labels_normalized
 from paths import canonical_partition, fsd50k_dataset_root, partitions_for
 from tag_utils import normalize_tag
+from rave.fader.discrete_class_labels import load_class_labels_from_tags_yaml
 
 FLAGS = flags.FLAGS
 
@@ -341,6 +342,20 @@ def main(argv):
         show_progress=show_progress,
     )
     attr_name = "water_scene" if scheme == "water_scene" else "texture_class"
+    if scheme == "texture_class":
+        n_cls = TEXTURE_CLASS_COUNT if FLAGS.texture_only else max(
+            (int(k) for k in counts), default=-1) + 1
+        if n_cls <= 0:
+            n_cls = TEXTURE_CLASS_COUNT
+    else:
+        n_cls = 3
+    class_labels = load_class_labels_from_tags_yaml(
+        tags_path, n_cls, attr_name=attr_name)
+    counts_labeled = {
+        class_labels[k]: counts[k]
+        for k in counts
+        if isinstance(k, int) and k < len(class_labels)
+    }
 
     sidecar = {
         "index_key": "lmdb_index",
@@ -360,6 +375,8 @@ def main(argv):
         "scheme": scheme,
         "partitions": list(FLAGS.partition),
         "counts": counts,
+        "class_labels": class_labels,
+        "counts_labeled": counts_labeled,
         "fractions": {str(k): v / total for k, v in counts.items()},
         "missing_csv_labels": missing_csv,
         "skipped_non_texture": skipped,

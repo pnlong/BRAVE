@@ -49,6 +49,7 @@ from rave.fader.attributes import (
     ordered_attributes,
     save_attribute_stats,
 )
+from rave.fader.discrete_class_labels import resolve_discrete_class_labels
 from rave.fader.providers import build_attribute_loader
 
 FLAGS = flags.FLAGS
@@ -584,6 +585,11 @@ def main(argv):
             disc_classes[name] = inferred
 
     out_path = _stats_path(db_path)
+    discrete_class_labels = resolve_discrete_class_labels(
+        db_path,
+        discrete,
+        disc_classes,
+    )
     save_attribute_stats(
         out_path,
         attribute_names=attribute_names,
@@ -596,6 +602,7 @@ def main(argv):
         discrete_attributes=discrete,
         attribute_kinds=kinds,
         discrete_num_classes=disc_classes,
+        discrete_class_labels=discrete_class_labels,
         version=1,
         split={
             "train_only": FLAGS.train_only,
@@ -619,6 +626,8 @@ def main(argv):
         },
     )
     print(f"Wrote {out_path}")
+    for name, labels in discrete_class_labels.items():
+        print(f"  discrete_class_labels[{name}]: {labels}")
 
 
 if __name__ == "__main__":

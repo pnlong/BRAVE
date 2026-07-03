@@ -15,8 +15,11 @@ decode(cat(z, attr_norm)) → audio
 
 ## Export paths
 
+**Default:** [`scripts/export_model.py`](../scripts/export_model.py) — auto-detects BRAVE vs FaderRAVE, embeds canonicalizer when present, writes a Max bundle with `play.maxpat`.
+
 | Script | Host | Attribute knobs |
 |--------|------|-----------------|
+| [`scripts/export_model.py`](../scripts/export_model.py) | Max **nn~** bundle | Yes (Fader) — pre-wired patch |
 | [`RAVE/scripts/export_fader_nn.py`](../RAVE/scripts/export_fader_nn.py) | Max/Pd **nn~** | Yes — `register_attribute` per control |
 | [`RAVE/scripts/export_fader_ts.py`](../RAVE/scripts/export_fader_ts.py) | Python demos | External — pass `attr` to `forward(x, attr)` |
 | [`RAVE/scripts/export.py`](../RAVE/scripts/export.py) | nn~ (128-D RAVE only) | No Fader support |
@@ -25,21 +28,13 @@ decode(cat(z, attr_norm)) → audio
 
 ```bash
 export PYTHONPATH="${PWD}/RAVE:${PYTHONPATH}"
-python RAVE/scripts/export_fader_nn.py \
+python scripts/export_model.py \
   --model runs/brave_fader_texture \
   --db_path /path/to/lmdb \
-  --output_path exports/fader_texture.ts \
-  --streaming
+  --output_dir exports/brave_fader_texture
 ```
 
-Writes beside the `.ts`:
-
-- `*_attribute_stats.yaml` — min/max and metadata
-- `*_host_controls.json` — names, kinds, min/max, `nn_attributes` schema
-
-Load in Max: `[nn~ exports/fader_texture.ts @forward 1]`
-
-Use `[nn.info exports/fader_texture.ts]` to list methods and attributes.
+Copy the bundle folder to `~/Documents/Max 9/Packages/nn_tilde/models/` and open `play.maxpat`.
 
 ## nn~ attributes
 
@@ -50,7 +45,7 @@ Per attribute row (order = `attribute_names` in stats):
 | `{name}` | float or int | midpoint / 0 | Manual raw value (broadcast over `T_lat`) |
 | `{name}_scale` | float | 1.0 | Multiplier on normalized row after `normalize_all` |
 | `{name}_override` | bool | false | Replace extracted row with manual `{name}` |
-| `attr_mode` | int | 0 | `0`=extract+scale/override, `1`=manual-only, `2`=extract-only |
+| `attr_mode` | int | 2 | `0`=extract+scale/override, `1`=manual-only, `2`=extract-only |
 
 Max message syntax:
 
@@ -62,7 +57,7 @@ set texture_class_override 1
 set attr_mode 1
 ```
 
-Example patch wiring: dial → `prepend set rms` → `[nn~ model.ts @forward 1]`.
+Example patch wiring: slider → `prepend set rms` → **same inlet** as audio on `[nn~ model.ts forward 512]`.
 
 ## Attribute order
 
@@ -74,7 +69,13 @@ Each continuous name has global min/max from stats. `{name}` is the **raw** trai
 
 ## Discrete controls (`texture_class`, etc.)
 
-Set `{name}` to class index `0 … K-1`. Discrete rows are always taken from manual knobs in `attr_mode=2` (extract-only); in modes `0` and `1` they come from the `{name}` attribute.
+Set `{name}` to class index `0 … K-1`. After precompute, human-readable names are stored in `attribute_stats.yaml` as `discrete_class_labels` (and copied to `*_host_controls.json` at export for Max `live.menu` entries). Discrete rows are always taken from manual menus in `attr_mode=2` (extract-only); in modes `0` and `1` they come from the `{name}` attribute.
+
+## Realtime nn~ extract
+
+TorchScript extractors match **librosa** descriptors (`rms`, `flatness`, `centroid`, …). **Timbral** attrs (`roughness`, `brightness`, …) stay at training midpoints in `attr_mode=2` until dedicated JIT extractors exist — bogus STFT proxies caused out-of-range normalized attrs (buzzing).
+
+Extracted rows are clamped to dataset min/max, normalized to **[-1, 1]**, and only applied after the rolling buffer fills (~3 s @ 44.1 kHz, same as training `n_signal`).
 
 ## Realtime demo (plain TorchScript)
 

@@ -381,6 +381,7 @@ def save_attribute_stats(
     discrete_attributes: Optional[Sequence[str]] = None,
     attribute_kinds: Optional[Dict[str, str]] = None,
     discrete_num_classes: Optional[Dict[str, int]] = None,
+    discrete_class_labels: Optional[Dict[str, Sequence[str]]] = None,
     version: int = 1,
     split: Optional[Dict] = None,
     precompute: Optional[Dict] = None,
@@ -415,6 +416,10 @@ def save_attribute_stats(
         payload["attribute_kinds"] = dict(attribute_kinds)
     if discrete_num_classes:
         payload["discrete_num_classes"] = dict(discrete_num_classes)
+    if discrete_class_labels:
+        payload["discrete_class_labels"] = {
+            k: list(v) for k, v in discrete_class_labels.items()
+        }
     if split:
         payload["split"] = split
     if precompute:
@@ -448,6 +453,7 @@ def load_attribute_stats(path: Union[str, Path]) -> Dict:
         data["attribute_kinds"].update(
             {n: "discrete" for n in data["discrete_attributes"]})
     data["discrete_num_classes"] = data.get("discrete_num_classes") or {}
+    data["discrete_class_labels"] = data.get("discrete_class_labels") or {}
     return data
 
 

@@ -13,7 +13,9 @@
 
 set -euo pipefail
 
-: "${DB_PATH:?Set DB_PATH to preprocessed LMDB directory}"
+echo "========== BRAVE train.sbatch (job ${SLURM_JOB_ID:-local}) =========="
+
+: "${DB_PATH:?Set DB_PATH to preprocessed LMDB directory (see scripts/submit_yt_birdsong_train.sh)}"
 : "${RUN_NAME:?Set RUN_NAME to wandb/run folder name}"
 
 BRAVE_ROOT="${BRAVE_ROOT:-/data/hai-res/p1long/BRAVE}"
@@ -48,9 +50,13 @@ cd "${BRAVE_ROOT}"
 echo "DB_PATH=${DB_PATH}"
 echo "RUN_NAME=${RUN_NAME}"
 echo "CONFIG=${CONFIG}"
+echo "OUT_PATH=${OUT_PATH}"
 echo "GPUs: ${GPU_TRAIN_ARGS[*]}"
 if [[ -n "${CKPT}" ]]; then
-  echo "CKPT=${CKPT}"
+  echo "WARNING: CKPT=${CKPT} (resuming — unset CKPT for a fresh run)"
+fi
+if [[ -n "${WANDB_RUN_ID}" ]]; then
+  echo "WANDB_RUN_ID=${WANDB_RUN_ID}"
 fi
 python scripts/lmdb_duration.py "${DB_PATH}"
 
