@@ -6,8 +6,7 @@ Usage (BRAVE root):
   python RAVE/scripts/export_fader_nn.py \\
     --model runs/brave_fader_texture \\
     --db_path /path/to/lmdb \\
-    --output_path exports/fader_texture/model.ts \\
-    --streaming
+    --output_path exports/fader_texture/model.ts
 """
 
 from __future__ import annotations
@@ -43,7 +42,11 @@ def _define_flags():
     flags.DEFINE_string("output_path", None, "Output .ts path", required=True)
     flags.DEFINE_string("stats_path", default=None, help="attribute_stats.yaml")
     flags.DEFINE_string("db_path", default=None, help="LMDB to find stats")
-    flags.DEFINE_bool("streaming", default=False, help="Enable cached conv streaming")
+    flags.DEFINE_bool(
+        "streaming",
+        default=True,
+        help="Cached conv streaming for nn~ (default on; --nostreaming for offline-only)",
+    )
     flags.DEFINE_integer("channels", default=None, help="Output channels for export")
     flags.DEFINE_string(
         "waveform_canonicalizer",
@@ -74,7 +77,7 @@ def export_fader_nn(
     *,
     db_path: Optional[str] = None,
     stats_path: Optional[str] = None,
-    streaming: bool = False,
+    streaming: bool = True,
     channels: Optional[int] = None,
     canonicalizer: str = "none",
     waveform_canonicalizer: Optional[str] = None,
@@ -83,9 +86,13 @@ def export_fader_nn(
 ) -> Path:
     cc.use_cached_conv(streaming)
     if streaming:
+        logging.info(
+            "streaming=True (default): Fader nn~ may go silent after ~1s at "
+            "forward 512; use forward 8192 in play.maxpat if that happens",
+        )
+    else:
         logging.warning(
-            "streaming=True: Fader nn~ decode may go silent after ~1s of 512-sample "
-            "blocks; omit --streaming unless you need minimum latency and accept risk",
+            "streaming=False: nn~ realtime may click; omit --nostreaming for Max use",
         )
     torch.set_default_dtype(torch.float32)
 

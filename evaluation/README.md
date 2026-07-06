@@ -78,6 +78,34 @@ The latency test requires a GPU to perform fast inference on a battery of synthe
 python ./scripts/latency.py --model /path/to/checkpoint.ckpt --gpu 0 --name EXPERIMENT_ID
 ```
 
+### nn~ block reconstruction (Max signal flow)
+
+Offline checkpoint reconstructions (e.g. `latent_exploration/mask_reconstruct.py`) run the **entire clip in one forward pass**. Max/nn~ instead calls `forward N` on fixed-size blocks (default **512 samples** in the bundled `play.maxpat`).
+
+Small blocks can sound buzzy or thin because causal PQMF/encoder filters do not get enough context per block. Raising the nn~ block size (e.g. **`forward 8192`**) usually fixes this at the cost of higher latency.
+
+`nn_block_reconstruct.py` loads an exported `model.ts` and processes audio block-by-block the same way nn~ does, so you can compare block sizes before opening Max:
+
+```bash
+export PYTHONPATH="${PWD}/../RAVE:${PYTHONPATH}"
+
+# Match default Max patch (512-sample blocks)
+python ./scripts/nn_block_reconstruct.py \
+  --model=/path/to/export/model.ts \
+  --input=/path/to/audio.wav \
+  --block_size=512 \
+  --out_dir=./artifacts/nn_block_512
+
+# Larger blocks — closer to offline quality, matches nn~ ``forward 8192``
+python ./scripts/nn_block_reconstruct.py \
+  --model=/path/to/export/model.ts \
+  --input=/path/to/audio.wav \
+  --block_size=8192 \
+  --out_dir=./artifacts/nn_block_8192
+```
+
+Use `--streaming` if the export was built with `--streaming` (or `_streaming.ts` in the filename). Fader exports accept `--attr_mode=2` (extract only, default) via `set_attr_mode`.
+
 ### Timbre Transfer Evaluation
 
 This evaluation requires two directory trees with a similar structure: 

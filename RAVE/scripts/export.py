@@ -38,8 +38,8 @@ flags.DEFINE_string('run',
                     help='Path to the run to export',
                     required=True)
 flags.DEFINE_bool('streaming',
-                  default=False,
-                  help='Enable the model streaming mode')
+                  default=True,
+                  help='Enable cached-conv streaming mode (default on for nn~ / realtime)')
 flags.DEFINE_float(
     'fidelity',
     default=.95,

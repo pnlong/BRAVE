@@ -47,8 +47,8 @@ flags.DEFINE_string("waveform_canonicalizer", default=None, help="Explicit wavef
 flags.DEFINE_string("latent_canonicalizer", default=None, help="Explicit latent ckpt")
 flags.DEFINE_bool(
     "streaming",
-    default=False,
-    help="Cached conv streaming for nn~ (Fader: off by default; streaming decode can go silent after ~1s)",
+    default=True,
+    help="Cached conv streaming for nn~ (default on; use --nostreaming for offline-only .ts)",
 )
 flags.DEFINE_integer("channels", default=None, help="Output channels (Fader nn export)")
 
@@ -72,10 +72,13 @@ def _export_vanilla_nn(model_path: str, output_dir: Path, streaming: bool) -> Pa
         f"--output={output_dir}",
         "--name=model",
     ]
-    if streaming:
-        cmd.append("--streaming")
+    if not streaming:
+        cmd.append("--nostreaming")
     logging.info("running: %s", " ".join(cmd))
     subprocess.run(cmd, check=True, cwd=str(_BRAVE_ROOT))
+    streaming_ts = output_dir / "model_streaming.ts"
+    if not ts_path.is_file() and streaming_ts.is_file():
+        streaming_ts.rename(ts_path)
     if not ts_path.is_file():
         raise FileNotFoundError(f"expected export at {ts_path}")
     return ts_path

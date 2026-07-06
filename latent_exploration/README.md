@@ -9,6 +9,53 @@ micromamba activate brave
 export PYTHONPATH="${PWD}/RAVE:${PYTHONPATH}"
 ```
 
+On hai-res login nodes where AFS home is unreadable, set `HOME=/data/hai-res/$USER` before `micromamba activate` (see `scripts/micromamba_env.sh`).
+
+## Reconstruction test (offline)
+
+**Use this first** when Max/nn~ sounds wrong (buzzing, silence, level issues) and you need to know whether the checkpoint or the realtime patch is at fault.
+
+**Process:** encode the input clip → decode (no mask) → write WAVs. All reconstruction tests go through **`mask_reconstruct.py`** with **`--mask-style none`** (or the thin wrapper **`visualize_latents.py`**, which calls the same code path).
+
+| What you hear | Likely cause |
+|---------------|--------------|
+| Buzzing / bad audio in `{stem}_reconstructed.wav` | Model, checkpoint, or training data mismatch |
+| Clean offline recon, bad audio only in Max | nn~ export, block streaming, patch wiring, or sample rate |
+
+**Unconditional BRAVE** (no `--db-path`, no `--attr-mode`):
+
+```bash
+python latent_exploration/mask_reconstruct.py \
+  --model /data/scratch-fast/p1long/BRAVE/yt_birdsong/runs/yt_birdsong_run_d8e2ae9d65/best.ckpt \
+  --input /data/scratch-fast/p1long/BRAVE/tap_samples/audio_subset/0.wav \
+  --output-dir /data/scratch-fast/p1long/BRAVE/yt_birdsong/recon_test_tap0 \
+  --mask-style none \
+  --latent-mode mean \
+  --gpu
+```
+
+**Outputs** (in `--output-dir`, or `latent_exploration/artifacts/reconstructions/<stem>/` by default):
+
+- `{stem}_original.wav` — resampled input at model rate (44.1 kHz)
+- `{stem}_reconstructed.wav` — full-clip encode/decode (compare this to Max)
+- `{stem}_latents.png`, `{stem}_latent_hist.png` — optional diagnostics (omit with `--no-plot`)
+
+Listen to `_reconstructed.wav` in any player; no Max required. Use `--no-wavs` for plot-only runs.
+
+Equivalent one-liner:
+
+```bash
+python latent_exploration/visualize_latents.py \
+  --model /path/to/run_or_ckpt \
+  --input /path/to/audio.wav \
+  --output-dir /path/to/output \
+  --gpu
+```
+
+For **Fader** checkpoints, add `--db-path /path/to/lmdb` (or `--stats-path`) and `--attr-mode extract` — see [FaderRAVE](#faderrave-attribute-controlled-decode) below.
+
+Lower-level alternative (resynth only, no side-by-side original): `RAVE/scripts/generate.py --model=... --input=... --gpu=0`.
+
 ## Environment / troubleshooting
 
 **Activate `brave` first** — the scripts need RAVE deps (`cached_conv`, `torch`, etc.) from that env:
@@ -77,7 +124,7 @@ This is the same criterion as `RAVE/scripts/export.py --fidelity` (export additi
 
 ## Scripts
 
-All paths go through **`mask_reconstruct.py`** (`run_reconstruction`). By default each run saves:
+Beyond the [reconstruction test](#reconstruction-test-offline) workflow above, all encode/decode paths go through **`mask_reconstruct.py`** (`run_reconstruction`). By default each run saves:
 
 - `{stem}_original.wav`
 - `{stem}_reconstructed.wav`
@@ -96,7 +143,7 @@ Use **`--clip-outliers`** to set heatmap color limits from percentiles instead o
 
 ### Visualize latents
 
-Thin wrapper: `mask_reconstruct` with `--mask-style none`, output under `artifacts/plots/<stem>/`.
+Thin wrapper for **reconstruction test** (`--mask-style none`); same as `mask_reconstruct.py` above. Default output under `artifacts/plots/<stem>/`.
 
 ```bash
 python latent_exploration/visualize_latents.py \
