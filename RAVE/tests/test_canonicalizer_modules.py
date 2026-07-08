@@ -1,8 +1,8 @@
 import torch
 
 from rave.dsp import BiquadBank, CausalReverb
-from rave.fader.waveform_canonicalizer import WaveformCanonicalizer
-from rave.fader.latent_canonicalizer import LatentCanonicalizer
+from rave.canonicalizer.waveform_canonicalizer import WaveformCanonicalizer
+from rave.canonicalizer.latent_canonicalizer import LatentCanonicalizer
 
 
 def test_biquad_bank_identity_at_init():
@@ -75,31 +75,43 @@ def test_waveform_canonicalizer_with_reverb():
     assert torch.allclose(wc(x), x, atol=1e-4)
 
 
-def test_latent_domain_adv_mismatched_batch_sizes():
-    """Mixed batches have unequal in-domain vs OOD counts (e.g. 53 vs 11)."""
+def test_domain_y_gan_mismatched_batch_sizes():
+    """Mixed batches have unequal in-domain vs OOD counts."""
+    import torch.nn as nn
     from types import SimpleNamespace
 
-    from rave.fader.canonicalizer_trainer import CanonicalizerTrainer
-    from rave.fader.latent_domain_discriminator import LatentDomainDiscriminator
+    from rave.canonicalizer.trainer import CanonicalizerTrainer
+    from rave.core import hinge_gan
+
+    class TinyDisc(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.proj = nn.Conv1d(1, 1, kernel_size=1)
+
+        def forward(self, x):
+            return [[self.proj(x).mean(dim=-1, keepdim=True)]]
 
     trainer = SimpleNamespace(
-        latent_domain_disc=LatentDomainDiscriminator(latent_size=128),
+        in_domain_disc=TinyDisc(),
+        gan_loss_fn=hinge_gan,
     )
-    z = torch.randn(64, 128, 32, requires_grad=True)
+    y = torch.randn(64, 1, 4096, requires_grad=True)
     in_mask = torch.cat([
         torch.ones(53, dtype=torch.bool),
         torch.zeros(11, dtype=torch.bool),
     ])
     ood_mask = ~in_mask
-    loss_d = CanonicalizerTrainer._latent_domain_adv_d(
-        trainer, z, in_mask, ood_mask)
+    feat_real, feat_fake = CanonicalizerTrainer._disc_features(
+        trainer, y[in_mask], y[ood_mask], detach=True)
+    loss_d = CanonicalizerTrainer._audio_gan_d(trainer, feat_real, feat_fake)
     assert loss_d.ndim == 0
     loss_d.backward()
 
-    z2 = torch.randn(64, 128, 32, requires_grad=True)
-    loss_adv = CanonicalizerTrainer._latent_domain_adv_g(trainer, z2, ood_mask)
-    assert loss_adv.ndim == 0
-    loss_adv.backward()
+    y2 = torch.randn(11, 1, 4096, requires_grad=True)
+    feat_fake_g = trainer.in_domain_disc(y2)
+    loss_g = CanonicalizerTrainer._audio_gan_g(trainer, feat_fake_g)
+    assert loss_g.ndim == 0
+    loss_g.backward()
 
 
 def test_latent_canonicalizer_identity():
@@ -110,21 +122,8 @@ def test_latent_canonicalizer_identity():
     assert torch.allclose(z2, z, atol=1e-5)
 
 
-def test_vae_kl_matches_variational_encoder_formula():
-    from rave.fader.canonicalizer_losses import (
-        split_vae_posterior,
-        vae_kl_to_standard_normal,
-    )
-
-    z_raw = torch.randn(4, 256, 16)
-    mean, logvar = split_vae_posterior(z_raw)
-    var = logvar.exp()
-    expected = (mean.pow(2) + var - logvar - 1).sum(1).mean()
-    assert torch.allclose(vae_kl_to_standard_normal(mean, logvar), expected)
-
-
 def test_frame_rms_curve_shape_and_grad():
-    from rave.fader.canonicalizer_losses import frame_rms_curve, rms_recon_l1
+    from rave.canonicalizer.losses import frame_rms_curve, rms_recon_l1
 
     x = torch.randn(2, 1, 8192, requires_grad=True)
     y = x * 0.9 + 0.05

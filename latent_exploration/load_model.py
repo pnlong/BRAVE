@@ -142,7 +142,7 @@ def _attach_canonicalizer_warp(
     state_dict: dict,
     canonicalizer_type: str,
 ) -> None:
-    from rave.fader.canonicalizer_config import attach_canonicalizer_to_model
+    from rave.canonicalizer.config import attach_canonicalizer_to_model
 
     attach_canonicalizer_to_model(model, state_dict, canonicalizer_type)
 
@@ -164,7 +164,7 @@ def load_fader_with_canonicalizer(
     if waveform_canonicalizer_ckpt and latent_canonicalizer_ckpt:
         raise ValueError("Pass at most one of waveform_canonicalizer_ckpt, latent_canonicalizer_ckpt")
 
-    from rave.fader.canonicalizer_config import (
+    from rave.canonicalizer.config import (
         build_domain_profile,
         load_canonicalizer_checkpoint,
         validate_manifest as _validate_manifest,

@@ -220,8 +220,6 @@ class FaderRAVE(RAVE):
         )
 
     def encode(self, x, return_mb: bool = False):
-        if self.waveform_canonicalizer is not None:
-            x = self.waveform_canonicalizer(x)
         return super().encode(x, return_mb=return_mb)
 
     def encode_with_warp(
@@ -232,13 +230,14 @@ class FaderRAVE(RAVE):
         apply_latent_warp: bool = True,
     ):
         """Encode with optional waveform + latent canonicalizers."""
-        x_in = x
-        if self.waveform_canonicalizer is not None:
-            x_in = self.waveform_canonicalizer(x_in)
+        x_in = (
+            self.waveform_canonicalizer(x)
+            if self.waveform_canonicalizer is not None else x
+        )
         if return_mb:
-            z, x_mb = super().encode(x_in, return_mb=True)
+            z, x_mb = self.encode(x, return_mb=True)
         else:
-            z = super().encode(x_in, return_mb=False)
+            z = self.encode(x, return_mb=False)
             x_mb = None
         z, reg = self.encoder.reparametrize(z)[:2]
         if apply_latent_warp and self.latent_canonicalizer is not None:

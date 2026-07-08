@@ -24,7 +24,7 @@ from load_model import (
     load_fader_with_canonicalizer,
     save_audio,
 )
-from rave.fader.canonicalizer_config import build_domain_profile, load_latent_stats
+from rave.canonicalizer.config import build_domain_profile, load_latent_stats
 
 
 def parse_args():

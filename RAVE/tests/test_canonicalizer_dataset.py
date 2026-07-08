@@ -3,9 +3,9 @@
 import numpy as np
 import torch
 
-from rave.fader.canonicalizer_dataset import DOMAIN_OOD, OodFaderDataset
+from rave.canonicalizer.dataset import DOMAIN_OOD, OodFaderDataset
 from rave.fader.dataset import FaderAttributeDataset
-from rave.fader.ir_augmentation import ImpulseResponseAug, synthetic_room_ir
+from rave.canonicalizer.ir_augmentation import ImpulseResponseAug, synthetic_room_ir
 
 
 class _MockAudioDataset(torch.utils.data.Dataset):

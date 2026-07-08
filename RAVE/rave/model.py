@@ -162,7 +162,9 @@ class RAVE(pl.LightningModule):
         enable_pqmf_encode: Optional[bool] = None,
         enable_pqmf_decode: Optional[bool] = None,
         is_mel_input: Optional[bool] = None,
-        loss_weights = None
+        loss_weights = None,
+        waveform_canonicalizer: Optional[nn.Module] = None,
+        latent_canonicalizer: Optional[nn.Module] = None,
     ):
         super().__init__()
         self.pqmf = pqmf(n_channels=n_channels)
@@ -222,6 +224,9 @@ class RAVE(pl.LightningModule):
         self.register_buffer("receptive_field", torch.tensor([0, 0]).long())
         self.audio_monitor_epochs = audio_monitor_epochs
         self._latent_mask = None
+        self.waveform_canonicalizer = waveform_canonicalizer
+        self.latent_canonicalizer = latent_canonicalizer
+        self.num_attributes = 0
 
     def configure_optimizers(self):
         gen_p = list(self.encoder.parameters())
@@ -243,6 +248,8 @@ class RAVE(pl.LightningModule):
         
     def encode(self, x, return_mb: bool = False):
         x_enc = x
+        if self.waveform_canonicalizer is not None:
+            x_enc = self.waveform_canonicalizer(x_enc)
         if self.input_mode == "pqmf":
             x_enc = _pqmf_encode(self.pqmf, x_enc)
         elif self.input_mode == "mel":
@@ -256,6 +263,30 @@ class RAVE(pl.LightningModule):
                 x_multiband = _pqmf_encode(self.pqmf, x_enc)
                 return z, x_multiband
         return z
+
+    def encode_with_warp(
+        self,
+        x: torch.Tensor,
+        *,
+        return_mb: bool = False,
+        apply_latent_warp: bool = True,
+    ):
+        """Encode with optional waveform + latent canonicalizers."""
+        x_in = (
+            self.waveform_canonicalizer(x)
+            if self.waveform_canonicalizer is not None else x
+        )
+        if return_mb:
+            z, x_mb = self.encode(x, return_mb=True)
+        else:
+            z = self.encode(x, return_mb=False)
+            x_mb = None
+        z, reg = self.encoder.reparametrize(z)[:2]
+        if apply_latent_warp and self.latent_canonicalizer is not None:
+            z = self.latent_canonicalizer(z)
+        if return_mb:
+            return z, reg, x_mb, x_in
+        return z, reg
 
     def decode(self, z):
         batch_size = z.shape[:-2]

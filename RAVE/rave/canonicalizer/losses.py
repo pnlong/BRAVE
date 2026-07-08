@@ -5,6 +5,8 @@ from __future__ import annotations
 import torch
 import torch.nn.functional as F
 
+from .. import core
+
 
 def frame_rms_curve(
     x: torch.Tensor,
@@ -53,29 +55,14 @@ def rms_recon_l1(
     return F.l1_loss(r_y, r_t)
 
 
-def split_vae_posterior(
-    z_raw: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """
-    Split encoder output into diagonal Gaussian posterior parameters.
-
-    Matches ``VariationalEncoder.reparametrize`` in ``rave.blocks``.
-    """
-    mean, scale = z_raw.chunk(2, dim=1)
-    std = F.softplus(scale) + 1e-4
-    logvar = (2.0 * std.log())
-    return mean, logvar
-
-
-def vae_kl_to_standard_normal(
-    mean: torch.Tensor,
-    logvar: torch.Tensor,
-) -> torch.Tensor:
-    """
-    KL(q(z|x) || N(0, I)) for factorized q with diagonal covariance.
-
-    Same formula as ``VariationalEncoder.reparametrize`` (summed over latent
-    channels, mean over batch).
-    """
-    var = logvar.exp()
-    return (mean.pow(2) + var - logvar - 1).sum(1).mean()
+def resolve_gan_loss(name: str):
+    """Map gin string to RAVE GAN loss callable."""
+    table = {
+        "hinge": core.hinge_gan,
+        "ls": core.ls_gan,
+        "nonsaturating": core.nonsaturating_gan,
+        "logistic": core.nonsaturating_gan,
+    }
+    if name not in table:
+        raise ValueError(f"unknown gan_loss: {name!r}; choose from {list(table)}")
+    return table[name]

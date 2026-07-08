@@ -1,8 +1,15 @@
-# Stage-1 input canonicalizer training (waveform or latent warp on frozen FaderRAVE)
-# Usage:
+# Stage-1 input canonicalizer (waveform or latent warp on frozen RAVE / FaderRAVE)
+# Usage (plain BRAVE):
 #   python RAVE/scripts/train_canonicalizer.py \
 #     --config configs/brave_canonicalizer.gin \
-#     --fader_config configs/brave_fader_birdsong.gin \
+#     --backbone_config configs/brave.gin \
+#     --ckpt runs/brave.ckpt --db_path /data/in_domain_lmdb \
+#     --ood_db_path /data/tap_preprocessed --canonicalizer_type waveform --name wf_canon
+#
+# Usage (FaderRAVE):
+#   python RAVE/scripts/train_canonicalizer.py \
+#     --config configs/brave_canonicalizer.gin \
+#     --backbone_config configs/brave_fader_birdsong.gin \
 #     --ckpt runs/birdsong.ckpt --db_path /data/birdsong_lmdb \
 #     --ood_db_path /data/tap_preprocessed --canonicalizer_type waveform --name wf_canon
 
@@ -20,17 +27,15 @@ from rave import dsp
 
 import rave.fader.model
 import rave.fader.dataset
-import rave.fader.canonicalizer_dataset
-import rave.fader.canonicalizer_trainer
-import rave.fader.canonicalizer_callbacks
-import rave.fader.ir_augmentation
-import rave.fader.latent_domain_discriminator
-import rave.fader.waveform_canonicalizer
-import rave.fader.latent_canonicalizer
+import rave.canonicalizer.dataset
+import rave.canonicalizer.trainer
+import rave.canonicalizer.callbacks
+import rave.canonicalizer.ir_augmentation
+import rave.canonicalizer.in_domain_discriminator
+import rave.canonicalizer.waveform_canonicalizer
+import rave.canonicalizer.latent_canonicalizer
 
-rave.training.build_training_model.fader = True
-rave.training.wrap_training_datasets.fader = True
-rave.training.finalize_training_model.fader = True
+import torch
 
 # --- Waveform canonicalizer (EQ + optional reverb) ---
 dsp.BiquadBank:
@@ -43,44 +48,59 @@ dsp.BiquadBank:
 dsp.CausalReverb:
     sample_rate = %SAMPLING_RATE
 
-rave.fader.waveform_canonicalizer.WaveformCanonicalizer:
+rave.canonicalizer.waveform_canonicalizer.WaveformCanonicalizer:
     eq = @dsp.BiquadBank
     reverb = @dsp.CausalReverb
     use_reverb = True
 
-rave.fader.latent_canonicalizer.LatentCanonicalizer:
+rave.canonicalizer.latent_canonicalizer.LatentCanonicalizer:
     latent_size = %LATENT_SIZE
 
-rave.fader.latent_domain_discriminator.LatentDomainDiscriminator:
-    latent_size = %LATENT_SIZE
-    base_channels = 128
-    num_layers = 3
+discriminator.ConvNet:
+    in_size = 1
+    out_size = 1
+    capacity = %CAPACITY
+    n_layers = 4
+    stride = 4
 
-rave.fader.canonicalizer_trainer.CanonicalizerTrainer:
-    # Stability-tuned defaults (shared warp + latent D): strong identity anchor,
-    # envelope recon on both domains, weak adversary, slower warp/D updates.
-    lambda_identity = 50.0
-    lambda_latent_kl = 0.0
-    lambda_descriptor = 0.5
-    lambda_latent_adv = 0.01
+scales/discriminator.ConvNet:
+    conv = @torch.nn.Conv1d
+    kernel_size = 15
+
+discriminator.MultiScaleDiscriminator:
+    n_discriminators = 1
+    convnet = @scales/discriminator.ConvNet
+
+rave.canonicalizer.in_domain_discriminator.InDomainAudioDiscriminator:
+    discriminator = @discriminator.MultiScaleDiscriminator
+
+rave.canonicalizer.trainer.CanonicalizerTrainer:
+    # Recon-first: strong self-reconstruction (cycle-identity proxy) before GAN timbre shift.
+    lambda_gan = 1.0
+    lambda_rec = 1.0
     lambda_rms_recon = 1.0
-    recon_ood_mode = "rms"
-    recon_in_domain_mode = "rms"
-    lr = 1e-4
-    disc_lr = 1e-4
+    lambda_feature_matching = 2.0
+    recon_ood_mode = "both"
+    recon_in_domain_mode = "both"
+    gan_loss = "hinge"
+    lr = 3e-4
+    disc_lr = 2e-5
+    phase_1_duration = 2000
+    update_discriminator_every = 2
+    num_skipped_features = 1
     encode_use_mean = True
     unfreeze_encoder = False
     encoder_lr = 1e-5
-    latent_domain_disc = @rave.fader.latent_domain_discriminator.LatentDomainDiscriminator
+    in_domain_disc = @rave.canonicalizer.in_domain_discriminator.InDomainAudioDiscriminator
 
-rave.fader.canonicalizer_dataset.build_canonicalizer_dataset:
-    in_domain_fraction = 0.8
+rave.canonicalizer.dataset.build_canonicalizer_dataset:
+    in_domain_fraction = 0.5
 
-rave.fader.canonicalizer_dataset.make_ir_augment:
+rave.canonicalizer.dataset.make_ir_augment:
     ir_path = ""
     ir_prob = 0.0
     ir_wet_min = 0.15
     ir_wet_max = 0.55
 
-rave.fader.canonicalizer_callbacks.CanonicalizerValVizCallback:
+rave.canonicalizer.callbacks.CanonicalizerValVizCallback:
     num_audio_samples = 8

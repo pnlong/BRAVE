@@ -2,14 +2,14 @@
 Optional integration training smoke test.
 
 Set RUN_CANONICALIZER_TRAIN=1 and provide:
-  FADER_CKPT, DB_PATH, OOD_DB_PATH, FADER_CONFIG
+  BACKBONE_CKPT, DB_PATH, OOD_DB_PATH, BACKBONE_CONFIG
 
 Example:
   RUN_CANONICALIZER_TRAIN=1 \\
-  FADER_CKPT=runs/birdsong.ckpt \\
+  BACKBONE_CKPT=runs/birdsong.ckpt \\
   DB_PATH=/data/birdsong_lmdb \\
   OOD_DB_PATH=/data/tap_preprocessed \\
-  FADER_CONFIG=configs/brave_fader_birdsong.gin \\
+  BACKBONE_CONFIG=configs/brave_fader_birdsong.gin \\
   pytest RAVE/tests/test_canonicalizer_train_smoke.py -v
 """
 
@@ -25,11 +25,11 @@ _BRAVE = Path(__file__).resolve().parents[2]
 
 @pytest.mark.skipif(
     os.environ.get("RUN_CANONICALIZER_TRAIN") != "1",
-    reason="Set RUN_CANONICALIZER_TRAIN=1 with FADER_CKPT, DB_PATH, OOD_DB_PATH, FADER_CONFIG",
+    reason="Set RUN_CANONICALIZER_TRAIN=1 with BACKBONE_CKPT, DB_PATH, OOD_DB_PATH, BACKBONE_CONFIG",
 )
 def test_train_canonicalizer_smoke():
     env = os.environ.copy()
-    required = ["FADER_CKPT", "DB_PATH", "OOD_DB_PATH", "FADER_CONFIG"]
+    required = ["BACKBONE_CKPT", "DB_PATH", "OOD_DB_PATH", "BACKBONE_CONFIG"]
     for k in required:
         assert k in env, f"missing env {k}"
 
@@ -38,10 +38,10 @@ def test_train_canonicalizer_smoke():
         str(_BRAVE / "RAVE" / "scripts" / "train_canonicalizer.py"),
         "--config",
         "configs/brave_canonicalizer.gin",
-        "--fader_config",
-        env["FADER_CONFIG"],
+        "--backbone_config",
+        env["BACKBONE_CONFIG"],
         "--ckpt",
-        env["FADER_CKPT"],
+        env["BACKBONE_CKPT"],
         "--db_path",
         env["DB_PATH"],
         "--ood_db_path",

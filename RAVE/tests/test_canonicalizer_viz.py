@@ -1,6 +1,6 @@
 import numpy as np
 
-from rave.fader.canonicalizer_viz import plot_latent_domain_scatter
+from rave.canonicalizer.viz import plot_latent_domain_scatter
 
 
 def test_plot_latent_domain_scatter_pca():
@@ -15,7 +15,7 @@ def test_plot_latent_domain_scatter_pca():
 
 def test_concat_val_audio_triplets():
     import torch
-    from rave.fader.canonicalizer_viz import concat_val_audio_triplets
+    from rave.canonicalizer.viz import concat_val_audio_triplets
 
     samples = [
         (torch.zeros(1, 100), torch.ones(1, 100) * 0.5, torch.ones(1, 100) * 0.25),

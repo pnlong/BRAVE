@@ -20,7 +20,7 @@ from torch.utils.data import DataLoader
 
 import rave
 import rave.dataset
-from rave.fader.canonicalizer_config import latent_stats_cache_path
+from rave.canonicalizer.config import latent_stats_cache_path
 from rave.fader.model import FaderRAVE
 
 

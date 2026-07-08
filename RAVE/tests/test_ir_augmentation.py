@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 import soundfile as sf
 
-from rave.fader.ir_augmentation import ImpulseResponseAug, synthetic_room_ir
+from rave.canonicalizer.ir_augmentation import ImpulseResponseAug, synthetic_room_ir
 
 
 @pytest.fixture

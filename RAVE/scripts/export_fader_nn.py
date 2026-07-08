@@ -29,9 +29,9 @@ from rave.fader.attributes import load_attribute_stats
 from rave.fader.export.host_controls import write_host_controls_json
 from rave.fader.export.load_for_export import (
     load_fader_for_export,
-    resolve_canonicalizer_ckpt,
     strip_weight_norm,
 )
+from rave.canonicalizer.export import resolve_canonicalizer_ckpt
 from rave.fader.export.max_patch import write_fader_play_patch
 from rave.fader.export.nn_module import create_scripted_fader_rave
 from rave.fader.export.trace_model import build_trace_model

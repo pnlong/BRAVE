@@ -12,7 +12,7 @@ Stripped inference graph for TorchScript and nn~ — no latent discriminator, no
 | [`host_controls.py`](host_controls.py) | `*_host_controls.json` writer |
 | [`max_patch.py`](max_patch.py) | Auto-generated `play.maxpat` for Max 9 / nn~ |
 | [`bundle.py`](bundle.py) | Bundle sidecars + copy instructions |
-| [`load_for_export.py`](load_for_export.py) | Shared model / stats / canonicalizer loading |
+| [`load_for_export.py`](load_for_export.py) | FaderRAVE load + stats for export |
 | [`__init__.py`](__init__.py) | Package exports |
 
 ## Max 9 / nn~ bundles

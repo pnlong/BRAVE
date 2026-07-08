@@ -65,6 +65,11 @@ flags.DEFINE_integer('sr',
 flags.DEFINE_string('prior', 
                     default=None,
                     help = "path to prior (optional)")
+flags.DEFINE_string(
+    'canonicalizer_ckpt',
+    default=None,
+    help='Optional canonicalizer .ckpt to embed in export',
+)
 
 
 class DumbPrior(nn.Module):
@@ -140,6 +145,10 @@ class ScriptedRAVE(nn_tilde.Module):
         # have to init cached conv before graphing
         self.encoder = pretrained.encoder
         self.decoder = pretrained.decoder
+        self.waveform_canonicalizer = getattr(
+            pretrained, "waveform_canonicalizer", None)
+        self.latent_canonicalizer = getattr(
+            pretrained, "latent_canonicalizer", None)
         x_len = 2**14
         x = torch.zeros(1, self.n_channels, x_len)
         z = self.encode(x)
@@ -246,6 +255,9 @@ class ScriptedRAVE(nn_tilde.Module):
         if self.resampler is not None:
             x = self.resampler.to_model_sampling_rate(x)
 
+        if self.waveform_canonicalizer is not None:
+            x = self.waveform_canonicalizer(x)
+
         batch_size = x.shape[:-2]
         if self.input_mode == "pqmf":
             x = x.reshape(-1, 1, x.shape[-1])
@@ -351,6 +363,8 @@ class VariationalScriptedRAVE(ScriptedRAVE):
 
     def post_process_latent(self, z):
         z = self.encoder.reparametrize(z)[0]
+        if self.latent_canonicalizer is not None:
+            z = self.latent_canonicalizer(z)
         z = z - self.latent_mean.unsqueeze(-1)
         z = F.conv1d(z, self.latent_pca.unsqueeze(-1))
         z = z[:, :self.latent_size]
@@ -517,6 +531,11 @@ def main(argv):
         logging.error("No checkpoint found")
         exit()
     pretrained.eval()
+
+    if FLAGS.canonicalizer_ckpt:
+        from rave.canonicalizer.export import attach_canonicalizer_for_export
+        attach_canonicalizer_for_export(pretrained, FLAGS.canonicalizer_ckpt)
+        logging.info("attached canonicalizer from %s", FLAGS.canonicalizer_ckpt)
 
     if isinstance(pretrained.encoder, rave.blocks.VariationalEncoder):
         script_class = VariationalScriptedRAVE

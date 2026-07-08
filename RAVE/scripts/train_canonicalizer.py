@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Train waveform_canonicalizer or latent_canonicalizer on frozen FaderRAVE."""
+"""Train waveform or latent canonicalizer on frozen RAVE / FaderRAVE."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ if _RAVE_ROOT not in sys.path:
     sys.path.insert(0, _RAVE_ROOT)
 
 import argparse
+import hashlib
 from pathlib import Path
 
 import gin
@@ -22,71 +23,53 @@ from torch.utils.data import DataLoader
 import rave
 import rave.dataset
 import rave.training
-from rave.fader.canonicalizer_config import (
+from rave.canonicalizer.callbacks import CanonicalizerValVizCallback
+from rave.canonicalizer.config import (
     CanonicalizerManifest,
-    _stats_hash,
-    build_domain_profile,
+    build_training_profile,
     save_canonicalizer_checkpoint,
 )
-from rave.fader.canonicalizer_callbacks import CanonicalizerValVizCallback
-from rave.fader.canonicalizer_dataset import (
+from rave.canonicalizer.dataset import (
+    OodAudioDataset,
     OodFaderDataset,
+    TaggedAudioDataset,
+    TaggedFaderDataset,
     build_canonicalizer_dataset,
+    canonicalizer_collate,
     make_ir_augment,
 )
-from rave.fader.canonicalizer_trainer import CanonicalizerTrainer
+from rave.canonicalizer.latent_canonicalizer import LatentCanonicalizer
+from rave.canonicalizer.gin_setup import (
+    build_in_domain_discriminator,
+    configure_backbone_gin,
+    configure_canonicalizer_gin,
+)
+from rave.canonicalizer.trainer import CanonicalizerTrainer
+from rave.model import WarmupCallback
 from rave.fader.dataset import FaderAttributeDataset
-from rave.fader.latent_canonicalizer import LatentCanonicalizer
-from rave.fader.latent_domain_discriminator import LatentDomainDiscriminator
 from rave.fader.model import FaderRAVE
 
-
-def _parse_gin_configs(
-    fader_cfg: str,
-    canon_cfg: str,
-    *,
-    overrides: list[str] | None = None,
-) -> None:
-    cfg_dir = str(Path(fader_cfg).parent)
-    prev_cwd = os.getcwd()
-    os.chdir(cfg_dir)
-    try:
-        gin.parse_config_file(Path(fader_cfg).name)
-        gin.parse_config_file(Path(canon_cfg).name)
-        for o in overrides or []:
-            gin.parse_config(o)
-    finally:
-        os.chdir(prev_cwd)
-
-
-def _parse_fader_gin(fader_cfg: str, *, overrides: list[str] | None = None) -> None:
-    """Re-apply fader gin so backbone architecture is not clobbered by brave.gin re-includes."""
-    cfg_dir = str(Path(fader_cfg).parent)
-    prev_cwd = os.getcwd()
-    os.chdir(cfg_dir)
-    try:
-        gin.parse_config_file(Path(fader_cfg).name)
-        for o in overrides or []:
-            gin.parse_config(o)
-    finally:
-        os.chdir(prev_cwd)
+# Ensure brave_canonicalizer.gin configurables are registered before parse.
+import rave.canonicalizer.callbacks  # noqa: F401
+import rave.canonicalizer.in_domain_discriminator  # noqa: F401
+import rave.canonicalizer.ir_augmentation  # noqa: F401
+import rave.canonicalizer.trainer  # noqa: F401
+import rave.canonicalizer.waveform_canonicalizer  # noqa: F401
+import rave.canonicalizer.latent_canonicalizer  # noqa: F401
+from rave import discriminator, dsp  # noqa: F401
 
 
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--config", default="configs/brave_canonicalizer.gin")
     p.add_argument(
-        "--fader_config",
+        "--backbone_config",
         required=True,
-        help="Fader backbone gin (e.g. configs/brave_fader_pitched.gin)",
+        help="Frozen backbone gin (configs/brave.gin or configs/brave_fader_*.gin)",
     )
     p.add_argument("--ckpt", required=True)
-    p.add_argument("--db_path", required=True, help="In-domain Fader LMDB")
-    p.add_argument(
-        "--ood_db_path",
-        required=True,
-        help="OOD Fader LMDB (same preprocess_fader pipeline as db_path)",
-    )
+    p.add_argument("--db_path", required=True, help="In-domain LMDB")
+    p.add_argument("--ood_db_path", required=True, help="OOD LMDB")
     p.add_argument(
         "--canonicalizer_type",
         choices=("waveform", "latent"),
@@ -96,53 +79,22 @@ def parse_args():
     p.add_argument("--out_path", default="runs/")
     p.add_argument("--n_signal", type=int, default=131072)
     p.add_argument("--batch", type=int, default=4)
-    p.add_argument("--max_steps", type=int, default=10000)
-    p.add_argument("--workers", type=int, default=0, help="DataLoader workers (0 avoids librosa fork segfaults)")
-    p.add_argument("--gpu", type=int, default=None)
+    p.add_argument("--max_steps", type=int, default=100000)
+    p.add_argument("--workers", type=int, default=0)
+    p.add_argument("--gpu", type=int, action="append", default=None)
     p.add_argument("--override", action="append", default=[])
     p.add_argument("--smoke_test", action="store_true")
     p.add_argument("--val_scatter", choices=("pca", "tsne", "both"), default="both")
-    p.add_argument("--val_every", type=int, default=500, help="Validation + viz every N steps")
-    p.add_argument("--val_batches", type=int, default=8, help="Max validation batches per check")
-    p.add_argument(
-        "--val_audio_samples",
-        type=int,
-        default=8,
-        help="Validation clips per domain in W&B audio (input|pre_enc|recon each)",
-    )
-    p.add_argument(
-        "--wandb_project",
-        default="brave",
-        help="Weights & Biases project name",
-    )
-    p.add_argument(
-        "--wandb_entity",
-        default=None,
-        help="Weights & Biases entity (team or user)",
-    )
-    p.add_argument(
-        "--wandb_offline",
-        action="store_true",
-        help="Log to W&B in offline mode",
-    )
-    p.add_argument(
-        "--log_every_n_steps",
-        type=int,
-        default=None,
-        help="Lightning/W&B flush interval (default: min(50, batches per epoch))",
-    )
-    p.add_argument(
-        "--ir_path",
-        default=None,
-        help="Directory of room IR .wav files for OOD augmentation",
-    )
-    p.add_argument(
-        "--ir_prob",
-        type=float,
-        default=None,
-        help="Probability of IR aug on OOD clips (default: gin, usually 0.5 when ir_path set)",
-    )
-    p.add_argument("--no_ir", action="store_true", help="Disable OOD IR augmentation")
+    p.add_argument("--val_every", type=int, default=500)
+    p.add_argument("--val_batches", type=int, default=8)
+    p.add_argument("--val_audio_samples", type=int, default=8)
+    p.add_argument("--wandb_project", default="brave")
+    p.add_argument("--wandb_entity", default=None)
+    p.add_argument("--wandb_offline", action="store_true")
+    p.add_argument("--log_every_n_steps", type=int, default=None)
+    p.add_argument("--ir_path", default=None)
+    p.add_argument("--ir_prob", type=float, default=None)
+    p.add_argument("--no_ir", action="store_true")
     return p.parse_args()
 
 
@@ -150,31 +102,72 @@ def _add_gin_ext(path: str) -> str:
     return path if path.endswith(".gin") else path + ".gin"
 
 
-def _load_fader_lmdb_pair(
+def _load_audio_lmdb_pair(
     db_path: str,
     *,
     sr: int,
     n_signal: int,
     n_channels: int,
+    is_fader: bool,
     split_percent: int = 98,
     reject_silent_train: bool = True,
-) -> tuple[FaderAttributeDataset, FaderAttributeDataset]:
+) -> tuple:
     ds = rave.dataset.get_dataset(db_path, sr, n_signal, n_channels=n_channels)
     train_base, val_base = rave.dataset.split_dataset(ds, split_percent)
     if reject_silent_train:
         train_base = rave.dataset.maybe_reject_silent(train_base)
-    train_wrapped, val_wrapped = rave.training.wrap_training_datasets(
-        train_base,
-        val_base,
-        sampling_rate=sr,
-        n_signal=n_signal,
-        db_path=db_path,
+
+    if is_fader:
+        train_wrapped, val_wrapped = rave.training.wrap_training_datasets(
+            train_base,
+            val_base,
+            sampling_rate=sr,
+            n_signal=n_signal,
+            db_path=db_path,
+        )
+        if not isinstance(train_wrapped, FaderAttributeDataset):
+            raise TypeError(f"Expected FaderAttributeDataset for {db_path}")
+        return (
+            TaggedFaderDataset(train_wrapped),
+            TaggedFaderDataset(val_wrapped),
+        )
+
+    return (
+        TaggedAudioDataset(train_base),
+        TaggedAudioDataset(val_base),
     )
-    if not isinstance(train_wrapped, FaderAttributeDataset):
-        raise TypeError(f"Expected FaderAttributeDataset for {db_path}")
-    if not isinstance(val_wrapped, FaderAttributeDataset):
-        raise TypeError(f"Expected FaderAttributeDataset for val split of {db_path}")
-    return train_wrapped, val_wrapped
+
+
+def _load_ood_pair(
+    db_path: str,
+    *,
+    sr: int,
+    n_signal: int,
+    n_channels: int,
+    is_fader: bool,
+    ir_aug,
+    split_percent: int = 98,
+):
+    if is_fader:
+        train_wrapped, val_wrapped = _load_audio_lmdb_pair(
+            db_path,
+            sr=sr,
+            n_signal=n_signal,
+            n_channels=n_channels,
+            is_fader=True,
+        )
+        return (
+            OodFaderDataset(train_wrapped._fader, ir_augment=ir_aug),
+            OodFaderDataset(val_wrapped._fader, ir_augment=None),
+        )
+
+    ds = rave.dataset.get_dataset(db_path, sr, n_signal, n_channels=n_channels)
+    train_base, val_base = rave.dataset.split_dataset(ds, split_percent)
+    train_base = rave.dataset.maybe_reject_silent(train_base)
+    return (
+        OodAudioDataset(train_base, ir_augment=ir_aug),
+        OodAudioDataset(val_base, ir_augment=None),
+    )
 
 
 def _resolve_ir_augment(args, sr: int) -> object | None:
@@ -200,78 +193,97 @@ def main():
     args = parse_args()
     torch.set_float32_matmul_precision("high")
 
-    fader_cfg = _add_gin_ext(args.fader_config)
+    backbone_cfg = _add_gin_ext(args.backbone_config)
     canon_cfg = _add_gin_ext(args.config)
-    if not Path(fader_cfg).is_absolute():
-        fader_cfg = str(Path(_BRAVE_ROOT) / fader_cfg)
+    if not Path(backbone_cfg).is_absolute():
+        backbone_cfg = str(Path(_BRAVE_ROOT) / backbone_cfg)
     if not Path(canon_cfg).is_absolute():
         canon_cfg = str(Path(_BRAVE_ROOT) / canon_cfg)
 
-    _parse_gin_configs(fader_cfg, canon_cfg, overrides=args.override)
-
     n_channels = rave.dataset.get_training_channels(args.db_path, 0)
-    gin.bind_parameter("RAVE.n_channels", n_channels)
 
-    profile = build_domain_profile(fader_cfg, args.db_path)
+    profile = build_training_profile(
+        backbone_cfg,
+        args.db_path,
+        ood_db_path=args.ood_db_path,
+    )
 
-    _parse_fader_gin(fader_cfg, overrides=args.override)
+    configure_backbone_gin(backbone_cfg, n_channels)
 
-    model = FaderRAVE(n_channels=n_channels)
+    if profile.is_fader:
+        model = FaderRAVE(n_channels=n_channels)
+        backbone_kind = "FaderRAVE"
+    else:
+        model = rave.RAVE(n_channels=n_channels)
+        backbone_kind = "RAVE"
+
     run = rave.core.search_for_run(args.ckpt)
     if run is None:
         raise FileNotFoundError(f"checkpoint not found: {args.ckpt}")
     model = model.load_from_checkpoint(run)
-    model.load_attribute_stats_from_file(profile.stats_path)
+    if profile.is_fader and profile.stats_path is not None:
+        model.load_attribute_stats_from_file(profile.stats_path)
     model.eval()
     for p in model.parameters():
         p.requires_grad = False
 
+    configure_canonicalizer_gin(canon_cfg, n_channels, overrides=args.override)
+
     if args.canonicalizer_type == "waveform":
         from rave.dsp import BiquadBank, CausalReverb
-        from rave.fader.waveform_canonicalizer import WaveformCanonicalizer
+        from rave.canonicalizer.waveform_canonicalizer import WaveformCanonicalizer
 
         warp = WaveformCanonicalizer(
             eq=BiquadBank(sample_rate=model.sr),
             reverb=CausalReverb(sample_rate=model.sr),
-            use_reverb=True,
         )
         ckpt_name = "waveform_canonicalizer.ckpt"
     else:
         warp = LatentCanonicalizer(latent_size=model.latent_size)
         ckpt_name = "latent_canonicalizer.ckpt"
 
-    _parse_gin_configs(fader_cfg, canon_cfg, overrides=args.override)
+    gin_snapshot = gin.config_str()
+    gin_hash = hashlib.md5(gin_snapshot.encode()).hexdigest()[:10]
+    run_name = f"{args.name}_{gin_hash}"
+    out_dir = Path(args.out_path) / run_name
+    out_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Run directory: {out_dir}")
+    with open(out_dir / "config.gin", "w") as config_out:
+        config_out.write(gin_snapshot)
 
+    in_domain_disc = build_in_domain_discriminator(n_channels)
     trainer_module = CanonicalizerTrainer(
-        fader=model,
+        backbone=model,
         warp=warp,
         canonicalizer_type=args.canonicalizer_type,
-        domain_profile=profile,
+        in_domain_disc=in_domain_disc,
     )
+    n_disc = sum(p.numel() for p in in_domain_disc.parameters())
+    print(f"InDomainAudioDiscriminator: {n_disc:,} trainable params")
 
-    train_wrapped, val_wrapped = _load_fader_lmdb_pair(
+    train_in, val_in = _load_audio_lmdb_pair(
         args.db_path,
         sr=model.sr,
         n_signal=args.n_signal,
         n_channels=n_channels,
+        is_fader=profile.is_fader,
     )
-    ood_train_wrapped, ood_val_wrapped = _load_fader_lmdb_pair(
+    ir_aug = _resolve_ir_augment(args, model.sr)
+    ood_train, ood_val = _load_ood_pair(
         args.ood_db_path,
         sr=model.sr,
         n_signal=args.n_signal,
         n_channels=n_channels,
+        is_fader=profile.is_fader,
+        ir_aug=ir_aug,
     )
 
-    ir_aug = _resolve_ir_augment(args, model.sr)
-    ood_train = OodFaderDataset(ood_train_wrapped, ir_augment=ir_aug)
-    ood_val = OodFaderDataset(ood_val_wrapped, ir_augment=None)
-
     mixed = build_canonicalizer_dataset(
-        in_domain_dataset=train_wrapped,
+        in_domain_dataset=train_in,
         ood_dataset=ood_train,
     )
     val_mixed = build_canonicalizer_dataset(
-        in_domain_dataset=val_wrapped,
+        in_domain_dataset=val_in,
         ood_dataset=ood_val,
         in_domain_fraction=0.5,
     )
@@ -283,6 +295,7 @@ def main():
         shuffle=True,
         drop_last=True,
         num_workers=num_workers,
+        collate_fn=canonicalizer_collate,
     )
     val_loader = DataLoader(
         val_mixed,
@@ -290,12 +303,13 @@ def main():
         shuffle=False,
         drop_last=False,
         num_workers=num_workers,
+        collate_fn=canonicalizer_collate,
     )
 
-    out_dir = Path(args.out_path) / args.name
-    out_dir.mkdir(parents=True, exist_ok=True)
+    from pytorch_lightning.loggers import WandbLogger
 
     callbacks = [
+        WarmupCallback(),
         CanonicalizerValVizCallback(
             out_dir=out_dir,
             scatter_method="pca" if args.val_scatter == "both" else args.val_scatter,
@@ -304,18 +318,15 @@ def main():
         ),
     ]
 
-    import hashlib
-    from pytorch_lightning.loggers import WandbLogger
-
-    gin_hash = hashlib.md5(gin.operative_config_str().encode()).hexdigest()[:10]
     wandb_kwargs = dict(
         project=args.wandb_project,
-        name=f"{args.name}_{gin_hash}",
+        name=run_name,
         save_dir=str(out_dir),
         offline=args.wandb_offline,
         config={
             "db_path": args.db_path,
             "ood_db_path": args.ood_db_path,
+            "backbone_kind": backbone_kind,
             "batch": args.batch,
             "n_signal": args.n_signal,
             "max_steps": args.max_steps,
@@ -330,38 +341,58 @@ def main():
     if train_batches == 0:
         raise SystemExit(
             "No training batches: mixed dataset length "
-            f"({len(mixed)}; in-domain={len(train_wrapped)}, ood={len(ood_train)}) "
-            f"is smaller than --batch={args.batch} with drop_last=True. "
-            "Lower --batch or add more preprocessed LMDB chunks."
+            f"({len(mixed)}; in-domain={len(train_in)}, ood={len(ood_train)}) "
+            f"is smaller than --batch={args.batch} with drop_last=True."
         )
+
+    n_devices = (
+        len(args.gpu)
+        if args.gpu and torch.cuda.is_available() and len(args.gpu) > 1
+        else 1
+    )
+    batches_per_rank = max(1, train_batches // n_devices)
 
     if args.log_every_n_steps is not None:
         log_every_n_steps = max(1, args.log_every_n_steps)
     else:
-        log_every_n_steps = min(50, max(1, train_batches))
-    if train_batches < 50:
-        print(
-            f"W&B: log_every_n_steps={log_every_n_steps} "
-            f"({train_batches} train batches/epoch; default 50 would skip charts)",
-        )
+        log_every_n_steps = min(50, max(1, batches_per_rank))
 
     val_check_kwargs: dict = {}
     if args.smoke_test:
         val_check_kwargs["val_check_interval"] = 1
-    elif train_batches >= args.val_every:
+    elif batches_per_rank >= args.val_every:
         val_check_kwargs["val_check_interval"] = args.val_every
     else:
-        nepoch = max(1, args.val_every // train_batches)
+        nepoch = max(1, args.val_every // batches_per_rank)
         val_check_kwargs["check_val_every_n_epoch"] = nepoch
         print(
-            f"val_every={args.val_every} > train batches ({train_batches}); "
-            f"validating every {nepoch} epoch(s) instead",
+            f"val scheduling: {batches_per_rank} batches/rank (of {train_batches} total), "
+            f"check_val_every_n_epoch={nepoch}",
         )
+
+    accelerator = "cpu"
+    devices: int | list[int] = 1
+    strategy = None
+    if args.gpu and torch.cuda.is_available():
+        accelerator = "gpu"
+        devices = args.gpu if len(args.gpu) > 1 else args.gpu[0]
+        if len(args.gpu) > 1:
+            from pytorch_lightning.strategies import DDPStrategy
+
+            strategy = DDPStrategy(find_unused_parameters=True)
+            print(
+                f"Multi-GPU DDP (find_unused_parameters=True): {len(args.gpu)} devices, "
+                f"per-GPU batch={args.batch}, global batch≈{args.batch * len(args.gpu)}, "
+                f"batches/rank={batches_per_rank}",
+            )
+    elif args.gpu:
+        print("CUDA not available; training on CPU")
 
     pl_trainer = pl.Trainer(
         max_steps=1 if args.smoke_test else args.max_steps,
-        accelerator="gpu" if args.gpu is not None and torch.cuda.is_available() else "cpu",
-        devices=[args.gpu] if args.gpu is not None else 1,
+        accelerator=accelerator,
+        devices=devices,
+        strategy=strategy,
         default_root_dir=str(out_dir),
         enable_checkpointing=False,
         logger=logger,
@@ -371,18 +402,19 @@ def main():
         log_every_n_steps=log_every_n_steps,
         **val_check_kwargs,
     )
-    print("Running initial validation (step 0 baseline: PCA/t-SNE + audio)...")
+    print("Running initial validation (step 0 baseline)...")
     pl_trainer.validate(trainer_module, val_loader)
     pl_trainer.fit(trainer_module, loader, val_loader)
 
     manifest = CanonicalizerManifest(
         canonicalizer_type=args.canonicalizer_type,
-        backbone_config=str(Path(fader_cfg).resolve()),
+        backbone_config=str(Path(backbone_cfg).resolve()),
         backbone_ckpt=str(Path(args.ckpt).resolve()),
         db_path=str(Path(args.db_path).resolve()),
         ood_db_path=str(Path(args.ood_db_path).resolve()),
         use_reverb=getattr(warp, "use_reverb", False),
-        stats_hash=_stats_hash(profile.stats_path),
+        stats_hash=profile.stats_hash,
+        backbone_kind=backbone_kind,
     )
     save_canonicalizer_checkpoint(
         out_dir / ckpt_name,

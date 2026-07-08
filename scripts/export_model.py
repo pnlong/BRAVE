@@ -24,7 +24,8 @@ if str(_RAVE_ROOT) not in sys.path:
 import rave
 from absl import app, flags, logging
 from rave.fader.export.bundle import print_max_copy_instructions
-from rave.fader.export.load_for_export import is_fader_model, resolve_canonicalizer_ckpt
+from rave.fader.export.load_for_export import is_fader_model
+from rave.canonicalizer.export import resolve_canonicalizer_ckpt
 from rave.fader.export.max_patch import write_vanilla_play_patch
 
 FLAGS = flags.FLAGS
@@ -62,7 +63,12 @@ def _default_output_dir(model_path: str) -> Path:
     return _BRAVE_ROOT / "exports" / name
 
 
-def _export_vanilla_nn(model_path: str, output_dir: Path, streaming: bool) -> Path:
+def _export_vanilla_nn(
+    model_path: str,
+    output_dir: Path,
+    streaming: bool,
+    canonicalizer_ckpt: str | None = None,
+) -> Path:
     ts_path = output_dir / "model.ts"
     output_dir.mkdir(parents=True, exist_ok=True)
     cmd = [
@@ -72,6 +78,8 @@ def _export_vanilla_nn(model_path: str, output_dir: Path, streaming: bool) -> Pa
         f"--output={output_dir}",
         "--name=model",
     ]
+    if canonicalizer_ckpt:
+        cmd.append(f"--canonicalizer_ckpt={canonicalizer_ckpt}")
     if not streaming:
         cmd.append("--nostreaming")
     logging.info("running: %s", " ".join(cmd))
@@ -176,9 +184,16 @@ def main(argv):
         if FLAGS.host == "ts":
             logging.error("plain TorchScript (--host ts) is only for FaderRAVE models")
             sys.exit(1)
-        if FLAGS.canonicalizer != "auto" and FLAGS.canonicalizer != "none":
-            logging.warning("canonicalizer ignored for vanilla RAVE export")
-        ts_path = _export_vanilla_nn(model_path, output_dir, FLAGS.streaming)
+        canon_ckpt = resolve_canonicalizer_ckpt(
+            model_path,
+            mode=FLAGS.canonicalizer,
+            waveform_canonicalizer=FLAGS.waveform_canonicalizer,
+            latent_canonicalizer=FLAGS.latent_canonicalizer,
+        )
+        if canon_ckpt:
+            logging.info("embedding canonicalizer: %s", canon_ckpt)
+        ts_path = _export_vanilla_nn(
+            model_path, output_dir, FLAGS.streaming, canonicalizer_ckpt=canon_ckpt)
         write_vanilla_play_patch(output_dir / "play.maxpat", ts_name="model.ts")
 
     print_max_copy_instructions(output_dir)

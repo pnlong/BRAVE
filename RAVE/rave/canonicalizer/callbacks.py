@@ -10,8 +10,8 @@ import pytorch_lightning as pl
 import torch
 import gin
 
-from .canonicalizer_dataset import DOMAIN_IN, DOMAIN_OOD
-from .canonicalizer_viz import (
+from .dataset import DOMAIN_IN, DOMAIN_OOD
+from .viz import (
     concat_val_audio_triplets,
     latent_frames_to_points,
     log_wandb_audio,
@@ -29,7 +29,6 @@ class CanonicalizerValVizCallback(pl.Callback):
     On validation epoch end:
       1. PCA / t-SNE scatter — in-domain vs OOD latents (post-warp)
       2. W&B audio per domain: ``input | pre_encoder | recon`` × N samples
-         (pre_encoder = warp output for waveform; raw input for latent)
     """
 
     def __init__(
@@ -92,7 +91,7 @@ class CanonicalizerValVizCallback(pl.Callback):
     ) -> None:
         if not samples:
             return
-        sr = pl_module.fader.sr
+        sr = pl_module.backbone.sr
         wav = concat_val_audio_triplets(samples, max_samples=self.num_audio_samples)
         log_wandb_audio(pl_module, f"val/audio_{prefix}", wav, sr)
         if self.out_dir is None:

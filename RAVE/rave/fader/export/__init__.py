@@ -6,7 +6,6 @@ from .load_for_export import (
     is_fader_config,
     is_fader_model,
     load_fader_for_export,
-    resolve_canonicalizer_ckpt,
     strip_weight_norm,
 )
 from .max_patch import write_fader_play_patch, write_vanilla_play_patch
@@ -21,7 +20,6 @@ __all__ = [
     "finalize_nn_bundle",
     "print_max_copy_instructions",
     "load_fader_for_export",
-    "resolve_canonicalizer_ckpt",
     "strip_weight_norm",
     "is_fader_model",
     "write_fader_play_patch",

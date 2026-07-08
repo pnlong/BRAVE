@@ -7,7 +7,7 @@ from pathlib import Path
 import torch
 import yaml
 
-from rave.fader.canonicalizer_config import (
+from rave.canonicalizer.config import (
     CanonicalizerManifest,
     descriptor_loss_attributes,
     save_canonicalizer_checkpoint,

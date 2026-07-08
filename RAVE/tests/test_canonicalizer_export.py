@@ -10,7 +10,7 @@ import torch.nn as nn
 
 from rave.fader.export.nn_module import ScriptedFaderRAVE
 from rave.fader.export.trace_model import FaderTraceModel
-from rave.fader.latent_canonicalizer import LatentCanonicalizer
+from rave.canonicalizer.latent_canonicalizer import LatentCanonicalizer
 
 
 def _dummy_trace_with_canonicalizer() -> FaderTraceModel:

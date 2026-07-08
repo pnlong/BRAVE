@@ -21,4 +21,4 @@ def test_brave_canonicalizer_gin_parses():
     cfg = gin.config_str()
     assert "WaveformCanonicalizer" in cfg
     assert "LatentCanonicalizer" in cfg
-    assert "LatentDomainDiscriminator" in cfg
+    assert "InDomainAudioDiscriminator" in cfg

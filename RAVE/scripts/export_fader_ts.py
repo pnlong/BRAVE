@@ -28,9 +28,9 @@ import cached_conv as cc
 from rave.fader.export.host_controls import write_host_controls_json
 from rave.fader.export.load_for_export import (
     load_fader_for_export,
-    resolve_canonicalizer_ckpt,
     strip_weight_norm,
 )
+from rave.canonicalizer.export import resolve_canonicalizer_ckpt
 from rave.fader.export.trace_model import build_trace_model
 
 

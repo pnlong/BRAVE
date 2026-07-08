@@ -39,6 +39,15 @@ PREPROCESS_ARGS=(
 if [[ -n "${MAX_STORED_SEC:-}" ]]; then
   PREPROCESS_ARGS+=(--max_stored_sec="${MAX_STORED_SEC}")
 fi
+if [[ "${PCEN:-0}" == "1" ]]; then
+  PREPROCESS_ARGS+=(--pcen)
+fi
+if [[ "${NORMALIZE:-0}" == "1" ]]; then
+  PREPROCESS_ARGS+=(--normalize)
+fi
+if [[ -n "${NORMALIZE_MAX_GAIN_DB:-}" ]]; then
+  PREPROCESS_ARGS+=(--normalize_max_gain_db="${NORMALIZE_MAX_GAIN_DB}")
+fi
 
 mkdir -p logs "$(dirname "${OUTPUT_PATH}")"
 
@@ -50,6 +59,12 @@ echo "INPUT_PATH=${INPUT_PATH}"
 echo "OUTPUT_PATH=${OUTPUT_PATH}"
 if [[ -n "${MAX_STORED_SEC:-}" ]]; then
   echo "MAX_STORED_SEC=${MAX_STORED_SEC}"
+fi
+if [[ "${PCEN:-0}" == "1" ]]; then
+  echo "PCEN=1"
+fi
+if [[ "${NORMALIZE:-0}" == "1" ]]; then
+  echo "NORMALIZE=1"
 fi
 
 python RAVE/scripts/preprocess.py "${PREPROCESS_ARGS[@]}"
