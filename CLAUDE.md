@@ -111,6 +111,22 @@ python scripts/export_model.py \
 ```
 Lower-level: `RAVE/scripts/export_fader_nn.py` (canonicalizer: `--canonicalizer auto`).
 
+## Canonicalizer (Stage-1 input adapter)
+
+Train a small warp on a **frozen** backbone so OOD audio (e.g. tap) reconstructs closer to in-domain timbre. Docs: [`docs/canonicalizer/README.md`](docs/canonicalizer/README.md) ([waveform](docs/canonicalizer/waveform.md), [latent](docs/canonicalizer/latent.md)).
+
+```bash
+python RAVE/scripts/train_canonicalizer.py \
+  --config configs/brave_canonicalizer.gin \
+  --backbone_config configs/brave.gin \
+  --ckpt runs/brave.ckpt --db_path /path/to/in_domain_lmdb \
+  --ood_db_path /path/to/tap_lmdb \
+  --canonicalizer_type waveform \
+  --name wf_canon
+```
+
+Writes `waveform_canonicalizer.ckpt` or `latent_canonicalizer.ckpt`. Embed at export via `scripts/export_model.py` (`--canonicalizer auto`).
+
 **Export Fader plain TorchScript (128+D concat, Python demos):**
 ```bash
 python scripts/export_model.py --model runs/brave_fader_run --host ts \

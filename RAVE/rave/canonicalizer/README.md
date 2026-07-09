@@ -4,7 +4,9 @@ Stage-1 **input adapter** for frozen RAVE / FaderRAVE backbones. Trains a small 
 **out-of-domain** audio (e.g. tap) reconstructs with timbre closer to the **in-domain** corpus
 the backbone was trained on — without retraining the autoencoder.
 
-Loss derivation and CycleGAN mapping: [`scratchpaper/canonicalizer_loss.md`](../../../scratchpaper/canonicalizer_loss.md).
+**User docs:** [`docs/canonicalizer/`](../../../docs/canonicalizer/README.md) — overview plus dedicated guides for [waveform](../../../docs/canonicalizer/waveform.md) and [latent](../../../docs/canonicalizer/latent.md) canonicalizers.
+
+Loss derivation, metric scales, and tuning: [`docs/canonicalizer/loss.md`](../../../docs/canonicalizer/loss.md).
 
 ## Problem framing
 
@@ -60,12 +62,12 @@ x → Enc → L(z) → Dec → y
 
 ## Training loss
 
-```
-L_total = λ_gan · L_GAN + λ_rec · L_rec
-```
+See [`docs/canonicalizer/loss.md`](../../../docs/canonicalizer/loss.md) for the full objective,
+WandB metrics, and tuning (`lambda_rec`, STFT scale, warmup).
 
-- **L_GAN** (OOD only): fool `InDomainAudioDiscriminator` — push `G(x)` toward in-domain audio statistics
-- **L_rec** (optional, `λ_rec=0` disables): self-reconstruction `G(x) ≈ x` (STFT and/or RMS envelope)
+```
+L_total = λ_gan · L_GAN + λ_rec · L_rec + λ_fm · L_feature_matching
+```
 
 Two optimizers: warp (+ optional unfrozen encoder) vs `InDomainAudioDiscriminator`.
 

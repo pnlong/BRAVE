@@ -122,6 +122,8 @@ The export prints an `scp` one-liner when it finishes.
 
 Fader attribute knobs are documented in [`docs/fader_host_controls.md`](./docs/fader_host_controls.md) (not required to get sound from `play.maxpat`).
 
+Stage-1 canonicalizers (waveform vs latent) are documented in [`docs/canonicalizer/`](./docs/canonicalizer/README.md).
+
 ### Max load checklist
 
 1. Copy the bundle folder to `~/Documents/Max 9/Packages/nn_tilde/models/`

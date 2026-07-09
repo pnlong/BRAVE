@@ -90,8 +90,7 @@ rave.canonicalizer.in_domain_discriminator.InDomainAudioDiscriminator:
     discriminator = @discriminator.MultiScaleDiscriminator
 
 rave.canonicalizer.trainer.CanonicalizerTrainer:
-    # Recon is a light regularizer; GAN + feature matching drive timbre shift.
-    # STFT recon is ~40-50 raw (RAVE spectral distance scale); lambda_rec compensates.
+    # See docs/canonicalizer/loss.md for λ tuning and STFT scale (~40-50 raw).
     lambda_gan = 1.0
     lambda_rec = 0.05
     lambda_rms_recon = 1.0
