@@ -13,13 +13,12 @@ if _RAVE_ROOT not in sys.path:
 
 import argparse
 import hashlib
+import json
 from pathlib import Path
 
 import gin
 import pytorch_lightning as pl
 import torch
-from torch.utils.data import DataLoader
-
 import rave
 import rave.dataset
 import rave.training
@@ -34,8 +33,11 @@ from rave.canonicalizer.dataset import (
     OodFaderDataset,
     TaggedAudioDataset,
     TaggedFaderDataset,
+    build_canonicalizer_dataloader,
     build_canonicalizer_dataset,
     canonicalizer_collate,
+    ddp_aligned_num_batches,
+    ddp_batches_per_rank,
     make_ir_augment,
 )
 from rave.canonicalizer.latent_canonicalizer import LatentCanonicalizer
@@ -45,7 +47,10 @@ from rave.canonicalizer.gin_setup import (
     configure_canonicalizer_gin,
 )
 from rave.canonicalizer.trainer import CanonicalizerTrainer
-from rave.model import WarmupCallback
+from rave.canonicalizer.callbacks import (
+    CanonicalizerGanRampCallback,
+    CanonicalizerValVizCallback,
+)
 from rave.fader.dataset import FaderAttributeDataset
 from rave.fader.model import FaderRAVE
 
@@ -92,6 +97,8 @@ def parse_args():
     p.add_argument("--wandb_entity", default=None)
     p.add_argument("--wandb_offline", action="store_true")
     p.add_argument("--log_every_n_steps", type=int, default=None)
+    p.add_argument("--calibration_batches", type=int, default=None)
+    p.add_argument("--no_calibrate_scales", action="store_true")
     p.add_argument("--ir_path", default=None)
     p.add_argument("--ir_prob", type=float, default=None)
     p.add_argument("--no_ir", action="store_true")
@@ -277,38 +284,60 @@ def main():
         ir_aug=ir_aug,
     )
 
-    mixed = build_canonicalizer_dataset(
+    num_workers = 0 if sys.platform == "darwin" else args.workers
+
+    loader = build_canonicalizer_dataloader(
         in_domain_dataset=train_in,
         ood_dataset=ood_train,
-    )
-    val_mixed = build_canonicalizer_dataset(
-        in_domain_dataset=val_in,
-        ood_dataset=ood_val,
-        in_domain_fraction=0.5,
-    )
-
-    num_workers = 0 if sys.platform == "darwin" else args.workers
-    loader = DataLoader(
-        mixed,
         batch_size=1 if args.smoke_test else args.batch,
         shuffle=True,
         drop_last=True,
         num_workers=num_workers,
-        collate_fn=canonicalizer_collate,
     )
-    val_loader = DataLoader(
-        val_mixed,
+    val_loader = build_canonicalizer_dataloader(
+        in_domain_dataset=val_in,
+        ood_dataset=ood_val,
         batch_size=1 if args.smoke_test else args.batch,
         shuffle=False,
         drop_last=False,
+        stratified_batches=False,
         num_workers=num_workers,
-        collate_fn=canonicalizer_collate,
     )
+
+    if args.no_calibrate_scales:
+        trainer_module.calibrate_loss_scales = False
+
+    if trainer_module.calibrate_loss_scales and not args.smoke_test:
+        cal_device = (
+            torch.device(f"cuda:{args.gpu[0]}")
+            if args.gpu and torch.cuda.is_available()
+            else torch.device("cpu")
+        )
+        trainer_module.to(cal_device)
+        n_cal = args.calibration_batches or trainer_module.calibration_batches
+        scales = trainer_module.calibrate_loss_scales_from_loader(
+            loader, max_batches=n_cal)
+        print(
+            f"Calibrated loss scales from {n_cal} stratified train batches "
+            "(identity warp, frozen backbone):",
+        )
+        for key, value in scales.items():
+            print(f"  {key}: {value:.6f}")
+        with open(out_dir / "loss_scales.json", "w", encoding="utf-8") as scale_out:
+            json.dump(
+                {
+                    **scales,
+                    "calibration_batches": n_cal,
+                    "calibrated": True,
+                },
+                scale_out,
+                indent=2,
+            )
 
     from pytorch_lightning.loggers import WandbLogger
 
     callbacks = [
-        WarmupCallback(),
+        CanonicalizerGanRampCallback(),
         CanonicalizerValVizCallback(
             out_dir=out_dir,
             scatter_method="pca" if args.val_scatter == "both" else args.val_scatter,
@@ -330,8 +359,16 @@ def main():
             "n_signal": args.n_signal,
             "max_steps": args.max_steps,
             "canonicalizer_type": args.canonicalizer_type,
+            "calibrate_loss_scales": trainer_module.calibrate_loss_scales,
         },
     )
+    if trainer_module.loss_scales_calibrated:
+        wandb_kwargs["config"].update({
+            "stft_loss_scale": trainer_module.stft_loss_scale,
+            "rms_loss_scale": trainer_module.rms_loss_scale,
+            "gan_loss_scale": trainer_module.gan_loss_scale,
+            "fm_loss_scale": trainer_module.fm_loss_scale,
+        })
     if args.wandb_entity:
         wandb_kwargs["entity"] = args.wandb_entity
     logger = WandbLogger(**wandb_kwargs)
@@ -339,9 +376,9 @@ def main():
     train_batches = len(loader)
     if train_batches == 0:
         raise SystemExit(
-            "No training batches: mixed dataset length "
-            f"({len(mixed)}; in-domain={len(train_in)}, ood={len(ood_train)}) "
-            f"is smaller than --batch={args.batch} with drop_last=True."
+            "No training batches: in-domain="
+            f"{len(train_in)}, ood={len(ood_train)}, "
+            f"--batch={args.batch} with drop_last=True."
         )
 
     n_devices = (
@@ -349,7 +386,20 @@ def main():
         if args.gpu and torch.cuda.is_available() and len(args.gpu) > 1
         else 1
     )
-    batches_per_rank = max(1, train_batches // n_devices)
+    aligned_train_batches = ddp_aligned_num_batches(train_batches, n_devices)
+    if aligned_train_batches == 0:
+        raise SystemExit(
+            "No training batches after DDP alignment: in-domain="
+            f"{len(train_in)}, ood={len(ood_train)}, "
+            f"--batch={args.batch}, devices={n_devices}."
+        )
+    batches_per_rank = ddp_batches_per_rank(train_batches, n_devices)
+    if n_devices > 1 and aligned_train_batches < train_batches:
+        dropped = train_batches - aligned_train_batches
+        print(
+            f"DDP batch alignment: using {aligned_train_batches}/{train_batches} "
+            f"stratified batches ({dropped} dropped) -> {batches_per_rank}/rank",
+        )
 
     if args.log_every_n_steps is not None:
         log_every_n_steps = max(1, args.log_every_n_steps)
@@ -365,7 +415,8 @@ def main():
         nepoch = max(1, args.val_every // batches_per_rank)
         val_check_kwargs["check_val_every_n_epoch"] = nepoch
         print(
-            f"val scheduling: {batches_per_rank} batches/rank (of {train_batches} total), "
+            f"val scheduling: {batches_per_rank} batches/rank "
+            f"(of {aligned_train_batches} aligned / {train_batches} total), "
             f"check_val_every_n_epoch={nepoch}",
         )
 

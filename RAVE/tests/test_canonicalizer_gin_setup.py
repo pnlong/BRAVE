@@ -43,9 +43,13 @@ def test_two_phase_gin_builds_discriminator_and_trainer():
 
     assert sum(p.numel() for p in disc.parameters()) > 100_000
     assert trainer.lambda_gan == 1.0
-    assert trainer.lambda_rec == 0.05
+    assert trainer.lambda_rec == 10.0
+    assert trainer.recon_stft_weight == 0.7
+    assert trainer.recon_rms_weight == 0.3
+    assert trainer.calibrate_loss_scales is True
     assert trainer.recon_ood_mode == "both"
-    assert trainer.warmup == 2000
+    assert trainer.warmup == 1000
+    assert trainer.gan_ramp_duration == 5000
     assert len(disc(torch.randn(1, 1, 4096))) == 1
 
 

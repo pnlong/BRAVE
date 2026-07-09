@@ -13,7 +13,7 @@ _RECON_PREFIXES = ("multiband_", "fullband_")
 
 # Step-only training scalars keep W&B charts readable (no duplicate epoch curves).
 _LOG_KWARGS = dict(on_step=True, on_epoch=False, logger=True, sync_dist=False)
-_VAL_KWARGS = dict(on_step=False, on_epoch=True, logger=True, sync_dist=False)
+_VAL_KWARGS = dict(on_step=False, on_epoch=True, logger=True, sync_dist=True)
 
 
 def _merged_opts(defaults: dict, overrides: dict) -> dict:

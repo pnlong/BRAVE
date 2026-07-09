@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 
 import gin
 import pytorch_lightning as pl
@@ -15,8 +15,12 @@ from .backbone import prepare_decode_attributes
 from .dataset import DOMAIN_IN, DOMAIN_OOD
 from .in_domain_discriminator import InDomainAudioDiscriminator
 from .losses import (
+    empirical_adversarial_loss_scale,
+    empirical_loss_scale,
+    normalize_loss,
     resolve_gan_loss,
     rms_recon_l1,
+    weighted_recon_loss,
 )
 
 
@@ -38,7 +42,15 @@ class CanonicalizerTrainer(pl.LightningModule):
         in_domain_disc: Optional[InDomainAudioDiscriminator] = None,
         lambda_gan: float = 1.0,
         lambda_rec: float = 0.0,
-        lambda_rms_recon: float = 1.0,
+        recon_stft_weight: float = 0.9,
+        recon_rms_weight: float = 0.1,
+        stft_loss_scale: float = 45.0,
+        rms_loss_scale: float = 0.3,
+        gan_loss_scale: float = 1.0,
+        fm_loss_scale: float = 0.5,
+        calibrate_loss_scales: bool = True,
+        calibration_batches: int = 16,
+        loss_scale_min: float = 1e-3,
         lambda_feature_matching: float = 10.0,
         recon_ood_mode: str = "rms",
         recon_in_domain_mode: str = "rms",
@@ -46,6 +58,7 @@ class CanonicalizerTrainer(pl.LightningModule):
         lr: float = 1e-3,
         disc_lr: float = 2e-4,
         phase_1_duration: int = 500,
+        gan_ramp_duration: int = 5000,
         update_discriminator_every: int = 2,
         num_skipped_features: int = 1,
         unfreeze_encoder: bool = False,
@@ -73,7 +86,16 @@ class CanonicalizerTrainer(pl.LightningModule):
         self.in_domain_disc = in_domain_disc
         self.lambda_gan = lambda_gan
         self.lambda_rec = lambda_rec
-        self.lambda_rms_recon = lambda_rms_recon
+        self.recon_stft_weight = recon_stft_weight
+        self.recon_rms_weight = recon_rms_weight
+        self.stft_loss_scale = stft_loss_scale
+        self.rms_loss_scale = rms_loss_scale
+        self.gan_loss_scale = gan_loss_scale
+        self.fm_loss_scale = fm_loss_scale
+        self.calibrate_loss_scales = calibrate_loss_scales
+        self.calibration_batches = calibration_batches
+        self.loss_scale_min = loss_scale_min
+        self.loss_scales_calibrated = False
         self.lambda_feature_matching = lambda_feature_matching
         if recon_ood_mode not in ("stft", "rms", "both"):
             raise ValueError("recon_ood_mode must be stft, rms, or both")
@@ -85,6 +107,8 @@ class CanonicalizerTrainer(pl.LightningModule):
         self.lr = lr
         self.disc_lr = disc_lr
         self.warmup = phase_1_duration
+        self.gan_ramp_duration = gan_ramp_duration
+        self.gan_factor = 0.0
         self.warmed_up = False
         self.update_discriminator_every = update_discriminator_every
         self.num_skipped_features = num_skipped_features
@@ -211,7 +235,7 @@ class CanonicalizerTrainer(pl.LightningModule):
         mode: str,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         zero = torch.tensor(0.0, device=z.device)
-        if not mask.any() or self.lambda_rec <= 0:
+        if not mask.any():
             return zero, zero
         n_frames = z.shape[-1]
         loss_stft = zero
@@ -300,27 +324,180 @@ class CanonicalizerTrainer(pl.LightningModule):
         in_mask = torch.tensor(is_in, device=self.device)
         return in_mask, ~in_mask
 
+    def _domain_recon_loss(
+        self,
+        stft: torch.Tensor,
+        rms: torch.Tensor,
+    ) -> torch.Tensor:
+        return weighted_recon_loss(
+            stft,
+            rms,
+            stft_weight=self.recon_stft_weight,
+            rms_weight=self.recon_rms_weight,
+            stft_scale=self.stft_loss_scale,
+            rms_scale=self.rms_loss_scale,
+        )
+
+    def _uses_stft_recon(self) -> bool:
+        return (
+            self.recon_ood_mode in ("stft", "both")
+            or self.recon_in_domain_mode in ("stft", "both")
+        )
+
+    def _uses_rms_recon(self) -> bool:
+        return (
+            self.recon_ood_mode in ("rms", "both")
+            or self.recon_in_domain_mode in ("rms", "both")
+        )
+
+    @torch.no_grad()
+    def _batch_raw_losses(
+        self,
+        batch,
+        *,
+        include_adversarial: bool,
+    ) -> Dict[str, Optional[float]]:
+        """Collect unnormalized loss components for one batch."""
+        self.backbone.eval()
+        self.warp.eval()
+        if self.in_domain_disc is not None:
+            self.in_domain_disc.eval()
+
+        x_raw, attr_raw, domain = self._parse_batch(batch)
+        x_raw = x_raw.to(self.device)
+        if attr_raw is not None:
+            attr_raw = attr_raw.to(self.device)
+        in_mask, ood_mask = self._domain_masks(domain)
+
+        z, x_cmp, x_mb, y_raw, y_mb, _ = self._forward_recon(x_raw, attr_raw)
+        stft_in, rms_in = self._recon_loss_for_mask(
+            in_mask, x_mb, y_mb, x_cmp, y_raw, z, self.recon_in_domain_mode)
+        stft_ood, rms_ood = self._recon_loss_for_mask(
+            ood_mask, x_mb, y_mb, x_cmp, y_raw, z, self.recon_ood_mode)
+
+        out: Dict[str, Optional[float]] = {
+            "stft": None,
+            "rms": None,
+            "gan": None,
+            "fm": None,
+        }
+        if self._uses_stft_recon():
+            out["stft"] = float((stft_in + stft_ood).detach().cpu())
+        if self._uses_rms_recon():
+            out["rms"] = float((rms_in + rms_ood).detach().cpu())
+
+        if (
+            include_adversarial
+            and self.in_domain_disc is not None
+            and in_mask.any()
+            and ood_mask.any()
+        ):
+            y_real = y_raw[in_mask]
+            y_fake = y_raw[ood_mask]
+            feat_real, feat_fake = self._disc_features(y_real, y_fake, detach=True)
+            loss_gan = self._audio_gan_g(feat_fake)
+            loss_fm = self._feature_matching_loss(feat_real, feat_fake)
+            out["gan"] = float(loss_gan.detach().cpu())
+            out["fm"] = float(loss_fm.detach().cpu())
+        return out
+
+    @torch.no_grad()
+    def calibrate_loss_scales_from_loader(
+        self,
+        dataloader: Iterable,
+        max_batches: Optional[int] = None,
+    ) -> Dict[str, float]:
+        """
+        Set loss scales from mean raw losses at identity init on stratified batches.
+
+        Measures E[L_raw] over the first ``max_batches`` train batches (warp +
+        frozen backbone at initialization). STFT/RMS scales use the measured mean
+        (clamped to ``loss_scale_min``). GAN/FM keep gin fallbacks when the
+        identity-warp startup signal is too weak to measure (near-zero adversarial
+        loss before the GAN ramp).
+        """
+        if max_batches is None:
+            max_batches = self.calibration_batches
+        max_batches = max(1, max_batches)
+
+        buckets: Dict[str, List[float]] = {
+            "stft": [],
+            "rms": [],
+            "gan": [],
+            "fm": [],
+        }
+        for batch_idx, batch in enumerate(dataloader):
+            if batch_idx >= max_batches:
+                break
+            raw = self._batch_raw_losses(batch, include_adversarial=True)
+            for key, value in raw.items():
+                if value is not None:
+                    buckets[key].append(value)
+
+        scales: Dict[str, float] = {
+            "stft_loss_scale": self.stft_loss_scale,
+            "rms_loss_scale": self.rms_loss_scale,
+            "gan_loss_scale": self.gan_loss_scale,
+            "fm_loss_scale": self.fm_loss_scale,
+        }
+        if buckets["stft"]:
+            scales["stft_loss_scale"] = empirical_loss_scale(
+                buckets["stft"], self.loss_scale_min)
+            self.stft_loss_scale = scales["stft_loss_scale"]
+        if buckets["rms"]:
+            scales["rms_loss_scale"] = empirical_loss_scale(
+                buckets["rms"], self.loss_scale_min)
+            self.rms_loss_scale = scales["rms_loss_scale"]
+        if buckets["gan"]:
+            scales["gan_loss_scale"] = empirical_adversarial_loss_scale(
+                buckets["gan"],
+                self.gan_loss_scale,
+                self.loss_scale_min,
+            )
+            self.gan_loss_scale = scales["gan_loss_scale"]
+        if buckets["fm"]:
+            scales["fm_loss_scale"] = empirical_adversarial_loss_scale(
+                buckets["fm"],
+                self.fm_loss_scale,
+                self.loss_scale_min,
+            )
+            self.fm_loss_scale = scales["fm_loss_scale"]
+
+        self.loss_scales_calibrated = True
+        return scales
+
     def _log_train_metrics(
         self,
         *,
         loss: torch.Tensor,
         loss_gan: torch.Tensor,
+        loss_gan_norm: torch.Tensor,
         loss_recon: torch.Tensor,
         loss_recon_stft: torch.Tensor,
         loss_recon_rms: torch.Tensor,
+        loss_recon_in: torch.Tensor,
+        loss_recon_ood: torch.Tensor,
         loss_d: torch.Tensor,
         loss_fm: torch.Tensor,
+        loss_fm_norm: torch.Tensor,
         batch_size: int,
         log_audio_disc: bool = False,
     ) -> None:
+        # Normalized terms (~1 at calibration) — use these when comparing λ weights.
         self.log("canon/loss", loss, prog_bar=True, batch_size=batch_size)
-        self.log("canon/gan", loss_gan, batch_size=batch_size)
-        self.log("canon/recon", loss_recon, batch_size=batch_size)
-        self.log("canon/recon_stft", loss_recon_stft, batch_size=batch_size)
-        self.log("canon/recon_rms", loss_recon_rms, batch_size=batch_size)
+        self.log("canon/recon_norm", loss_recon, batch_size=batch_size)
+        self.log("canon/recon_in_norm", loss_recon_in, batch_size=batch_size)
+        self.log("canon/recon_ood_norm", loss_recon_ood, batch_size=batch_size)
+        self.log("canon/gan_norm", loss_gan_norm, batch_size=batch_size)
+        self.log("canon/fm_norm", loss_fm_norm, batch_size=batch_size)
+        # Raw terms — diagnostic magnitudes before scale division.
+        self.log("canon/recon_stft_raw", loss_recon_stft, batch_size=batch_size)
+        self.log("canon/recon_rms_raw", loss_recon_rms, batch_size=batch_size)
+        self.log("canon/gan_raw", loss_gan, batch_size=batch_size)
+        self.log("canon/fm_raw", loss_fm, batch_size=batch_size)
         if log_audio_disc:
             self.log("canon/audio_disc", loss_d, batch_size=batch_size)
-        self.log("canon/feature_matching", loss_fm, batch_size=batch_size)
+        self.log("canon/gan_factor", float(self.gan_factor), batch_size=batch_size)
         self.log("canon/warmed_up", float(self.warmed_up), batch_size=batch_size)
 
     def training_step(self, batch, batch_idx):
@@ -344,16 +521,20 @@ class CanonicalizerTrainer(pl.LightningModule):
             ood_mask, x_mb, y_mb, x_cmp, y_raw, z, self.recon_ood_mode)
         loss_recon_stft = stft_in + stft_ood
         loss_recon_rms = rms_in + rms_ood
-        loss_recon = loss_recon_stft + self.lambda_rms_recon * loss_recon_rms
+        loss_recon_in = self._domain_recon_loss(stft_in, rms_in)
+        loss_recon_ood = self._domain_recon_loss(stft_ood, rms_ood)
+        loss_recon = loss_recon_in + loss_recon_ood
 
         zero = torch.tensor(0.0, device=self.device)
         loss_d = zero
         loss_gan = zero
         loss_fm = zero
+        loss_gan_norm = zero
+        loss_fm_norm = zero
 
         has_mixed = in_mask.any() and ood_mask.any()
         gan_active = (
-            self.warmed_up
+            self.gan_factor > 0.0
             and self.in_domain_disc is not None
             and has_mixed
         )
@@ -374,11 +555,15 @@ class CanonicalizerTrainer(pl.LightningModule):
             self._log_train_metrics(
                 loss=loss_d,
                 loss_gan=loss_gan,
+                loss_gan_norm=loss_gan_norm,
                 loss_recon=loss_recon,
                 loss_recon_stft=loss_recon_stft,
                 loss_recon_rms=loss_recon_rms,
+                loss_recon_in=loss_recon_in,
+                loss_recon_ood=loss_recon_ood,
                 loss_d=loss_d,
                 loss_fm=loss_fm,
+                loss_fm_norm=loss_fm_norm,
                 batch_size=batch_size,
                 log_audio_disc=True,
             )
@@ -390,11 +575,13 @@ class CanonicalizerTrainer(pl.LightningModule):
             feat_real, feat_fake = self._disc_features(y_real, y_fake, detach=False)
             loss_gan = self._audio_gan_g(feat_fake)
             loss_fm = self._feature_matching_loss(feat_real, feat_fake)
+            loss_gan_norm = normalize_loss(loss_gan, self.gan_loss_scale)
+            loss_fm_norm = normalize_loss(loss_fm, self.fm_loss_scale)
 
         loss = (
             self.lambda_rec * loss_recon
-            + self.lambda_gan * loss_gan
-            + self.lambda_feature_matching * loss_fm
+            + self.gan_factor * self.lambda_gan * loss_gan_norm
+            + self.gan_factor * self.lambda_feature_matching * loss_fm_norm
         )
 
         warp_opt.zero_grad()
@@ -405,11 +592,15 @@ class CanonicalizerTrainer(pl.LightningModule):
         self._log_train_metrics(
             loss=loss,
             loss_gan=loss_gan,
+            loss_gan_norm=loss_gan_norm,
             loss_recon=loss_recon,
             loss_recon_stft=loss_recon_stft,
             loss_recon_rms=loss_recon_rms,
+            loss_recon_in=loss_recon_in,
+            loss_recon_ood=loss_recon_ood,
             loss_d=loss_d,
             loss_fm=loss_fm,
+            loss_fm_norm=loss_fm_norm,
             batch_size=batch_size,
         )
         return loss

@@ -18,41 +18,76 @@ Gin defaults: [`configs/brave_canonicalizer.gin`](../../configs/brave_canonicali
 | **G** | Canonicalizer + frozen Enc/Dec → reconstructed waveform |
 | **D** | `InDomainAudioDiscriminator` — real Y vs fake G(X) |
 
-Mixed batches are built by [`build_canonicalizer_dataset`](../../RAVE/rave/canonicalizer/dataset.py)
+Mixed batches use stratified sampling via
+[`build_canonicalizer_dataloader`](../../RAVE/rave/canonicalizer/dataset.py)
 (`in_domain_fraction` in gin, default `0.5`).
 
 ## Total loss (generator / warp step)
 
-On warp optimizer steps:
+Raw terms (STFT, RMS, GAN, FM) live on very different scales. Each is divided by an
+**empirical reference scale** measured on your run (see below) so typical values are ~1,
+then combined with explicit λ weights.
 
 ```
-L_total = λ_rec · L_rec + λ_gan · L_GAN + λ_fm · L_feature_matching
+L_total = λ_rec · L_recon + λ_gan · L̃_gan + λ_fm · L̃_fm
+```
+
+where `L̃_x = L_x / scale_x` (normalized), and:
+
+```
+L_recon = w_stft · L̃_stft + w_rms · L̃_rms
 ```
 
 | Gin parameter | Default | Role |
 |---------------|---------|------|
-| `lambda_rec` | `0.05` | Scales all reconstruction terms |
-| `lambda_gan` | `1.0` | Hinge GAN generator loss on OOD fakes |
-| `lambda_feature_matching` | `2.0` | L1 match of D intermediate features (real Y vs fake G(X)) |
-| `lambda_rms_recon` | `1.0` | Extra weight on RMS envelope term *inside* `L_rec` |
+| `lambda_rec` | `1.0` | Top-level reconstruction bundle |
+| `lambda_gan` | `1.0` | Normalized GAN generator loss |
+| `lambda_feature_matching` | `2.0` | Normalized feature-matching loss |
+| `recon_stft_weight` | `0.9` | Sub-weight on normalized STFT inside `L_recon` |
+| `recon_rms_weight` | `0.1` | Sub-weight on normalized RMS inside `L_recon` |
+| `calibrate_loss_scales` | `True` | Measure scales from data at startup |
+| `calibration_batches` | `16` | Stratified train batches used for calibration |
+| `stft_loss_scale` | `45.0` | Fallback STFT scale if calibration disabled |
+| `rms_loss_scale` | `0.3` | Fallback RMS scale if calibration disabled |
+| `gan_loss_scale` | `1.0` | Fallback GAN scale if calibration disabled |
+| `fm_loss_scale` | `0.5` | Fallback FM scale if calibration disabled |
 
-There is **no** separate `lambda_stft` — STFT recon enters only through `lambda_rec`.
+### Calibrating loss scales (default)
 
-Discriminator steps optimize `L_D` only (hinge GAN on D), on a separate Adam optimizer,
+Before training, `train_canonicalizer.py` runs **identity-warp calibration** on the
+train loader:
+
+1. Warp at initialization (near-identity for waveform; zero residual for latent).
+2. Frozen backbone encode/decode on stratified in-domain + OOD batches.
+3. Mean raw STFT, RMS, GAN, and FM over `calibration_batches` (default 16).
+4. Set `scale_x = max(mean, loss_scale_min)` for STFT/RMS.
+5. For GAN/FM: use the measured mean only if it is meaningfully above zero;
+   otherwise keep gin fallback scales (identity warp often yields ~0 adversarial
+   loss before the GAN ramp, which would inflate normalized GAN/FM later).
+
+This is the recommended approach: scales come from **your** backbone checkpoint, **your**
+in-domain LMDB, and **your** OOD tap corpus — not hand-waved constants. Results are saved
+to `loss_scales.json` in the run directory and logged to W&B config.
+
+Disable with `--no_calibrate_scales` (uses gin fallback scales only).
+
+**Tuning intuition:** after calibration, each normalized term is ~1 at step 0, so
+`λ_rec ≈ λ_gan` means comparable recon vs adversarial pull. Sub-weights `w_stft` / `w_rms`
+set the mix inside recon (e.g. 90% spectral, 10% envelope).
+
+Discriminator steps optimize raw `L_D` only (hinge GAN on D), on a separate Adam optimizer,
 every `update_discriminator_every` batches (default `2`) once GAN is active.
 
 ## Reconstruction loss
 
+Both STFT and RMS are computed **per domain** (in-domain self-recon + OOD cycle proxy),
+normalized, weighted, and summed:
+
 ```
-L_rec = L_stft + λ_rms_recon · L_rms
+L_recon = w_stft · (L_stft / s_stft) + w_rms · (L_rms / s_rms)
 ```
 
-Both STFT and RMS are computed **per domain** and summed:
-
-- **In-domain** (`recon_in_domain_mode`): self-reconstruction on Y — G(y) ≈ y
-- **OOD** (`recon_ood_mode`): cycle-identity proxy on X — G(x) ≈ x
-
-Each mode is gin-selectable: `"stft"`, `"rms"`, or `"both"` (current default).
+Each mode is gin-selectable per domain: `"stft"`, `"rms"`, or `"both"` (current default).
 
 ### STFT term (`L_stft`)
 
@@ -63,78 +98,107 @@ L_stft = multiband_audio_distance(x_mb, y_mb)
        + audio_distance(x_raw, y_raw)
 ```
 
-Each distance sums **5 multi-scale STFT** scales; per scale it adds relative L2 (linear
-spec) + L1 (log spec). Multiband + fullband are both included.
-
-**Typical raw magnitude: ~40–50** for imperfect reconstructions. This is expected — not a
-bug and not comparable in scale to GAN losses (~0–2).
+**Typical raw magnitude: ~40–50.** After normalization (`/ 45`), ~1.
 
 ### RMS term (`L_rms`)
 
-Differentiable frame-wise RMS envelope L1 ([`rms_recon_l1`](../../RAVE/rave/canonicalizer/losses.py)),
-aligned to latent frame count.
+Differentiable frame-wise RMS envelope L1 ([`rms_recon_l1`](../../RAVE/rave/canonicalizer/losses.py)).
 
-**Typical raw magnitude: ~0–1.**
+**Typical raw magnitude: ~0.2–0.4.** After normalization (`/ 0.3`), ~1.
 
-### Effective recon contribution
+### Effective contribution at defaults
 
-With defaults and typical running values:
-
-| Component | Raw | × weights | Effective in `L_total` |
-|-----------|-----|-----------|------------------------|
-| STFT | ~45 | `λ_rec` (0.05) | **~2.2** |
-| RMS | ~0.3 | `λ_rec × λ_rms_recon` (0.05) | **~0.015** |
-| GAN | ~1 | `λ_gan` (1.0) | **~1** |
-| Feature matching | ~0.5 | `λ_fm` (2.0) | **~1** |
-
-**Important:** `lambda_rec = 1.0` makes STFT dominate (~45 vs ~1 for GAN). Earlier runs
-that looked successful under `λ_rec = 1.0` were largely driven by reconstruction, not
-adversarial timbre shift. Default is now `0.05` so GAN + feature matching lead.
+| Component | Raw (typical) | Normalized | × λ / w | Effective in `L_total` |
+|-----------|---------------|------------|---------|------------------------|
+| STFT | ~45 | ~1 | `λ_rec · w_stft` (0.9) | **~0.9** |
+| RMS | ~0.3 | ~1 | `λ_rec · w_rms` (0.1) | **~0.1** |
+| GAN | ~1 | ~1 | `λ_gan` (1.0) | **~1** |
+| Feature matching | ~0.5 | ~1 | `λ_fm` (2.0) | **~2** |
 
 ## GAN loss
 
 Active only when all of the following hold:
 
-1. `global_step >= phase_1_duration` (`WarmupCallback` sets `warmed_up`; default **2000** steps)
-2. Batch contains both in-domain and OOD samples
+1. `gan_factor > 0` (set each step by `CanonicalizerGanRampCallback`)
+2. Batch contains both in-domain and OOD samples (guaranteed with stratified batching)
 3. `in_domain_disc` is configured
 
-**Phase 1 (not warmed up):** only `λ_rec · L_rec` trains the warp — recon-only warmup.
+### GAN ramp schedule (default)
 
-**Phase 2 (warmed up):**
+| Phase | Steps | `gan_factor` | Training |
+|-------|-------|--------------|----------|
+| Recon-only | `0 … phase_1_duration-1` (default **1000**) | `0` | Only `λ_rec · L_recon` |
+| Ramp | `phase_1_duration … phase_1_duration + gan_ramp_duration - 1` (default **1000–5999**) | linear `0 → 1` | GAN/FM weight scaled by `gan_factor` |
+| Full GAN | `≥ phase_1_duration + gan_ramp_duration` (default **6000+**) | `1` | Full adversarial training |
 
-- **D step** (every `update_discriminator_every` batches): classify real Y vs fake G(X)
-- **G step** (other batches): fool D + feature matching on intermediate activations
+Effective generator adversarial terms:
 
-GAN loss uses the same hinge / LS / nonsaturating callables as RAVE (`gan_loss` gin string).
+```
+λ_gan_eff = gan_factor · λ_gan
+λ_fm_eff  = gan_factor · λ_fm
+```
+
+| Gin parameter | Default | Role |
+|---------------|---------|------|
+| `phase_1_duration` | `1000` | Recon-only steps before GAN ramp starts |
+| `gan_ramp_duration` | `5000` | Linear ramp length for `gan_factor` |
+
+Set `gan_ramp_duration = 0` for an immediate step from recon-only to full GAN (hard gate).
+
+**During ramp:**
+
+- **G step**: `λ_rec · L_recon + gan_factor · (λ_gan · L̃_gan + λ_fm · L̃_fm)`
+- **D step** (every `update_discriminator_every` batches, once `gan_factor > 0`): raw hinge D loss
 
 ## WandB / log metrics
+
+**Normalized** (`*_norm`): comparable ~1-scale terms that enter `L_total` (after
+empirical scale division). Use these when tuning λ weights or comparing recon vs GAN vs FM.
+
+**Raw** (`*_raw`): unnormalized magnitudes for absolute-quality diagnostics.
 
 | Metric | What it shows |
 |--------|----------------|
 | `canon/loss` | Total warp loss (or D loss on disc steps) |
-| `canon/recon_stft` | Raw STFT recon (**unweighted** — expect ~40–50) |
-| `canon/recon_rms` | Raw RMS recon (**unweighted**) |
-| `canon/recon` | `L_stft + λ_rms_recon · L_rms` (before `λ_rec`) |
-| `canon/gan` | Raw GAN generator loss |
-| `canon/feature_matching` | Raw feature-matching loss |
-| `canon/audio_disc` | D loss (logged on discriminator steps) |
-| `canon/warmed_up` | `1.0` once `phase_1_duration` elapsed |
-| `val/recon_ood` | STFT recon on OOD validation |
-| `val/rms_ood` | RMS recon on OOD validation |
+| `canon/recon_norm` | Normalized weighted recon bundle (before `λ_rec`) |
+| `canon/recon_in_norm` | Normalized weighted recon, in-domain only |
+| `canon/recon_ood_norm` | Normalized weighted recon, OOD only |
+| `canon/gan_norm` | GAN generator loss / `gan_loss_scale` |
+| `canon/fm_norm` | Feature-matching loss / `fm_loss_scale` |
+| `canon/recon_stft_raw` | Raw STFT recon (diagnostic — expect ~40–50) |
+| `canon/recon_rms_raw` | Raw RMS recon (diagnostic — expect ~0.2–0.4) |
+| `canon/gan_raw` | Raw GAN generator loss |
+| `canon/fm_raw` | Raw feature-matching loss |
+| `canon/audio_disc` | D loss (logged on discriminator steps only) |
+| `canon/gan_factor` | GAN ramp weight in `[0, 1]` (linear ramp after recon-only phase) |
+| `canon/warmed_up` | `1.0` once `gan_factor` reaches `1.0` |
+| `val/recon_ood` | Raw STFT recon on OOD validation |
+| `val/rms_ood` | Raw RMS recon on OOD validation |
 | `val/disc_ood` | Mean fake logit on OOD (sanity check D is learning) |
 
-Do not compare `canon/recon_stft` directly to `canon/gan` without applying the λ weights.
+Calibration scales are saved to `loss_scales.json` and W&B run config (not logged per step).
 
 ## Tuning guide
 
 ### Less reconstruction, more timbre shift
 
-Lower `lambda_rec`:
+Lower `lambda_rec` (e.g. `0.5` or `0.25`).
 
-```bash
---override 'CanonicalizerTrainer.lambda_rec=0.01'
+### More envelope vs spectral inside recon
+
+Raise `recon_rms_weight` and lower `recon_stft_weight` (they need not sum to 1, but ~1 is
+intuitive):
+
+```gin
+recon_stft_weight = 0.7
+recon_rms_weight = 0.3
 ```
+
+### Recalibrate if corpus or backbone changes
+
+Scales are measured once per run. If you change tap LMDB, birdsong ckpt, or `n_signal`,
+recalibration happens automatically on the next run. To reuse fixed scales (e.g. ablation
+sweeps with identical data), pass `--no_calibrate_scales` and set gin fallbacks explicitly.
 
 ### RMS-only recon (drop STFT from training)
 
@@ -149,16 +213,18 @@ recon_in_domain_mode = "rms"
 lambda_rec = 0.0
 ```
 
-### Longer recon-only warmup before GAN
+### Longer recon-only before GAN ramp
 
 ```gin
-phase_1_duration = 5000
+phase_1_duration = 2000
+gan_ramp_duration = 5000
 ```
 
-### Stronger envelope matching relative to STFT (within recon)
+### Instant GAN (no ramp)
 
-Raise `lambda_rms_recon` (e.g. `5.0`). There is no `lambda_stft_recon` knob; STFT weight
-is fixed at `1.0` inside `L_rec`.
+```gin
+gan_ramp_duration = 0
+```
 
 ## CycleGAN mapping
 

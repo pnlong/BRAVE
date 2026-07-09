@@ -203,7 +203,12 @@ def test_latent_canonicalizer_identity():
 
 
 def test_frame_rms_curve_shape_and_grad():
-    from rave.canonicalizer.losses import frame_rms_curve, rms_recon_l1
+    from rave.canonicalizer.losses import (
+        frame_rms_curve,
+        normalize_loss,
+        rms_recon_l1,
+        weighted_recon_loss,
+    )
 
     x = torch.randn(2, 1, 8192, requires_grad=True)
     y = x * 0.9 + 0.05
@@ -212,3 +217,29 @@ def test_frame_rms_curve_shape_and_grad():
     loss = rms_recon_l1(y, x, n_frames=32)
     loss.backward()
     assert x.grad is not None
+
+    stft = torch.tensor(45.0)
+    rms = torch.tensor(0.3)
+    recon = weighted_recon_loss(
+        stft,
+        rms,
+        stft_weight=0.9,
+        rms_weight=0.1,
+        stft_scale=45.0,
+        rms_scale=0.3,
+    )
+    assert torch.allclose(recon, torch.tensor(1.0))
+    assert torch.allclose(normalize_loss(torch.tensor(2.0), 2.0), torch.tensor(1.0))
+
+    from rave.canonicalizer.losses import (
+        empirical_adversarial_loss_scale,
+        empirical_loss_scale,
+    )
+
+    assert empirical_loss_scale([40.0, 50.0]) == 45.0
+    assert empirical_loss_scale([1e-6], min_scale=1e-3) == 1e-3
+
+    # Near-zero startup GAN/FM -> gin fallback (avoids huge normalized losses later).
+    assert empirical_adversarial_loss_scale([1e-6], fallback=1.0) == 1.0
+    assert empirical_adversarial_loss_scale([0.002], fallback=0.5) == 0.5
+    assert empirical_adversarial_loss_scale([0.8, 1.0], fallback=1.0) == 0.9
