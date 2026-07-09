@@ -20,7 +20,7 @@ Loss derivation and CycleGAN mapping: [`scratchpaper/canonicalizer_loss.md`](../
 | File / dir | Role |
 |------------|------|
 | [`latent_canonicalizer.py`](latent_canonicalizer.py) | `LatentCanonicalizer` — residual 1×1 conv on content `z` after encode |
-| [`waveform_canonicalizer.py`](waveform_canonicalizer.py) | `WaveformCanonicalizer` — EQ + optional causal reverb before encode |
+| [`waveform_canonicalizer.py`](waveform_canonicalizer.py) | `WaveformCanonicalizer` — per-input knob encoder + EQ + optional reverb |
 | [`in_domain_discriminator.py`](in_domain_discriminator.py) | `InDomainAudioDiscriminator` — multi-scale audio GAN (real in-domain vs OOD fake) |
 | [`trainer.py`](trainer.py) | `CanonicalizerTrainer` — Lightning Stage-1 loop |
 | [`losses.py`](losses.py) | RMS recon helpers, GAN loss resolver |
@@ -37,10 +37,17 @@ Loss derivation and CycleGAN mapping: [`scratchpaper/canonicalizer_loss.md`](../
 ### Waveform (`canonicalizer_type=waveform`)
 
 ```
-x → C(x) [EQ + reverb] → Enc → Dec → y
+x → encoder → knobs (B, K) → EQ(x, eq_knobs) → reverb(x, rev_knobs) → Enc → Dec → y
 ```
 
-`C` is identity at init. Applied on the backbone via `waveform_canonicalizer` slot
+- **`WaveformKnobEncoder`**: small causal conv stack; maps each input clip to a **K-dimensional knob vector**
+- **Knob layout** (`WaveformKnobLayout`): `[eq_gain_0 … eq_gain_{n-1}, reverb_0 … reverb_{m-1}]`
+  - Default: 6 EQ bands + 7 reverb scalars (wet + 4 comb feedbacks + 2 allpass gains) → **K = 13**
+- **DSP** (`BiquadBank`, `CausalReverb`): deterministic; knobs are passed per batch item
+- **Identity at init**: encoder outputs neutral knobs → `C(x) ≈ x`
+- **Streaming**: optional knob EMA (`knob_ema_decay` in gin, default `0.95`) smooths per-block knob estimates during eval/export so realtime blocks do not audibly modulate
+
+Applied on the backbone via `waveform_canonicalizer` slot
 (see [`backbone.py`](backbone.py), [`RAVE/rave/model.py`](../model.py)).
 
 ### Latent (`canonicalizer_type=latent`)
@@ -101,6 +108,8 @@ Canonicalizer checkpoints embed into realtime bundles through [`export/`](export
 Used by [`scripts/export_model.py`](../../../scripts/export_model.py) for both vanilla RAVE and FaderRAVE.
 Fader-specific export UI (stats, host controls, `play.maxpat`) stays in [`rave/fader/export/`](../fader/export/).
 
+**Realtime note:** export calls `waveform_canonicalizer(x)` per streaming block. Per-input knobs can change block-to-block; enable `knob_ema_decay` (default in gin) for eval/export stability.
+
 ## Checkpoints
 
 ```
@@ -111,3 +120,5 @@ latent_canonicalizer.manifest.json
 ```
 
 Manifest records backbone config, ckpt, db paths, and `backbone_kind` (`RAVE` or `FaderRAVE`).
+
+**Breaking change:** checkpoints from the previous global-DSP waveform canonicalizer (learnable params inside `BiquadBank` / `CausalReverb` only, no encoder) are **not compatible** with the per-input encoder design. Retrain Stage-1 after upgrading.

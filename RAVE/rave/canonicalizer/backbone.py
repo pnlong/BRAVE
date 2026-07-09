@@ -7,9 +7,8 @@ from typing import Optional
 import torch
 import torch.nn as nn
 
-from ..dsp import BiquadBank, CausalReverb
 from .latent_canonicalizer import LatentCanonicalizer
-from .waveform_canonicalizer import WaveformCanonicalizer
+from .waveform_canonicalizer import build_waveform_canonicalizer
 
 
 def attach_canonicalizer_modules(
@@ -20,9 +19,11 @@ def attach_canonicalizer_modules(
     """Load warp weights onto a backbone with canonicalizer slots."""
     device = next(model.parameters()).device
     if canonicalizer_type == "waveform":
-        eq = BiquadBank(sample_rate=model.sr)
-        rv = CausalReverb(sample_rate=model.sr)
-        warp = WaveformCanonicalizer(eq=eq, reverb=rv, use_reverb=True)
+        n_channels = int(getattr(model, "n_channels", 1))
+        warp = build_waveform_canonicalizer(
+            sample_rate=model.sr,
+            n_channels=n_channels,
+        )
         warp.load_state_dict(state_dict)
         model.waveform_canonicalizer = warp.to(device)
     elif canonicalizer_type == "latent":

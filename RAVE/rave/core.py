@@ -96,7 +96,7 @@ def get_versions(folder):
     return sorted(Path(dirpath).iterdir(), key=os.path.getmtime)
 
 def search_for_config(folder):
-    if os.path.isfile(folder):
+    if os.path.isfile(folder) or str(folder).endswith(".ckpt"):
         folder = os.path.dirname(folder)
     configs = list(map(str, Path(folder).rglob("config.gin")))
     if configs != []:

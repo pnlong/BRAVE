@@ -230,12 +230,11 @@ def main():
     configure_canonicalizer_gin(canon_cfg, n_channels, overrides=args.override)
 
     if args.canonicalizer_type == "waveform":
-        from rave.dsp import BiquadBank, CausalReverb
-        from rave.canonicalizer.waveform_canonicalizer import WaveformCanonicalizer
+        from rave.canonicalizer.waveform_canonicalizer import build_waveform_canonicalizer
 
-        warp = WaveformCanonicalizer(
-            eq=BiquadBank(sample_rate=model.sr),
-            reverb=CausalReverb(sample_rate=model.sr),
+        warp = build_waveform_canonicalizer(
+            sample_rate=model.sr,
+            n_channels=n_channels,
         )
         ckpt_name = "waveform_canonicalizer.ckpt"
     else:

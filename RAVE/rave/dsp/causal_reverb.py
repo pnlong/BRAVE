@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Optional, Sequence
 
 import gin
 import torch
@@ -46,8 +46,15 @@ class _CombFilter(nn.Module):
         self.delay_samples = delay_samples
         self.feedback = nn.Parameter(torch.tensor([feedback], dtype=torch.float32))
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        fb = torch.sigmoid(self.feedback) * 0.85
+    def forward(
+        self,
+        x: torch.Tensor,
+        feedback: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        if feedback is None:
+            fb = torch.sigmoid(self.feedback) * 0.85
+        else:
+            fb = torch.sigmoid(feedback.reshape(())) * 0.85
         return _comb_filter(x, self.delay_samples, fb)
 
 
@@ -57,8 +64,15 @@ class _AllpassFilter(nn.Module):
         self.delay_samples = delay_samples
         self.gain = nn.Parameter(torch.tensor([gain], dtype=torch.float32))
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        g = torch.sigmoid(self.gain) * 0.7
+    def forward(
+        self,
+        x: torch.Tensor,
+        gain: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        if gain is None:
+            g = torch.sigmoid(self.gain) * 0.7
+        else:
+            g = torch.sigmoid(gain.reshape(())) * 0.7
         return _allpass_filter(x, self.delay_samples, g)
 
 
@@ -66,6 +80,9 @@ class _AllpassFilter(nn.Module):
 class CausalReverb(nn.Module):
     """
     Causal wet/dry reverb. Init with wet=0 → identity.
+
+    External knob layout (``n_knobs`` scalars per batch item):
+    ``[wet_logit, comb_fb_0, …, comb_fb_{n-1}, ap_gain_0, …, ap_gain_{m-1}]``
     """
 
     def __init__(
@@ -84,13 +101,63 @@ class CausalReverb(nn.Module):
         # wet init → ~0 at start (sigmoid(-20) ≈ 2e-9)
         self.wet_logit = nn.Parameter(torch.tensor(-20.0))
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        wet = torch.sigmoid(self.wet_logit)
+    @property
+    def n_combs(self) -> int:
+        return len(self.combs)
+
+    @property
+    def n_allpasses(self) -> int:
+        return len(self.allpasses)
+
+    @property
+    def n_knobs(self) -> int:
+        return 1 + self.n_combs + self.n_allpasses
+
+    def _forward_single(
+        self,
+        x: torch.Tensor,
+        wet_logit: torch.Tensor,
+        comb_raw: torch.Tensor,
+        ap_raw: torch.Tensor,
+    ) -> torch.Tensor:
+        wet = torch.sigmoid(wet_logit.reshape(()))
         comb_sum = 0.0
-        for comb in self.combs:
-            comb_sum = comb_sum + comb(x)
+        for i, comb in enumerate(self.combs):
+            comb_sum = comb_sum + comb(x, feedback=comb_raw[i])
         rev = comb_sum / len(self.combs)
-        for ap in self.allpasses:
-            rev = ap(rev)
-        # Residual form: exact dry pass-through when wet=0, wet_logit stays in the graph.
+        for j, ap in enumerate(self.allpasses):
+            rev = ap(rev, gain=ap_raw[j])
         return x + wet * (rev - x)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        knobs: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        # knobs: optional (B, n_knobs) pre-activation values from an external encoder
+        if knobs is None:
+            wet = torch.sigmoid(self.wet_logit)
+            comb_sum = 0.0
+            for comb in self.combs:
+                comb_sum = comb_sum + comb(x)
+            rev = comb_sum / len(self.combs)
+            for ap in self.allpasses:
+                rev = ap(rev)
+            return x + wet * (rev - x)
+
+        if knobs.shape[-1] != self.n_knobs:
+            raise ValueError(
+                f"expected knobs with {self.n_knobs} slots, got {knobs.shape[-1]}"
+            )
+
+        outs = []
+        n_comb = self.n_combs
+        for b in range(x.shape[0]):
+            row = knobs[b]
+            outs.append(self._forward_single(
+                x[b:b + 1],
+                row[0],
+                row[1:1 + n_comb],
+                row[1 + n_comb:],
+            ))
+        return torch.cat(outs, dim=0)

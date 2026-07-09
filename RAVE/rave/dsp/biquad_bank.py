@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from typing import Sequence
+from typing import Optional
 
 import gin
 import torch
@@ -53,17 +53,30 @@ class BiquadFilter(nn.Module):
         self.max_gain_db = max_gain_db
         self.gain_db = nn.Parameter(torch.zeros(1))
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x: (B, C, T)
-        gain = torch.tanh(self.gain_db) * self.max_gain_db
-        y_filt = self._apply_biquad(x, gain)
-        # Soft bypass: exact identity at gain=0, but gain_db stays in the graph.
-        alpha = torch.tanh((gain.abs() / self.max_gain_db) * 5.0)
-        return x + alpha * (y_filt - x)
+    def forward(
+        self,
+        x: torch.Tensor,
+        gain_db: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        # x: (B, C, T); gain_db: optional (B,) dB gains from an external encoder
+        if gain_db is None:
+            gain = torch.tanh(self.gain_db) * self.max_gain_db
+            y_filt = self._apply_biquad(x, gain)
+            alpha = torch.tanh((gain.abs() / self.max_gain_db) * 5.0)
+            return x + alpha * (y_filt - x)
+
+        outs = []
+        for b in range(x.shape[0]):
+            gain = gain_db[b]
+            x_b = x[b:b + 1]
+            y_filt = self._apply_biquad(x_b, gain)
+            alpha = torch.tanh((gain.abs() / self.max_gain_db) * 5.0)
+            outs.append(x_b + alpha * (y_filt - x_b))
+        return torch.cat(outs, dim=0)
 
     def _apply_biquad(self, x: torch.Tensor, gain: torch.Tensor) -> torch.Tensor:
         b, a = _peaking_biquad_coeffs(
-            self.sample_rate, self.center_freq, self.q, gain.squeeze())
+            self.sample_rate, self.center_freq, self.q, gain.reshape(()))
         b = b.to(dtype=x.dtype, device=x.device)
         a = a.to(dtype=x.dtype, device=x.device)
         return AF.lfilter(x, a, b, clamp=False)
@@ -83,6 +96,7 @@ class BiquadBank(nn.Module):
         max_gain_db: float = 12.0,
     ) -> None:
         super().__init__()
+        self.max_gain_db = max_gain_db
         freqs = torch.logspace(
             math.log10(min_freq),
             math.log10(max_freq),
@@ -93,7 +107,25 @@ class BiquadBank(nn.Module):
             for fc in freqs
         ])
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        for filt in self.filters:
-            x = filt(x)
+    @property
+    def n_bands(self) -> int:
+        return len(self.filters)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        gains_db: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        # gains_db: optional (B, n_bands) dB gains; falls back to internal params
+        if gains_db is None:
+            for filt in self.filters:
+                x = filt(x)
+            return x
+
+        if gains_db.shape[-1] != self.n_bands:
+            raise ValueError(
+                f"expected gains_db with {self.n_bands} bands, got {gains_db.shape[-1]}"
+            )
+        for i, filt in enumerate(self.filters):
+            x = filt(x, gain_db=gains_db[:, i])
         return x

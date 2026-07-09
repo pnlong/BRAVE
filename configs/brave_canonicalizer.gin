@@ -37,7 +37,12 @@ import rave.canonicalizer.latent_canonicalizer
 
 import torch
 
-# --- Waveform canonicalizer (EQ + optional reverb) ---
+# --- Waveform canonicalizer (per-input knob encoder + EQ + optional reverb) ---
+# Knob layout K = n_eq_bands + n_reverb_knobs (default 6 + 7 = 13).
+rave.canonicalizer.waveform_canonicalizer.WaveformKnobLayout:
+    n_eq_bands = 6
+    n_reverb_knobs = 7
+
 dsp.BiquadBank:
     sample_rate = %SAMPLING_RATE
     n_bands = 6
@@ -48,10 +53,20 @@ dsp.BiquadBank:
 dsp.CausalReverb:
     sample_rate = %SAMPLING_RATE
 
+rave.canonicalizer.waveform_canonicalizer.WaveformKnobEncoder:
+    layout = @rave.canonicalizer.waveform_canonicalizer.WaveformKnobLayout
+    in_channels = 1
+    hidden_channels = 64
+    n_layers = 4
+    max_gain_db = 12.0
+
 rave.canonicalizer.waveform_canonicalizer.WaveformCanonicalizer:
+    encoder = @rave.canonicalizer.waveform_canonicalizer.WaveformKnobEncoder
     eq = @dsp.BiquadBank
     reverb = @dsp.CausalReverb
     use_reverb = True
+    layout = @rave.canonicalizer.waveform_canonicalizer.WaveformKnobLayout
+    knob_ema_decay = 0.95
 
 rave.canonicalizer.latent_canonicalizer.LatentCanonicalizer:
     latent_size = %LATENT_SIZE
@@ -75,9 +90,10 @@ rave.canonicalizer.in_domain_discriminator.InDomainAudioDiscriminator:
     discriminator = @discriminator.MultiScaleDiscriminator
 
 rave.canonicalizer.trainer.CanonicalizerTrainer:
-    # Recon-first: strong self-reconstruction (cycle-identity proxy) before GAN timbre shift.
+    # Recon is a light regularizer; GAN + feature matching drive timbre shift.
+    # STFT recon is ~40-50 raw (RAVE spectral distance scale); lambda_rec compensates.
     lambda_gan = 1.0
-    lambda_rec = 1.0
+    lambda_rec = 0.05
     lambda_rms_recon = 1.0
     lambda_feature_matching = 2.0
     recon_ood_mode = "both"

@@ -184,8 +184,20 @@ def main(argv):
     if FLAGS.ckpt:
         config_file = rave.core.search_for_config(FLAGS.ckpt)
         if config_file is None:
-            print('Config file not found in %s'%FLAGS.run)
-        gin.parse_config_file(config_file)
+            if FLAGS.config:
+                print(
+                    'Config not found near %s; using --config %s'
+                    % (FLAGS.ckpt, FLAGS.config))
+                gin.parse_config_files_and_bindings(
+                    map(add_gin_extension, FLAGS.config),
+                    FLAGS.override,
+                )
+            else:
+                raise FileNotFoundError(
+                    'No config.gin found near %s and no --config provided'
+                    % FLAGS.ckpt)
+        else:
+            gin.parse_config_file(config_file)
     else:
         gin.parse_config_files_and_bindings(
             map(add_gin_extension, FLAGS.config),
