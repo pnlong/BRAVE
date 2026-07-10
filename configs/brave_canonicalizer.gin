@@ -88,11 +88,13 @@ discriminator.MultiScaleDiscriminator:
 
 rave.canonicalizer.in_domain_discriminator.InDomainAudioDiscriminator:
     discriminator = @discriminator.MultiScaleDiscriminator
+    embed_dim = 32
+    condition_on = "attr_cls"
 
 rave.canonicalizer.trainer.CanonicalizerTrainer:
     # Loss scales: calibrated from train data at startup (see loss.md). Values below
     # are fallbacks when calibrate_loss_scales = False.
-    lambda_rec = 50.0
+    lambda_rec = 2.0
     lambda_gan = 1.0
     lambda_feature_matching = 0.5
     recon_stft_weight = 0.9
@@ -108,18 +110,20 @@ rave.canonicalizer.trainer.CanonicalizerTrainer:
     gan_loss = "hinge"
     lr = 3e-4
     disc_lr = 2e-5
-    phase_1_duration = 10000
-    gan_ramp_duration = 10000
+    phase_1_duration = 25000
+    gan_ramp_duration = 25000
     update_discriminator_every = 2
     num_skipped_features = 1
     encode_use_mean = True
     unfreeze_encoder = False
     encoder_lr = 1e-5
     in_domain_disc = @rave.canonicalizer.in_domain_discriminator.InDomainAudioDiscriminator
+    ood_discrete_sampling = "marginal"
 
 rave.canonicalizer.dataset.build_canonicalizer_dataloader:
     in_domain_fraction = 0.5
     stratified_batches = True
+    class_stratified_batches = True
 
 rave.canonicalizer.dataset.build_canonicalizer_dataset:
     in_domain_fraction = 0.5
@@ -132,3 +136,4 @@ rave.canonicalizer.dataset.make_ir_augment:
 
 rave.canonicalizer.callbacks.CanonicalizerValVizCallback:
     num_audio_samples = 8
+    plot_ood_by_class = True

@@ -175,6 +175,7 @@ empirical scale division). Use these when tuning λ weights or comparing recon v
 | `val/recon_ood` | Raw STFT recon on OOD validation |
 | `val/rms_ood` | Raw RMS recon on OOD validation |
 | `val/disc_ood` | Mean fake logit on OOD (sanity check D is learning) |
+| `val/ood_by_class` | Single grouped bar chart: mean fake D logit + STFT recon per assigned OOD class (Fader) |
 
 Calibration scales are saved to `loss_scales.json` and W&B run config (not logged per step).
 
@@ -236,3 +237,56 @@ gan_ramp_duration = 0
 | Identity | In-domain `L_rec` + identity init of warp |
 
 Full one-way transfer: we do **not** train a reverse mapper or an OOD discriminator.
+
+## Conditional FaderRAVE (attribute-conditioned D)
+
+For Fader backbones (`num_attributes > 0`), **Y** is a family of distributions
+`Y | a` — one per attribute setting. The discriminator conditions on discretized
+attributes (`attr_cls`): continuous rows use quantile bins; discrete rows use class
+indices (same representation as the Fader latent discriminator).
+
+```
+L_D = E_{y,a~p_Y} [hinge(D(y|a), real)] + E_{x,a~p_target} [hinge(D(G(x|a), fake)]
+```
+
+Plain BRAVE (`num_attributes = 0`) passes `attr_cls=None` and recovers the
+audio-only MSD.
+
+### OOD attribute policy (training)
+
+| Kind | OOD (tap) | In-domain (Y) |
+|------|-----------|---------------|
+| Continuous (RMS, …) | **Tap-extracted** (keep from descriptor provider) | Natural from dataset |
+| Discrete (`texture_class`, …) | **Sampled target class** (Y marginal by default; `uniform` via gin) | Natural from sidecar |
+
+Decode always uses `attr_norm`. D and warp FiLM use `attr_cls` by default.
+
+### Phase 3 training options (Fader)
+
+| Gin / flag | Default | Effect |
+|------------|---------|--------|
+| `ood_discrete_sampling` | `"marginal"` | OOD discrete rows drawn from train-split class histogram in `attribute_sidecar.yaml` |
+| `class_stratified_batches` | `True` | In-domain slots in each batch round-robin across discrete classes |
+| `val/ood_by_class` | — | One W&B figure: grouped bars of mean fake D logit + STFT recon per OOD class |
+
+Use `ood_discrete_sampling = "uniform"` to restore equal class exposure regardless of Y frequency.
+
+### Inference attribute modes (nn~)
+
+See [`docs/fader_host_controls.md`](../fader_host_controls.md). Users can adjust
+continuous knobs (`attr_mode=0/1`) or use extract + manual discrete (`attr_mode=2`).
+Training defaults match extract-continuous + sampled-discrete-class.
+
+### D conditioning: `attr_cls` vs `attr_norm`
+
+| Criterion | `attr_cls` (default) | `attr_norm` (ablation) |
+|-----------|----------------------|------------------------|
+| Mechanism | Per-attribute `nn.Embedding`; pool; projection onto D | Pool `attr_norm`; linear projection |
+| Continuous | Coarse (16 bins) | Fine-grained trajectories |
+| Discrete | Categorical class buckets | Decoder floats in [-1, 1] (interpolable) |
+| Best for | `texture_class` / `water_scene` | Continuous-only ablation |
+
+Gin: `condition_on = "attr_cls"` or `"attr_norm"` on
+`InDomainAudioDiscriminator`.
+
+Plan reference: [`scratchpaper/conditional_canonicalizer_plan.md`](../../scratchpaper/conditional_canonicalizer_plan.md).

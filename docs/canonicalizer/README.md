@@ -26,7 +26,7 @@ You train **one** type per run (`--canonicalizer_type waveform` or `latent`). Th
 | **G** | Canonicalizer + frozen Enc/Dec → reconstructed audio |
 | **D** | `InDomainAudioDiscriminator` — real Y vs OOD reconstructions |
 
-Loss details: [loss.md](loss.md).
+Loss details: [loss.md](loss.md) (includes conditional Fader GAN).
 
 ## Shared training pipeline
 

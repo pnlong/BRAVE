@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Optional, Sequence, Tuple
 
 import gin
 import torch
@@ -11,6 +11,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from ..dsp import BiquadBank, CausalReverb
+from .attribute_conditioning import AttributeConditioningEmbed, FiLM
 
 # Neutral wet logit → sigmoid ≈ 0 (dry / identity pass-through).
 _WET_NEUTRAL_LOGIT = -20.0
@@ -78,17 +79,39 @@ class WaveformKnobEncoder(nn.Module):
         hidden_channels: int = 64,
         n_layers: int = 4,
         max_gain_db: float = 12.0,
+        num_attributes: int = 0,
+        num_classes_per_attribute: Optional[Sequence[int]] = None,
+        embed_dim: int = 32,
     ) -> None:
         super().__init__()
         self.layout = layout
         self.max_gain_db = max_gain_db
+        self.hidden_channels = hidden_channels
 
-        layers = []
+        blocks = []
         ch = in_channels
         for _ in range(n_layers):
-            layers.append(_CausalConvBlock(ch, hidden_channels))
+            blocks.append(_CausalConvBlock(ch, hidden_channels))
             ch = hidden_channels
-        self.backbone = nn.Sequential(*layers)
+        self.blocks = nn.ModuleList(blocks)
+
+        self.cond_embed: Optional[AttributeConditioningEmbed] = None
+        self.films: Optional[nn.ModuleList] = None
+        if num_attributes > 0:
+            if not num_classes_per_attribute:
+                raise ValueError(
+                    "num_classes_per_attribute required when num_attributes > 0")
+            self.cond_embed = AttributeConditioningEmbed(
+                num_attributes=num_attributes,
+                num_classes_per_attribute=num_classes_per_attribute,
+                embed_dim=embed_dim,
+                condition_on="attr_cls",
+            )
+            self.films = nn.ModuleList([
+                FiLM(self.cond_embed.out_dim, hidden_channels)
+                for _ in range(n_layers)
+            ])
+
         self.head = nn.Linear(hidden_channels, layout.n_knobs)
         self._init_identity()
 
@@ -108,11 +131,22 @@ class WaveformKnobEncoder(nn.Module):
         rev = raw[:, eq_end:]
         return torch.cat([eq, rev], dim=-1)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        attr_cls: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         # x: (B, C, T)
         if x.dim() != 3:
             raise ValueError(f"expected (B, C, T) audio, got shape {tuple(x.shape)}")
-        h = self.backbone(x)
+        cond = None
+        if self.cond_embed is not None and attr_cls is not None:
+            cond = self.cond_embed(attr_cls=attr_cls)
+        h = x
+        for i, block in enumerate(self.blocks):
+            h = block(h)
+            if self.films is not None and cond is not None:
+                h = self.films[i](h, cond)
         h = h.mean(dim=-1)
         return self._map_knobs(self.head(h))
 
@@ -162,8 +196,12 @@ class WaveformCanonicalizer(nn.Module):
             )
         self.layout = layout
 
-    def predict_knobs(self, x: torch.Tensor) -> torch.Tensor:
-        knobs = self.encoder(x)
+    def predict_knobs(
+        self,
+        x: torch.Tensor,
+        attr_cls: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        knobs = self.encoder(x, attr_cls=attr_cls)
         return self._smooth_knobs(knobs)
 
     def _smooth_knobs(self, knobs: torch.Tensor) -> torch.Tensor:
@@ -182,8 +220,12 @@ class WaveformCanonicalizer(nn.Module):
             return self.knob_ema.expand(knobs.shape[0], -1)
         return self.knob_ema.squeeze(0)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        knobs = self.predict_knobs(x)
+    def forward(
+        self,
+        x: torch.Tensor,
+        attr_cls: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        knobs = self.predict_knobs(x, attr_cls=attr_cls)
         eq_k, rev_k = self.layout.split(knobs)
         x = self.eq(x, eq_k)
         if self.use_reverb and self.reverb is not None and rev_k is not None:
@@ -196,6 +238,9 @@ def build_waveform_canonicalizer(
     *,
     n_channels: int = 1,
     use_reverb: bool = True,
+    num_attributes: int = 0,
+    num_classes_per_attribute: Optional[Sequence[int]] = None,
+    embed_dim: int = 32,
 ) -> WaveformCanonicalizer:
     """Construct waveform canonicalizer from gin bindings (requires parsed canon gin)."""
     eq = gin.get_configurable(BiquadBank)(sample_rate=sample_rate)
@@ -207,6 +252,9 @@ def build_waveform_canonicalizer(
     encoder = gin.get_configurable(WaveformKnobEncoder)(
         layout=layout,
         in_channels=n_channels,
+        num_attributes=num_attributes,
+        num_classes_per_attribute=num_classes_per_attribute,
+        embed_dim=embed_dim,
     )
     return gin.get_configurable(WaveformCanonicalizer)(
         encoder=encoder,

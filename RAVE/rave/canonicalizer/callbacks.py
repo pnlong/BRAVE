@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pytorch_lightning as pl
@@ -11,6 +12,7 @@ import torch
 import torch.distributed as dist
 import gin
 
+from .backbone import primary_discrete_attr_index
 from .dataset import DOMAIN_IN, DOMAIN_OOD
 from .viz import (
     concat_val_audio_triplets,
@@ -18,10 +20,36 @@ from .viz import (
     log_wandb_audio,
     log_wandb_figure,
     plot_latent_domain_scatter,
+    plot_ood_class_summary,
     save_figure,
 )
 
 AudioTriplet = Tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+
+
+def _unpack_validation_outputs(outputs) -> tuple:
+    """Support dict and legacy tuple validation returns."""
+    if isinstance(outputs, dict):
+        return (
+            outputs["z"],
+            outputs["domains"],
+            outputs["x_raw"],
+            outputs["x_enc_in"],
+            outputs["y_raw"],
+            outputs.get("ood_class_samples") or [],
+        )
+    z, domains, x_raw, x_enc_in, y_raw = outputs
+    return z, domains, x_raw, x_enc_in, y_raw, []
+
+
+def _class_labels_for_plot(pl_module) -> Dict[int, str]:
+    disc_idx = primary_discrete_attr_index(pl_module.backbone)
+    if disc_idx is None:
+        return {}
+    names = getattr(pl_module.backbone, "attribute_names", [])
+    attr_name = names[disc_idx] if disc_idx < len(names) else ""
+    labels = getattr(pl_module, "discrete_class_labels", {}).get(attr_name) or []
+    return {i: str(label) for i, label in enumerate(labels) if label}
 
 
 def _ddp_barrier() -> None:
@@ -72,6 +100,7 @@ class CanonicalizerValVizCallback(pl.Callback):
     On validation epoch end:
       1. PCA / t-SNE scatter — in-domain vs OOD latents (post-warp)
       2. W&B audio per domain: ``input | pre_encoder | recon`` × N samples
+      3. Single grouped bar chart of OOD disc/recon by assigned class (Fader)
     """
 
     def __init__(
@@ -81,6 +110,7 @@ class CanonicalizerValVizCallback(pl.Callback):
         also_tsne: bool = True,
         max_points_per_domain: int = 512,
         num_audio_samples: int = 8,
+        plot_ood_by_class: bool = True,
     ) -> None:
         super().__init__()
         self.out_dir = Path(out_dir) if out_dir is not None else None
@@ -88,16 +118,21 @@ class CanonicalizerValVizCallback(pl.Callback):
         self.also_tsne = also_tsne
         self.max_points_per_domain = max_points_per_domain
         self.num_audio_samples = num_audio_samples
+        self.plot_ood_by_class = plot_ood_by_class
         self._in_domain_pts: List[np.ndarray] = []
         self._ood_pts: List[np.ndarray] = []
         self._ood_audio: List[AudioTriplet] = []
         self._in_domain_audio: List[AudioTriplet] = []
+        self._ood_disc_by_class: Dict[int, List[float]] = defaultdict(list)
+        self._ood_recon_by_class: Dict[int, List[float]] = defaultdict(list)
 
     def on_validation_epoch_start(self, trainer, pl_module) -> None:
         self._in_domain_pts.clear()
         self._ood_pts.clear()
         self._ood_audio.clear()
         self._in_domain_audio.clear()
+        self._ood_disc_by_class.clear()
+        self._ood_recon_by_class.clear()
 
     def on_validation_batch_end(
         self,
@@ -110,7 +145,14 @@ class CanonicalizerValVizCallback(pl.Callback):
     ) -> None:
         if not trainer.is_global_zero or outputs is None:
             return
-        z, domains, x_raw, x_pre_enc, y_raw = outputs
+        z, domains, x_raw, x_pre_enc, y_raw, ood_class_samples = (
+            _unpack_validation_outputs(outputs))
+        for sample in ood_class_samples:
+            class_id = int(sample["class_id"])
+            self._ood_recon_by_class[class_id].append(float(sample["recon"]))
+            if "disc_logit" in sample:
+                self._ood_disc_by_class[class_id].append(float(sample["disc_logit"]))
+
         for i, dom in enumerate(domains):
             pts = latent_frames_to_points(z[i:i + 1], max_points=self.max_points_per_domain)
             if dom == DOMAIN_IN:
@@ -182,5 +224,21 @@ class CanonicalizerValVizCallback(pl.Callback):
                     samples=self._in_domain_audio,
                     step=step,
                 )
+
+                if self.plot_ood_by_class and self._ood_recon_by_class:
+                    class_fig = plot_ood_class_summary(
+                        self._ood_disc_by_class,
+                        self._ood_recon_by_class,
+                        class_labels=_class_labels_for_plot(pl_module),
+                    )
+                    if class_fig is not None:
+                        log_wandb_figure(pl_module, "val/ood_by_class", class_fig)
+                        if self.out_dir is not None:
+                            save_figure(
+                                class_fig,
+                                self.out_dir / "viz" / f"ood_by_class_step{step}.png",
+                            )
+                        import matplotlib.pyplot as plt
+                        plt.close(class_fig)
 
         _ddp_barrier()

@@ -109,9 +109,33 @@ class FaderTraceModel(nn.Module):
         mask = self.is_continuous.view(1, -1, 1) > 0.5
         return torch.where(mask, cont, disc)
 
-    def _encode_core(self, x: torch.Tensor) -> torch.Tensor:
+    def _attr_cls_for_warp(self, attr: torch.Tensor) -> torch.Tensor:
+        """Quantize raw attrs to integer bins/classes for conditional warps."""
+        b, d, t = attr.shape
+        out = torch.zeros(b, d, t, device=attr.device, dtype=torch.long)
+        lo = self.min_max_features[:, 0].view(1, -1, 1)
+        hi = self.min_max_features[:, 1].view(1, -1, 1)
+        for i in range(d):
+            if self.is_continuous[i] > 0.5:
+                norm = (attr[:, i:i + 1, :] - lo[:, i:i + 1, :]) / (
+                    hi[:, i:i + 1, :] - lo[:, i:i + 1, :] + 1e-8)
+                out[:, i, :] = (norm.clamp(0, 1) * 15).long().clamp(0, 15)[:, 0, :]
+            else:
+                n_cls = int(self.discrete_n_classes[i].item())
+                out[:, i, :] = attr[:, i, :].long().clamp(0, max(n_cls - 1, 0))
+        return out
+
+    def _encode_core(
+        self,
+        x: torch.Tensor,
+        attr_cls: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         if self.waveform_canonicalizer is not None:
-            x = self.waveform_canonicalizer(x)
+            enc = getattr(self.waveform_canonicalizer, "encoder", None)
+            if attr_cls is not None and getattr(enc, "cond_embed", None) is not None:
+                x = self.waveform_canonicalizer(x, attr_cls=attr_cls)
+            else:
+                x = self.waveform_canonicalizer(x)
         # --- PQMF encode → VAE latent (deterministic mean if configured) ---
         if self.pqmf is not None:
             x = self.pqmf(x)
@@ -126,7 +150,11 @@ class FaderTraceModel(nn.Module):
         else:
             z = z
         if self.latent_canonicalizer is not None:
-            z = self.latent_canonicalizer(z)
+            if attr_cls is not None and getattr(
+                self.latent_canonicalizer, "cond_embed", None) is not None:
+                z = self.latent_canonicalizer(z, attr_cls=attr_cls)
+            else:
+                z = self.latent_canonicalizer(z)
         return z
 
     @torch.jit.export
@@ -145,7 +173,8 @@ class FaderTraceModel(nn.Module):
     @torch.jit.export
     def forward(self, x: torch.Tensor, attr: torch.Tensor) -> torch.Tensor:
         """Encode → concat normalized attr → decode (main realtime entry point)."""
-        z = self.encode(x)
+        attr_cls = self._attr_cls_for_warp(attr)
+        z = self._encode_core(x, attr_cls=attr_cls)
         attr_n = self.normalize_all(attr)
         # --- Widened latent: content + control channels ---
         z_c = torch.cat([z, attr_n], dim=1)

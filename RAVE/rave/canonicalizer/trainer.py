@@ -11,7 +11,14 @@ import torch.nn as nn
 
 from ..core import mean_difference
 from ..model import _pqmf_decode
-from .backbone import prepare_decode_attributes
+from .backbone import (
+    assign_ood_target_attrs,
+    backbone_num_attributes,
+    discrete_class_ids_from_attr_raw,
+    prepare_batch_attributes,
+    prepare_decode_attributes,
+    primary_discrete_attr_index,
+)
 from .dataset import DOMAIN_IN, DOMAIN_OOD
 from .in_domain_discriminator import InDomainAudioDiscriminator
 from .losses import (
@@ -64,6 +71,9 @@ class CanonicalizerTrainer(pl.LightningModule):
         unfreeze_encoder: bool = False,
         encoder_lr: float = 1e-5,
         encode_use_mean: bool = True,
+        ood_discrete_sampling: str = "marginal",
+        ood_discrete_marginals: Optional[Dict[str, torch.Tensor]] = None,
+        discrete_class_labels: Optional[Dict[str, List[str]]] = None,
         # Deprecated aliases (ignored)
         fader: Optional[nn.Module] = None,
         domain_profile=None,
@@ -115,6 +125,11 @@ class CanonicalizerTrainer(pl.LightningModule):
         self.unfreeze_encoder = unfreeze_encoder
         self.encoder_lr = encoder_lr
         self.encode_use_mean = encode_use_mean
+        if ood_discrete_sampling not in ("uniform", "marginal"):
+            raise ValueError("ood_discrete_sampling must be uniform or marginal")
+        self.ood_discrete_sampling = ood_discrete_sampling
+        self.ood_discrete_marginals = ood_discrete_marginals or {}
+        self.discrete_class_labels = discrete_class_labels or {}
 
         for p in self.backbone.parameters():
             p.requires_grad = False
@@ -126,6 +141,79 @@ class CanonicalizerTrainer(pl.LightningModule):
     def fader(self):
         """Backward-compatible alias used by validation callbacks."""
         return self.backbone
+
+    def set_ood_discrete_marginals(
+        self,
+        marginals: Dict[str, torch.Tensor],
+    ) -> None:
+        self.ood_discrete_marginals = marginals
+
+    def _assign_ood_attrs(
+        self,
+        attr_raw: torch.Tensor,
+        ood_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        return assign_ood_target_attrs(
+            attr_raw,
+            self.backbone,
+            ood_mask,
+            discrete_sampling=self.ood_discrete_sampling,
+            marginal_probs=self.ood_discrete_marginals,
+        )
+
+    def _ood_class_label(self, class_id: int) -> str:
+        disc_idx = primary_discrete_attr_index(self.backbone)
+        if disc_idx is None:
+            return str(class_id)
+        names = getattr(self.backbone, "attribute_names", [])
+        attr_name = names[disc_idx] if disc_idx < len(names) else ""
+        labels = self.discrete_class_labels.get(attr_name) or []
+        if 0 <= class_id < len(labels) and labels[class_id]:
+            return str(labels[class_id])
+        return str(class_id)
+
+    def _collect_ood_class_samples(
+        self,
+        *,
+        attr_raw: torch.Tensor,
+        ood_mask: torch.Tensor,
+        y_raw: torch.Tensor,
+        x_mb: torch.Tensor,
+        y_mb: torch.Tensor,
+        x_cmp: torch.Tensor,
+        attr_cls: Optional[torch.Tensor],
+    ) -> List[Dict[str, float]]:
+        """Per-OOD-sample metrics for class summary plot (no per-class W&B scalars)."""
+        disc_idx = primary_discrete_attr_index(self.backbone)
+        if disc_idx is None or not ood_mask.any():
+            return []
+
+        all_cls = discrete_class_ids_from_attr_raw(attr_raw, disc_idx)
+        ood_rows = torch.nonzero(ood_mask, as_tuple=False).squeeze(1)
+        samples: List[Dict[str, float]] = []
+        for row in ood_rows.tolist():
+            recon = self._stft_recon_loss(
+                x_mb[row:row + 1],
+                y_mb[row:row + 1],
+                x_cmp[row:row + 1],
+                y_raw[row:row + 1],
+            )
+            entry: Dict[str, float] = {
+                "class_id": float(all_cls[row].item()),
+                "recon": float(recon.detach().cpu()),
+            }
+            if self.in_domain_disc is not None:
+                feat_fake = self.in_domain_disc(
+                    y_raw[row:row + 1],
+                    **self._disc_kwargs(
+                        attr_cls[row:row + 1] if attr_cls is not None else None,
+                        None,
+                    ),
+                )
+                entry["disc_logit"] = float(
+                    self._mean_fake_logit(feat_fake).detach().cpu())
+            samples.append(entry)
+        return samples
 
     def _set_backbone_train_mode(self) -> None:
         if self.unfreeze_encoder:
@@ -183,19 +271,28 @@ class CanonicalizerTrainer(pl.LightningModule):
         self,
         x_raw: torch.Tensor,
         attr_raw: Optional[torch.Tensor],
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor,
-               torch.Tensor]:
+    ) -> tuple[
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        Optional[torch.Tensor],
+        Optional[torch.Tensor],
+    ]:
         batch_size = x_raw.shape[:-2]
-        attr = prepare_decode_attributes(self.backbone, attr_raw)
+        attr_norm, attr_cls = prepare_batch_attributes(self.backbone, attr_raw)
+        attr = attr_norm
 
         if self.canonicalizer_type == "waveform":
-            x_enc_in = self.warp(x_raw)
+            x_enc_in = self._apply_waveform_warp(x_raw, attr_cls)
             z, x_multiband = self._encode_latent(x_enc_in)
             x_compare = x_raw
         else:
             x_enc_in = x_raw
             z, x_multiband = self._encode_latent(x_raw)
-            z = self.warp(z)
+            z = self._apply_latent_warp(z, attr_cls)
             x_compare = x_raw
 
         z_cond = torch.cat([z, attr], dim=1) if attr is not None else z
@@ -211,7 +308,26 @@ class CanonicalizerTrainer(pl.LightningModule):
         y_raw = y_raw[..., :t]
         x_multiband = x_multiband[..., :x_multiband.shape[-1]]
         y_multiband = y_multiband[..., :x_multiband.shape[-1]]
-        return z, x_compare, x_multiband, y_raw, y_multiband, x_enc_in
+        return z, x_compare, x_multiband, y_raw, y_multiband, x_enc_in, attr_norm, attr_cls
+
+    def _apply_waveform_warp(
+        self,
+        x_raw: torch.Tensor,
+        attr_cls: Optional[torch.Tensor],
+    ) -> torch.Tensor:
+        if getattr(self.warp, "encoder", None) is not None and getattr(
+            self.warp.encoder, "cond_embed", None) is not None:
+            return self.warp(x_raw, attr_cls=attr_cls)
+        return self.warp(x_raw)
+
+    def _apply_latent_warp(
+        self,
+        z: torch.Tensor,
+        attr_cls: Optional[torch.Tensor],
+    ) -> torch.Tensor:
+        if getattr(self.warp, "cond_embed", None) is not None:
+            return self.warp(z, attr_cls=attr_cls)
+        return self.warp(z)
 
     def _stft_recon_loss(
         self,
@@ -247,18 +363,42 @@ class CanonicalizerTrainer(pl.LightningModule):
             loss_rms = rms_recon_l1(y_raw[mask], x_cmp[mask], n_frames)
         return loss_stft, loss_rms
 
+    def _disc_kwargs(
+        self,
+        attr_cls: Optional[torch.Tensor],
+        attr_norm: Optional[torch.Tensor],
+    ) -> dict:
+        if (
+            self.in_domain_disc is None
+            or getattr(self.in_domain_disc, "num_attributes", 0) == 0
+        ):
+            return {}
+        if getattr(self.in_domain_disc, "condition_on", "attr_cls") == "attr_norm":
+            return {"attr_norm": attr_norm}
+        return {"attr_cls": attr_cls}
+
     def _disc_features(
         self,
         y_real: torch.Tensor,
         y_fake: torch.Tensor,
+        attr_cls_real: Optional[torch.Tensor],
+        attr_cls_fake: Optional[torch.Tensor],
+        attr_norm_real: Optional[torch.Tensor],
+        attr_norm_fake: Optional[torch.Tensor],
         *,
         detach: bool,
     ) -> tuple[List[List[torch.Tensor]], List[List[torch.Tensor]]]:
         if detach:
             y_real = y_real.detach()
             y_fake = y_fake.detach()
-        feat_real = self.in_domain_disc(y_real)
-        feat_fake = self.in_domain_disc(y_fake)
+        feat_real = self.in_domain_disc(
+            y_real,
+            **self._disc_kwargs(attr_cls_real, attr_norm_real),
+        )
+        feat_fake = self.in_domain_disc(
+            y_fake,
+            **self._disc_kwargs(attr_cls_fake, attr_norm_fake),
+        )
         return feat_real, feat_fake
 
     def _audio_gan_d(
@@ -369,7 +509,11 @@ class CanonicalizerTrainer(pl.LightningModule):
             attr_raw = attr_raw.to(self.device)
         in_mask, ood_mask = self._domain_masks(domain)
 
-        z, x_cmp, x_mb, y_raw, y_mb, _ = self._forward_recon(x_raw, attr_raw)
+        if attr_raw is not None and backbone_num_attributes(self.backbone) > 0:
+            attr_raw = self._assign_ood_attrs(attr_raw, ood_mask)
+
+        z, x_cmp, x_mb, y_raw, y_mb, _, attr_norm, attr_cls = self._forward_recon(
+            x_raw, attr_raw)
         stft_in, rms_in = self._recon_loss_for_mask(
             in_mask, x_mb, y_mb, x_cmp, y_raw, z, self.recon_in_domain_mode)
         stft_ood, rms_ood = self._recon_loss_for_mask(
@@ -394,7 +538,15 @@ class CanonicalizerTrainer(pl.LightningModule):
         ):
             y_real = y_raw[in_mask]
             y_fake = y_raw[ood_mask]
-            feat_real, feat_fake = self._disc_features(y_real, y_fake, detach=True)
+            feat_real, feat_fake = self._disc_features(
+                y_real,
+                y_fake,
+                attr_cls[in_mask] if attr_cls is not None else None,
+                attr_cls[ood_mask] if attr_cls is not None else None,
+                attr_norm[in_mask] if attr_norm is not None else None,
+                attr_norm[ood_mask] if attr_norm is not None else None,
+                detach=True,
+            )
             loss_gan = self._audio_gan_g(feat_fake)
             loss_fm = self._feature_matching_loss(feat_real, feat_fake)
             out["gan"] = float(loss_gan.detach().cpu())
@@ -513,7 +665,11 @@ class CanonicalizerTrainer(pl.LightningModule):
         batch_size = x_raw.size(0)
         in_mask, ood_mask = self._domain_masks(domain)
 
-        z, x_cmp, x_mb, y_raw, y_mb, _ = self._forward_recon(x_raw, attr_raw)
+        if attr_raw is not None and backbone_num_attributes(self.backbone) > 0:
+            attr_raw = self._assign_ood_attrs(attr_raw, ood_mask)
+
+        z, x_cmp, x_mb, y_raw, y_mb, _, attr_norm, attr_cls = self._forward_recon(
+            x_raw, attr_raw)
 
         stft_in, rms_in = self._recon_loss_for_mask(
             in_mask, x_mb, y_mb, x_cmp, y_raw, z, self.recon_in_domain_mode)
@@ -546,7 +702,15 @@ class CanonicalizerTrainer(pl.LightningModule):
         if is_disc_step:
             y_real = y_raw[in_mask]
             y_fake = y_raw[ood_mask]
-            feat_real, feat_fake = self._disc_features(y_real, y_fake, detach=True)
+            feat_real, feat_fake = self._disc_features(
+                y_real,
+                y_fake,
+                attr_cls[in_mask] if attr_cls is not None else None,
+                attr_cls[ood_mask] if attr_cls is not None else None,
+                attr_norm[in_mask] if attr_norm is not None else None,
+                attr_norm[ood_mask] if attr_norm is not None else None,
+                detach=True,
+            )
             loss_d = self._audio_gan_d(feat_real, feat_fake)
             if disc_opt is not None and loss_d.requires_grad:
                 disc_opt.zero_grad()
@@ -572,7 +736,15 @@ class CanonicalizerTrainer(pl.LightningModule):
         if gan_active:
             y_real = y_raw[in_mask]
             y_fake = y_raw[ood_mask]
-            feat_real, feat_fake = self._disc_features(y_real, y_fake, detach=False)
+            feat_real, feat_fake = self._disc_features(
+                y_real,
+                y_fake,
+                attr_cls[in_mask] if attr_cls is not None else None,
+                attr_cls[ood_mask] if attr_cls is not None else None,
+                attr_norm[in_mask] if attr_norm is not None else None,
+                attr_norm[ood_mask] if attr_norm is not None else None,
+                detach=False,
+            )
             loss_gan = self._audio_gan_g(feat_fake)
             loss_fm = self._feature_matching_loss(feat_real, feat_fake)
             loss_gan_norm = normalize_loss(loss_gan, self.gan_loss_scale)
@@ -613,10 +785,14 @@ class CanonicalizerTrainer(pl.LightningModule):
             attr_raw = attr_raw.to(self.device)
         batch_size = x_raw.size(0)
         in_mask, ood_mask = self._domain_masks(domain)
+        ood_class_samples: List[Dict[str, float]] = []
+
+        if attr_raw is not None and backbone_num_attributes(self.backbone) > 0:
+            attr_raw = self._assign_ood_attrs(attr_raw, ood_mask)
 
         with torch.no_grad():
-            z, x_cmp, x_mb, y_raw, y_mb, x_enc_in = self._forward_recon(
-                x_raw, attr_raw)
+            z, x_cmp, x_mb, y_raw, y_mb, x_enc_in, attr_norm, attr_cls = (
+                self._forward_recon(x_raw, attr_raw))
 
             if in_mask.any():
                 self.log(
@@ -653,7 +829,13 @@ class CanonicalizerTrainer(pl.LightningModule):
                     batch_size=batch_size,
                 )
                 if self.in_domain_disc is not None:
-                    feat_fake = self.in_domain_disc(y_raw[ood_mask])
+                    feat_fake = self.in_domain_disc(
+                        y_raw[ood_mask],
+                        **self._disc_kwargs(
+                            attr_cls[ood_mask] if attr_cls is not None else None,
+                            attr_norm[ood_mask] if attr_norm is not None else None,
+                        ),
+                    )
                     self.log(
                         "val/disc_ood",
                         self._mean_fake_logit(feat_fake),
@@ -663,5 +845,23 @@ class CanonicalizerTrainer(pl.LightningModule):
                         batch_size=batch_size,
                     )
 
+            if ood_mask.any() and attr_raw is not None:
+                ood_class_samples = self._collect_ood_class_samples(
+                    attr_raw=attr_raw,
+                    ood_mask=ood_mask,
+                    y_raw=y_raw,
+                    x_mb=x_mb,
+                    y_mb=y_mb,
+                    x_cmp=x_cmp,
+                    attr_cls=attr_cls,
+                )
+
         domains = list(domain) if isinstance(domain, (list, tuple)) else [domain]
-        return z.detach(), domains, x_raw.detach(), x_enc_in.detach(), y_raw.detach()
+        return {
+            "z": z.detach(),
+            "domains": domains,
+            "x_raw": x_raw.detach(),
+            "x_enc_in": x_enc_in.detach(),
+            "y_raw": y_raw.detach(),
+            "ood_class_samples": ood_class_samples,
+        }

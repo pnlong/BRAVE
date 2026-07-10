@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import io
 from pathlib import Path
-from typing import Literal, Optional, Sequence
+from typing import Literal, Mapping, Optional, Sequence
 
 import matplotlib
 
@@ -87,6 +87,45 @@ def plot_latent_domain_scatter(
     return fig
 
 
+def plot_ood_class_summary(
+    disc_by_class: Mapping[int, Sequence[float]],
+    recon_by_class: Mapping[int, Sequence[float]],
+    *,
+    class_labels: Optional[Mapping[int, str]] = None,
+    title: str = "OOD validation by assigned class",
+) -> Optional[plt.Figure]:
+    """Grouped bar chart: mean fake D logit and STFT recon per discrete class."""
+    classes = sorted(set(disc_by_class) | set(recon_by_class))
+    if not classes:
+        return None
+
+    labels = [
+        (class_labels or {}).get(c, str(c))
+        for c in classes
+    ]
+    disc_means = [
+        float(np.mean(disc_by_class[c])) if disc_by_class.get(c) else np.nan
+        for c in classes
+    ]
+    recon_means = [
+        float(np.mean(recon_by_class[c])) if recon_by_class.get(c) else np.nan
+        for c in classes
+    ]
+
+    x = np.arange(len(classes))
+    width = 0.36
+    fig, ax = plt.subplots(figsize=(max(6, len(classes) * 0.9), 4.5))
+    ax.bar(x - width / 2, disc_means, width, label="disc fake logit", color="#457b9d")
+    ax.bar(x + width / 2, recon_means, width, label="STFT recon", color="#e76f51")
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=35, ha="right")
+    ax.set_title(title)
+    ax.legend(loc="best")
+    ax.axhline(0.0, color="0.4", linewidth=0.8, linestyle="--")
+    fig.tight_layout()
+    return fig
+
+
 def figure_to_rgb_array(fig: plt.Figure) -> np.ndarray:
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=120, bbox_inches="tight")
@@ -130,7 +169,7 @@ def recon_with_warp(
     """Single-item recon [C, T] through canonicalizer training path."""
     x_b = x.unsqueeze(0)
     attr_b = attr_raw.unsqueeze(0)
-    _, _, _, y_raw, _, _, _ = trainer_module._forward_recon(x_b, attr_b)
+    _, _, _, y_raw, _, _, _, _ = trainer_module._forward_recon(x_b, attr_b)
     return y_raw[0]
 
 

@@ -182,7 +182,15 @@ def test_domain_y_gan_mismatched_batch_sizes():
     ])
     ood_mask = ~in_mask
     feat_real, feat_fake = CanonicalizerTrainer._disc_features(
-        trainer, y[in_mask], y[ood_mask], detach=True)
+        trainer,
+        y[in_mask],
+        y[ood_mask],
+        None,
+        None,
+        None,
+        None,
+        detach=True,
+    )
     loss_d = CanonicalizerTrainer._audio_gan_d(trainer, feat_real, feat_fake)
     assert loss_d.ndim == 0
     loss_d.backward()

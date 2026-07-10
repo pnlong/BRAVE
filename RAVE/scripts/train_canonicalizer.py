@@ -17,6 +17,7 @@ import json
 from pathlib import Path
 
 import gin
+import numpy as np
 import pytorch_lightning as pl
 import torch
 import rave
@@ -40,6 +41,8 @@ from rave.canonicalizer.dataset import (
     ddp_batches_per_rank,
     make_ir_augment,
 )
+from rave.canonicalizer.attribute_marginals import build_ood_discrete_marginals
+from rave.fader.attributes import load_attribute_stats
 from rave.canonicalizer.latent_canonicalizer import LatentCanonicalizer
 from rave.canonicalizer.gin_setup import (
     build_in_domain_discriminator,
@@ -236,16 +239,24 @@ def main():
 
     configure_canonicalizer_gin(canon_cfg, n_channels, overrides=args.override)
 
+    warp_kwargs: dict = {}
+    if profile.is_fader and getattr(model, "num_attributes", 0) > 0:
+        warp_kwargs = {
+            "num_attributes": model.num_attributes,
+            "num_classes_per_attribute": model.num_classes_per_attribute,
+        }
+
     if args.canonicalizer_type == "waveform":
         from rave.canonicalizer.waveform_canonicalizer import build_waveform_canonicalizer
 
         warp = build_waveform_canonicalizer(
             sample_rate=model.sr,
             n_channels=n_channels,
+            **warp_kwargs,
         )
         ckpt_name = "waveform_canonicalizer.ckpt"
     else:
-        warp = LatentCanonicalizer(latent_size=model.latent_size)
+        warp = LatentCanonicalizer(latent_size=model.latent_size, **warp_kwargs)
         ckpt_name = "latent_canonicalizer.ckpt"
 
     gin_snapshot = gin.config_str()
@@ -257,12 +268,37 @@ def main():
     with open(out_dir / "config.gin", "w") as config_out:
         config_out.write(gin_snapshot)
 
-    in_domain_disc = build_in_domain_discriminator(n_channels)
+    disc_kwargs: dict = {}
+    if profile.is_fader and getattr(model, "num_attributes", 0) > 0:
+        disc_kwargs = {
+            "num_attributes": model.num_attributes,
+            "num_classes_per_attribute": model.num_classes_per_attribute,
+        }
+    in_domain_disc = build_in_domain_discriminator(n_channels, **disc_kwargs)
+
+    discrete_class_labels: dict = {}
+    stratify_attr = ""
+    stratify_n_classes = 0
+    if profile.is_fader and getattr(model, "num_attributes", 0) > 0:
+        if profile.stats_path is not None:
+            stats = load_attribute_stats(profile.stats_path)
+            discrete_class_labels = dict(
+                stats.get("discrete_class_labels") or {})
+        stratify_attr = (
+            profile.discrete_attributes[0]
+            if profile.discrete_attributes
+            else ""
+        )
+        if stratify_attr:
+            stratify_n_classes = int(
+                getattr(model, "discrete_num_classes", {}).get(stratify_attr, 0))
+
     trainer_module = CanonicalizerTrainer(
         backbone=model,
         warp=warp,
         canonicalizer_type=args.canonicalizer_type,
         in_domain_disc=in_domain_disc,
+        discrete_class_labels=discrete_class_labels,
     )
     n_disc = sum(p.numel() for p in in_domain_disc.parameters())
     print(f"InDomainAudioDiscriminator: {n_disc:,} trainable params")
@@ -286,6 +322,33 @@ def main():
 
     num_workers = 0 if sys.platform == "darwin" else args.workers
 
+    if profile.is_fader and getattr(model, "num_attributes", 0) > 0:
+        marginal_np = build_ood_discrete_marginals(
+            getattr(model, "attribute_names", []),
+            getattr(model, "attribute_kinds", {}),
+            getattr(model, "discrete_num_classes", {}),
+            args.db_path,
+            num_train_indices=len(train_in),
+        )
+        marginals = {
+            name: torch.from_numpy(probs).float()
+            for name, probs in marginal_np.items()
+        }
+        trainer_module.set_ood_discrete_marginals(marginals)
+        if marginal_np:
+            print("OOD discrete marginals (Y train split):")
+            for name, probs in marginal_np.items():
+                print(f"  {name}: {np.round(probs, 4).tolist()}")
+
+    loader_kwargs = {}
+    if profile.is_fader and stratify_attr and stratify_n_classes > 1:
+        loader_kwargs = {
+            "class_stratified_batches": True,
+            "db_path": args.db_path,
+            "stratify_discrete_attr": stratify_attr,
+            "stratify_n_classes": stratify_n_classes,
+        }
+
     loader = build_canonicalizer_dataloader(
         in_domain_dataset=train_in,
         ood_dataset=ood_train,
@@ -293,6 +356,7 @@ def main():
         shuffle=True,
         drop_last=True,
         num_workers=num_workers,
+        **loader_kwargs,
     )
     val_loader = build_canonicalizer_dataloader(
         in_domain_dataset=val_in,
