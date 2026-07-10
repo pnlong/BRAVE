@@ -127,16 +127,6 @@ rave.canonicalizer.trainer.CanonicalizerTrainer:
 
 Set `use_reverb = False` for EQ-only canonicalization (`n_reverb_knobs = 0` in layout).
 
-### Optional IR augmentation on OOD clips
-
-```gin
-rave.canonicalizer.dataset.make_ir_augment:
-    ir_path = "/path/to/irs"
-    ir_prob = 0.3
-```
-
-Or pass `--ir_path` / `--ir_prob` to `train_canonicalizer.py`.
-
 ## Realtime export and knob EMA
 
 TorchScript / nn~ export calls `waveform_canonicalizer(x)` **once per streaming block**. With per-input knobs, estimates can change block-to-block and cause audible modulation.

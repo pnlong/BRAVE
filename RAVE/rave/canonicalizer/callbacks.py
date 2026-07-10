@@ -92,6 +92,16 @@ class CanonicalizerGanRampCallback(pl.Callback):
         )
         pl_module.gan_factor = factor
         pl_module.warmed_up = factor >= 1.0
+        if pl_module.spread_active:
+            pl_module.spread_factor = compute_gan_ramp_factor(
+                trainer.global_step,
+                delay=int(pl_module.spread_warmup),
+                ramp_duration=int(pl_module.spread_ramp_duration),
+            )
+            pl_module.spread_warmed_up = pl_module.spread_factor >= 1.0
+        else:
+            pl_module.spread_factor = 0.0
+            pl_module.spread_warmed_up = False
 
 
 @gin.configurable

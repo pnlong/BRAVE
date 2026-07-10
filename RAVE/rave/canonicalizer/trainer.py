@@ -24,8 +24,12 @@ from .in_domain_discriminator import InDomainAudioDiscriminator
 from .losses import (
     empirical_adversarial_loss_scale,
     empirical_loss_scale,
+    latent_ood_in_var_ratio,
+    latent_per_channel_std,
+    latent_per_channel_variance,
     normalize_loss,
     resolve_gan_loss,
+    resolve_latent_spread_loss,
     rms_recon_l1,
     weighted_recon_loss,
 )
@@ -74,13 +78,15 @@ class CanonicalizerTrainer(pl.LightningModule):
         ood_discrete_sampling: str = "marginal",
         ood_discrete_marginals: Optional[Dict[str, torch.Tensor]] = None,
         discrete_class_labels: Optional[Dict[str, List[str]]] = None,
-        # Deprecated aliases (ignored)
+        lambda_latent_spread: float = 0.25,
+        latent_noise_std_fraction: float = 0.10,
+        latent_spread_mode: str = "var_match",
+        latent_spread_scale: float = 1.0,
+        latent_spread_use_ema_ref: bool = True,
+        latent_spread_ema_decay: float = 0.99,
+        spread_phase_1_duration: Optional[int] = None,
+        spread_ramp_duration: Optional[int] = None,
         fader: Optional[nn.Module] = None,
-        domain_profile=None,
-        latent_domain_disc=None,
-        lambda_identity: float = 0.0,
-        lambda_descriptor: float = 0.0,
-        lambda_latent_adv: float = 0.0,
     ) -> None:
         super().__init__()
         if canonicalizer_type not in ("waveform", "latent"):
@@ -130,6 +136,32 @@ class CanonicalizerTrainer(pl.LightningModule):
         self.ood_discrete_sampling = ood_discrete_sampling
         self.ood_discrete_marginals = ood_discrete_marginals or {}
         self.discrete_class_labels = discrete_class_labels or {}
+        self.lambda_latent_spread = lambda_latent_spread
+        self.latent_noise_std_fraction = latent_noise_std_fraction
+        if latent_spread_mode not in ("var_match", "var_floor"):
+            raise ValueError("latent_spread_mode must be var_match or var_floor")
+        self.latent_spread_mode = latent_spread_mode
+        self.latent_spread_fn = resolve_latent_spread_loss(latent_spread_mode)
+        self.latent_spread_scale = latent_spread_scale
+        self.latent_spread_use_ema_ref = latent_spread_use_ema_ref
+        self.latent_spread_ema_decay = latent_spread_ema_decay
+        self.spread_warmup = (
+            spread_phase_1_duration
+            if spread_phase_1_duration is not None
+            else phase_1_duration
+        )
+        self.spread_ramp_duration = (
+            spread_ramp_duration
+            if spread_ramp_duration is not None
+            else gan_ramp_duration
+        )
+        self.spread_factor = 0.0
+        self.spread_warmed_up = False
+        self.latent_in_std_mean = 1.0
+        self.latent_var_ref: Optional[torch.Tensor] = None
+        self.spread_active = (
+            self.lambda_latent_spread > 0.0 or self.latent_noise_std_fraction > 0.0
+        )
 
         for p in self.backbone.parameters():
             p.requires_grad = False
@@ -271,7 +303,10 @@ class CanonicalizerTrainer(pl.LightningModule):
         self,
         x_raw: torch.Tensor,
         attr_raw: Optional[torch.Tensor],
+        *,
+        ood_mask: Optional[torch.Tensor] = None,
     ) -> tuple[
+        torch.Tensor,
         torch.Tensor,
         torch.Tensor,
         torch.Tensor,
@@ -285,15 +320,32 @@ class CanonicalizerTrainer(pl.LightningModule):
         attr_norm, attr_cls = prepare_batch_attributes(self.backbone, attr_raw)
         attr = attr_norm
 
+        z_enc, x_multiband = self._encode_latent(x_raw)
+
         if self.canonicalizer_type == "waveform":
             x_enc_in = self._apply_waveform_warp(x_raw, attr_cls)
-            z, x_multiband = self._encode_latent(x_enc_in)
+            z, _ = self._encode_latent(x_enc_in)
             x_compare = x_raw
         else:
             x_enc_in = x_raw
-            z, x_multiband = self._encode_latent(x_raw)
-            z = self._apply_latent_warp(z, attr_cls)
+            z = self._apply_latent_warp(z_enc, attr_cls)
             x_compare = x_raw
+
+        if (
+            self.training
+            and self.spread_factor > 0.0
+            and self.latent_noise_std_fraction > 0.0
+            and ood_mask is not None
+            and ood_mask.any()
+        ):
+            noise_std = (
+                self.spread_factor
+                * self.latent_noise_std_fraction
+                * self.latent_in_std_mean
+            )
+            if noise_std > 0.0:
+                z = z.clone()
+                z[ood_mask] = z[ood_mask] + torch.randn_like(z[ood_mask]) * noise_std
 
         z_cond = torch.cat([z, attr], dim=1) if attr is not None else z
         y_multiband = self.backbone.decoder(z_cond)
@@ -308,7 +360,17 @@ class CanonicalizerTrainer(pl.LightningModule):
         y_raw = y_raw[..., :t]
         x_multiband = x_multiband[..., :x_multiband.shape[-1]]
         y_multiband = y_multiband[..., :x_multiband.shape[-1]]
-        return z, x_compare, x_multiband, y_raw, y_multiband, x_enc_in, attr_norm, attr_cls
+        return (
+            z,
+            z_enc,
+            x_compare,
+            x_multiband,
+            y_raw,
+            y_multiband,
+            x_enc_in,
+            attr_norm,
+            attr_cls,
+        )
 
     def _apply_waveform_warp(
         self,
@@ -490,6 +552,83 @@ class CanonicalizerTrainer(pl.LightningModule):
             or self.recon_in_domain_mode in ("rms", "both")
         )
 
+    def _update_latent_var_ref(self, z_enc: torch.Tensor, in_mask: torch.Tensor) -> None:
+        if not self.spread_active or not in_mask.any():
+            return
+        batch_var = latent_per_channel_variance(z_enc[in_mask])
+        if self.latent_var_ref is None or not self.latent_spread_use_ema_ref:
+            self.latent_var_ref = batch_var.detach()
+            return
+        decay = self.latent_spread_ema_decay
+        self.latent_var_ref = (
+            decay * self.latent_var_ref + (1.0 - decay) * batch_var.detach()
+        )
+
+    def _latent_spread_loss(
+        self,
+        z: torch.Tensor,
+        z_enc: torch.Tensor,
+        in_mask: torch.Tensor,
+        ood_mask: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        zero = torch.tensor(0.0, device=z.device)
+        if (
+            self.lambda_latent_spread <= 0.0
+            or not ood_mask.any()
+            or not in_mask.any()
+        ):
+            return zero, zero, zero
+
+        if self.latent_var_ref is None:
+            self._update_latent_var_ref(z_enc, in_mask)
+        if self.latent_var_ref is None:
+            return zero, zero, zero
+
+        loss_spread = self.latent_spread_fn(z[ood_mask], self.latent_var_ref)
+        var_ratio = latent_ood_in_var_ratio(z[ood_mask], self.latent_var_ref)
+        loss_spread_norm = normalize_loss(loss_spread, self.latent_spread_scale)
+        return loss_spread, loss_spread_norm, var_ratio
+
+    @torch.no_grad()
+    def _calibrate_latent_stats(
+        self,
+        dataloader: Iterable,
+        max_batches: int,
+    ) -> Dict[str, float]:
+        """Measure in-domain latent std and optional spread loss scale at init."""
+        std_values: List[float] = []
+        spread_values: List[float] = []
+
+        for batch_idx, batch in enumerate(dataloader):
+            if batch_idx >= max_batches:
+                break
+            x_raw, attr_raw, domain = self._parse_batch(batch)
+            x_raw = x_raw.to(self.device)
+            if attr_raw is not None:
+                attr_raw = attr_raw.to(self.device)
+            in_mask, ood_mask = self._domain_masks(domain)
+            if attr_raw is not None and backbone_num_attributes(self.backbone) > 0:
+                attr_raw = self._assign_ood_attrs(attr_raw, ood_mask)
+
+            z, z_enc, _, _, _, _, _, _, _ = self._forward_recon(x_raw, attr_raw)
+            if in_mask.any():
+                std_values.append(
+                    float(latent_per_channel_std(z_enc[in_mask]).mean().cpu()))
+            if (
+                self.lambda_latent_spread > 0.0
+                and in_mask.any()
+                and ood_mask.any()
+            ):
+                v_ref = latent_per_channel_variance(z_enc[in_mask])
+                spread_values.append(
+                    float(self.latent_spread_fn(z[ood_mask], v_ref).cpu()))
+
+        stats: Dict[str, float] = {}
+        if std_values:
+            self.latent_in_std_mean = sum(std_values) / len(std_values)
+            stats["latent_in_std_mean"] = self.latent_in_std_mean
+        return stats
+
     @torch.no_grad()
     def _batch_raw_losses(
         self,
@@ -512,7 +651,7 @@ class CanonicalizerTrainer(pl.LightningModule):
         if attr_raw is not None and backbone_num_attributes(self.backbone) > 0:
             attr_raw = self._assign_ood_attrs(attr_raw, ood_mask)
 
-        z, x_cmp, x_mb, y_raw, y_mb, _, attr_norm, attr_cls = self._forward_recon(
+        z, z_enc, x_cmp, x_mb, y_raw, y_mb, _, attr_norm, attr_cls = self._forward_recon(
             x_raw, attr_raw)
         stft_in, rms_in = self._recon_loss_for_mask(
             in_mask, x_mb, y_mb, x_cmp, y_raw, z, self.recon_in_domain_mode)
@@ -524,6 +663,7 @@ class CanonicalizerTrainer(pl.LightningModule):
             "rms": None,
             "gan": None,
             "fm": None,
+            "spread": None,
         }
         if self._uses_stft_recon():
             out["stft"] = float((stft_in + stft_ood).detach().cpu())
@@ -551,6 +691,15 @@ class CanonicalizerTrainer(pl.LightningModule):
             loss_fm = self._feature_matching_loss(feat_real, feat_fake)
             out["gan"] = float(loss_gan.detach().cpu())
             out["fm"] = float(loss_fm.detach().cpu())
+
+        if (
+            self.lambda_latent_spread > 0.0
+            and in_mask.any()
+            and ood_mask.any()
+        ):
+            v_ref = latent_per_channel_variance(z_enc[in_mask])
+            out["spread"] = float(
+                self.latent_spread_fn(z[ood_mask], v_ref).detach().cpu())
         return out
 
     @torch.no_grad()
@@ -577,6 +726,7 @@ class CanonicalizerTrainer(pl.LightningModule):
             "rms": [],
             "gan": [],
             "fm": [],
+            "spread": [],
         }
         for batch_idx, batch in enumerate(dataloader):
             if batch_idx >= max_batches:
@@ -591,6 +741,8 @@ class CanonicalizerTrainer(pl.LightningModule):
             "rms_loss_scale": self.rms_loss_scale,
             "gan_loss_scale": self.gan_loss_scale,
             "fm_loss_scale": self.fm_loss_scale,
+            "latent_spread_scale": self.latent_spread_scale,
+            "latent_in_std_mean": self.latent_in_std_mean,
         }
         if buckets["stft"]:
             scales["stft_loss_scale"] = empirical_loss_scale(
@@ -614,6 +766,14 @@ class CanonicalizerTrainer(pl.LightningModule):
                 self.loss_scale_min,
             )
             self.fm_loss_scale = scales["fm_loss_scale"]
+        if buckets["spread"]:
+            scales["latent_spread_scale"] = empirical_loss_scale(
+                buckets["spread"], self.loss_scale_min)
+            self.latent_spread_scale = scales["latent_spread_scale"]
+
+        if self.spread_active:
+            latent_stats = self._calibrate_latent_stats(dataloader, max_batches)
+            scales.update(latent_stats)
 
         self.loss_scales_calibrated = True
         return scales
@@ -634,6 +794,9 @@ class CanonicalizerTrainer(pl.LightningModule):
         loss_fm_norm: torch.Tensor,
         batch_size: int,
         log_audio_disc: bool = False,
+        loss_spread: Optional[torch.Tensor] = None,
+        loss_spread_norm: Optional[torch.Tensor] = None,
+        latent_var_ratio: Optional[torch.Tensor] = None,
     ) -> None:
         # Normalized terms (~1 at calibration) — use these when comparing λ weights.
         self.log("canon/loss", loss, prog_bar=True, batch_size=batch_size)
@@ -651,6 +814,34 @@ class CanonicalizerTrainer(pl.LightningModule):
             self.log("canon/audio_disc", loss_d, batch_size=batch_size)
         self.log("canon/gan_factor", float(self.gan_factor), batch_size=batch_size)
         self.log("canon/warmed_up", float(self.warmed_up), batch_size=batch_size)
+        if self.spread_active:
+            self.log("canon/spread_factor", float(self.spread_factor), batch_size=batch_size)
+            self.log(
+                "canon/spread_warmed_up",
+                float(self.spread_warmed_up),
+                batch_size=batch_size,
+            )
+            noise_std = (
+                self.spread_factor
+                * self.latent_noise_std_fraction
+                * self.latent_in_std_mean
+            )
+            self.log("canon/latent_noise_std_effective", noise_std, batch_size=batch_size)
+            self.log(
+                "canon/latent_in_std_mean",
+                float(self.latent_in_std_mean),
+                batch_size=batch_size,
+            )
+            if loss_spread is not None:
+                self.log("canon/latent_spread_raw", loss_spread, batch_size=batch_size)
+            if loss_spread_norm is not None:
+                self.log("canon/latent_spread_norm", loss_spread_norm, batch_size=batch_size)
+            if latent_var_ratio is not None:
+                self.log(
+                    "canon/latent_ood_in_var_ratio",
+                    latent_var_ratio,
+                    batch_size=batch_size,
+                )
 
     def training_step(self, batch, batch_idx):
         warp_opt, disc_opt = self._optimizers()
@@ -668,8 +859,10 @@ class CanonicalizerTrainer(pl.LightningModule):
         if attr_raw is not None and backbone_num_attributes(self.backbone) > 0:
             attr_raw = self._assign_ood_attrs(attr_raw, ood_mask)
 
-        z, x_cmp, x_mb, y_raw, y_mb, _, attr_norm, attr_cls = self._forward_recon(
-            x_raw, attr_raw)
+        z, z_enc, x_cmp, x_mb, y_raw, y_mb, _, attr_norm, attr_cls = self._forward_recon(
+            x_raw, attr_raw, ood_mask=ood_mask)
+
+        self._update_latent_var_ref(z_enc, in_mask)
 
         stft_in, rms_in = self._recon_loss_for_mask(
             in_mask, x_mb, y_mb, x_cmp, y_raw, z, self.recon_in_domain_mode)
@@ -687,6 +880,9 @@ class CanonicalizerTrainer(pl.LightningModule):
         loss_fm = zero
         loss_gan_norm = zero
         loss_fm_norm = zero
+        loss_spread = zero
+        loss_spread_norm = zero
+        latent_var_ratio = zero
 
         has_mixed = in_mask.any() and ood_mask.any()
         gan_active = (
@@ -750,10 +946,15 @@ class CanonicalizerTrainer(pl.LightningModule):
             loss_gan_norm = normalize_loss(loss_gan, self.gan_loss_scale)
             loss_fm_norm = normalize_loss(loss_fm, self.fm_loss_scale)
 
+        if self.spread_factor > 0.0:
+            loss_spread, loss_spread_norm, latent_var_ratio = self._latent_spread_loss(
+                z, z_enc, in_mask, ood_mask)
+
         loss = (
             self.lambda_rec * loss_recon
             + self.gan_factor * self.lambda_gan * loss_gan_norm
             + self.gan_factor * self.lambda_feature_matching * loss_fm_norm
+            + self.spread_factor * self.lambda_latent_spread * loss_spread_norm
         )
 
         warp_opt.zero_grad()
@@ -774,6 +975,9 @@ class CanonicalizerTrainer(pl.LightningModule):
             loss_fm=loss_fm,
             loss_fm_norm=loss_fm_norm,
             batch_size=batch_size,
+            loss_spread=loss_spread,
+            loss_spread_norm=loss_spread_norm,
+            latent_var_ratio=latent_var_ratio,
         )
         return loss
 
@@ -791,7 +995,7 @@ class CanonicalizerTrainer(pl.LightningModule):
             attr_raw = self._assign_ood_attrs(attr_raw, ood_mask)
 
         with torch.no_grad():
-            z, x_cmp, x_mb, y_raw, y_mb, x_enc_in, attr_norm, attr_cls = (
+            z, _z_enc, x_cmp, x_mb, y_raw, y_mb, x_enc_in, attr_norm, attr_cls = (
                 self._forward_recon(x_raw, attr_raw))
 
             if in_mask.any():

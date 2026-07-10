@@ -30,7 +30,6 @@ import rave.fader.dataset
 import rave.canonicalizer.dataset
 import rave.canonicalizer.trainer
 import rave.canonicalizer.callbacks
-import rave.canonicalizer.ir_augmentation
 import rave.canonicalizer.in_domain_discriminator
 import rave.canonicalizer.waveform_canonicalizer
 import rave.canonicalizer.latent_canonicalizer
@@ -94,7 +93,7 @@ rave.canonicalizer.in_domain_discriminator.InDomainAudioDiscriminator:
 rave.canonicalizer.trainer.CanonicalizerTrainer:
     # Loss scales: calibrated from train data at startup (see loss.md). Values below
     # are fallbacks when calibrate_loss_scales = False.
-    lambda_rec = 2.0
+    lambda_rec = 40.0
     lambda_gan = 1.0
     lambda_feature_matching = 0.5
     recon_stft_weight = 0.9
@@ -119,6 +118,11 @@ rave.canonicalizer.trainer.CanonicalizerTrainer:
     encoder_lr = 1e-5
     in_domain_disc = @rave.canonicalizer.in_domain_discriminator.InDomainAudioDiscriminator
     ood_discrete_sampling = "marginal"
+    # Latent spread (on by default; set lambda_latent_spread = 0.0 to disable)
+    lambda_latent_spread = 0.25
+    latent_noise_std_fraction = 0.10
+    latent_spread_mode = "var_match"
+    latent_spread_scale = 1.0
 
 rave.canonicalizer.dataset.build_canonicalizer_dataloader:
     in_domain_fraction = 0.5
@@ -127,12 +131,6 @@ rave.canonicalizer.dataset.build_canonicalizer_dataloader:
 
 rave.canonicalizer.dataset.build_canonicalizer_dataset:
     in_domain_fraction = 0.5
-
-rave.canonicalizer.dataset.make_ir_augment:
-    ir_path = ""
-    ir_prob = 0.0
-    ir_wet_min = 0.15
-    ir_wet_max = 0.55
 
 rave.canonicalizer.callbacks.CanonicalizerValVizCallback:
     num_audio_samples = 8

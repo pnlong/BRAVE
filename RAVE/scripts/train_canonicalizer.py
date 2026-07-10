@@ -39,7 +39,6 @@ from rave.canonicalizer.dataset import (
     canonicalizer_collate,
     ddp_aligned_num_batches,
     ddp_batches_per_rank,
-    make_ir_augment,
 )
 from rave.canonicalizer.attribute_marginals import build_ood_discrete_marginals
 from rave.fader.attributes import load_attribute_stats
@@ -60,7 +59,6 @@ from rave.fader.model import FaderRAVE
 # Ensure brave_canonicalizer.gin configurables are registered before parse.
 import rave.canonicalizer.callbacks  # noqa: F401
 import rave.canonicalizer.in_domain_discriminator  # noqa: F401
-import rave.canonicalizer.ir_augmentation  # noqa: F401
 import rave.canonicalizer.trainer  # noqa: F401
 import rave.canonicalizer.waveform_canonicalizer  # noqa: F401
 import rave.canonicalizer.latent_canonicalizer  # noqa: F401
@@ -102,9 +100,6 @@ def parse_args():
     p.add_argument("--log_every_n_steps", type=int, default=None)
     p.add_argument("--calibration_batches", type=int, default=None)
     p.add_argument("--no_calibrate_scales", action="store_true")
-    p.add_argument("--ir_path", default=None)
-    p.add_argument("--ir_prob", type=float, default=None)
-    p.add_argument("--no_ir", action="store_true")
     return p.parse_args()
 
 
@@ -155,7 +150,6 @@ def _load_ood_pair(
     n_signal: int,
     n_channels: int,
     is_fader: bool,
-    ir_aug,
     split_percent: int = 98,
 ):
     if is_fader:
@@ -167,36 +161,17 @@ def _load_ood_pair(
             is_fader=True,
         )
         return (
-            OodFaderDataset(train_wrapped._fader, ir_augment=ir_aug),
-            OodFaderDataset(val_wrapped._fader, ir_augment=None),
+            OodFaderDataset(train_wrapped._fader),
+            OodFaderDataset(val_wrapped._fader),
         )
 
     ds = rave.dataset.get_dataset(db_path, sr, n_signal, n_channels=n_channels)
     train_base, val_base = rave.dataset.split_dataset(ds, split_percent)
     train_base = rave.dataset.maybe_reject_silent(train_base)
     return (
-        OodAudioDataset(train_base, ir_augment=ir_aug),
-        OodAudioDataset(val_base, ir_augment=None),
+        OodAudioDataset(train_base),
+        OodAudioDataset(val_base),
     )
-
-
-def _resolve_ir_augment(args, sr: int) -> object | None:
-    ir_kwargs: dict = {}
-    if args.no_ir:
-        ir_kwargs["ir_prob"] = 0.0
-    else:
-        if args.ir_path is not None:
-            ir_kwargs["ir_path"] = args.ir_path
-            if args.ir_prob is None:
-                ir_kwargs["ir_prob"] = 0.5
-        if args.ir_prob is not None:
-            ir_kwargs["ir_prob"] = args.ir_prob
-
-    ir_aug = make_ir_augment(sampling_rate=sr, **ir_kwargs)
-    if ir_aug is not None:
-        ir_src = ir_kwargs.get("ir_path") or "(synthetic fallback)"
-        print(f"OOD IR augmentation: prob={ir_kwargs['ir_prob']} path={ir_src}")
-    return ir_aug
 
 
 def main():
@@ -310,14 +285,12 @@ def main():
         n_channels=n_channels,
         is_fader=profile.is_fader,
     )
-    ir_aug = _resolve_ir_augment(args, model.sr)
     ood_train, ood_val = _load_ood_pair(
         args.ood_db_path,
         sr=model.sr,
         n_signal=args.n_signal,
         n_channels=n_channels,
         is_fader=profile.is_fader,
-        ir_aug=ir_aug,
     )
 
     num_workers = 0 if sys.platform == "darwin" else args.workers
@@ -432,6 +405,8 @@ def main():
             "rms_loss_scale": trainer_module.rms_loss_scale,
             "gan_loss_scale": trainer_module.gan_loss_scale,
             "fm_loss_scale": trainer_module.fm_loss_scale,
+            "latent_spread_scale": trainer_module.latent_spread_scale,
+            "latent_in_std_mean": trainer_module.latent_in_std_mean,
         })
     if args.wandb_entity:
         wandb_kwargs["entity"] = args.wandb_entity

@@ -18,7 +18,6 @@ from rave.canonicalizer.dataset import (
     stratified_domain_counts,
 )
 from rave.fader.dataset import FaderAttributeDataset
-from rave.canonicalizer.ir_augmentation import ImpulseResponseAug, synthetic_room_ir
 
 
 class _MockAudioDataset(torch.utils.data.Dataset):
@@ -53,21 +52,6 @@ def test_ood_fader_dataset_loads():
     assert domain == DOMAIN_OOD
     assert audio.shape[-1] == 4096
     assert attr.shape == (2, 32)
-
-
-def test_ood_fader_dataset_ir_augment():
-    ir_aug = ImpulseResponseAug(
-        ir_path=None,
-        sampling_rate=44100,
-        prob=1.0,
-        use_synthetic_fallback=True,
-    )
-    base = _make_fader_dataset()
-    dry = base[0][0].numpy()
-    ds = OodFaderDataset(base, ir_augment=ir_aug)
-    wet, _, domain = ds[0]
-    assert domain == DOMAIN_OOD
-    assert not np.allclose(wet.numpy(), dry)
 
 
 def test_stratified_domain_counts_half_split():

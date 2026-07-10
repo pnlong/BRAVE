@@ -96,6 +96,67 @@ def empirical_loss_scale(values: list[float], min_scale: float = 1e-3) -> float:
     return max(sum(values) / len(values), min_scale)
 
 
+def latent_per_channel_variance(
+    z: torch.Tensor,
+    eps: float = 1e-8,
+) -> torch.Tensor:
+    """Per-channel variance over batch and time: (B, C, T) -> (C,)."""
+    return z.var(dim=(0, 2), unbiased=False).clamp_min(eps)
+
+
+def latent_per_channel_std(
+    z: torch.Tensor,
+    eps: float = 1e-8,
+) -> torch.Tensor:
+    """Per-channel std over batch and time: (B, C, T) -> (C,)."""
+    return latent_per_channel_variance(z, eps).sqrt()
+
+
+def latent_var_match_loss(
+    z_ood: torch.Tensor,
+    v_ref: torch.Tensor,
+    eps: float = 1e-8,
+) -> torch.Tensor:
+    """Log-variance match of OOD latents to a reference per-channel variance."""
+    var_ood = latent_per_channel_variance(z_ood, eps)
+    ref = v_ref.detach().clamp_min(eps)
+    return torch.mean(torch.abs(torch.log(var_ood) - torch.log(ref)))
+
+
+def latent_var_floor_loss(
+    z_ood: torch.Tensor,
+    v_ref: torch.Tensor,
+    eps: float = 1e-8,
+) -> torch.Tensor:
+    """Penalize OOD variance falling below in-domain reference."""
+    var_ood = latent_per_channel_variance(z_ood, eps)
+    ref = v_ref.detach().clamp_min(eps)
+    return torch.mean(torch.relu(torch.log(ref) - torch.log(var_ood)))
+
+
+def latent_ood_in_var_ratio(
+    z_ood: torch.Tensor,
+    v_ref: torch.Tensor,
+    eps: float = 1e-8,
+) -> torch.Tensor:
+    """Scalar mean per-channel Var_ood / Var_ref (target ~1 under var_match)."""
+    var_ood = latent_per_channel_variance(z_ood, eps)
+    ref = v_ref.detach().clamp_min(eps)
+    return torch.mean(var_ood / ref)
+
+
+def resolve_latent_spread_loss(mode: str):
+    """Map gin string to spread loss callable (z_ood, v_ref) -> scalar."""
+    table = {
+        "var_match": latent_var_match_loss,
+        "var_floor": latent_var_floor_loss,
+    }
+    if mode not in table:
+        raise ValueError(
+            f"unknown latent_spread_mode: {mode!r}; choose from {list(table)}")
+    return table[mode]
+
+
 def empirical_adversarial_loss_scale(
     values: list[float],
     fallback: float,

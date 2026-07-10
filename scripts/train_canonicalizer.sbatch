@@ -36,8 +36,6 @@ N_SIGNAL="${N_SIGNAL:-131072}"
 MAX_STEPS="${MAX_STEPS:-100000}"
 VAL_EVERY="${VAL_EVERY:-500}"
 WANDB_PROJECT="${WANDB_PROJECT:-brave}"
-IR_PATH="${IR_PATH:-}"
-IR_PROB="${IR_PROB:-}"
 
 mkdir -p logs "${OUT_PATH}"
 
@@ -80,15 +78,6 @@ CANON_ARGS=(
   "${GPU_TRAIN_ARGS[@]}"
 )
 
-if [[ -n "${IR_PATH}" ]]; then
-  CANON_ARGS+=(--ir_path="${IR_PATH}")
-fi
-if [[ -n "${IR_PROB}" ]]; then
-  CANON_ARGS+=(--ir_prob="${IR_PROB}")
-fi
-if [[ "${NO_IR:-0}" == "1" ]]; then
-  CANON_ARGS+=(--no_ir)
-fi
 if [[ "${SMOKE_TEST:-0}" == "1" ]]; then
   CANON_ARGS+=(--smoke_test)
 fi

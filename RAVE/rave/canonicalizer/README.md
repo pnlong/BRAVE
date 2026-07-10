@@ -26,12 +26,11 @@ Loss derivation, metric scales, and tuning: [`docs/canonicalizer/loss.md`](../..
 | [`in_domain_discriminator.py`](in_domain_discriminator.py) | `InDomainAudioDiscriminator` — multi-scale audio GAN (real in-domain vs OOD fake) |
 | [`trainer.py`](trainer.py) | `CanonicalizerTrainer` — Lightning Stage-1 loop |
 | [`losses.py`](losses.py) | RMS recon helpers, GAN loss resolver |
-| [`dataset.py`](dataset.py) | Mixed in-domain / OOD datasets, IR aug, collate |
+| [`dataset.py`](dataset.py) | Mixed in-domain / OOD datasets, collate |
 | [`config.py`](config.py) | `TrainingProfile`, manifest, checkpoint save/load |
 | [`backbone.py`](backbone.py) | Attach warp weights to `RAVE` or `FaderRAVE` |
 | [`callbacks.py`](callbacks.py) | Validation PCA/t-SNE + W&B audio |
 | [`viz.py`](viz.py) | Scatter plots and audio triplet helpers |
-| [`ir_augmentation.py`](ir_augmentation.py) | Optional room IR on OOD clips |
 | [`export/`](export/) | Ckpt resolve + attach for nn~ / TorchScript export |
 
 ## Warp modules
@@ -66,7 +65,8 @@ See [`docs/canonicalizer/loss.md`](../../../docs/canonicalizer/loss.md) for the 
 WandB metrics, and tuning (`lambda_rec`, STFT scale, warmup).
 
 ```
-L_total = λ_gan · L_GAN + λ_rec · L_rec + λ_fm · L_feature_matching
+L_total = λ_rec · L_recon + gan_factor · (λ_gan · L̃_gan + λ_fm · L̃_fm)
+        + spread_factor · λ_spread · L̃_spread
 ```
 
 Two optimizers: warp (+ optional unfrozen encoder) vs `InDomainAudioDiscriminator`.

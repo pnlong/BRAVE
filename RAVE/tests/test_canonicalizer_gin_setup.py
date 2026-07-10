@@ -10,7 +10,6 @@ import torch
 import rave
 import rave.canonicalizer.callbacks  # noqa: F401
 import rave.canonicalizer.in_domain_discriminator  # noqa: F401
-import rave.canonicalizer.ir_augmentation  # noqa: F401
 import rave.canonicalizer.trainer  # noqa: F401
 import rave.canonicalizer.waveform_canonicalizer  # noqa: F401
 import rave.canonicalizer.latent_canonicalizer  # noqa: F401

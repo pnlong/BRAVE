@@ -14,26 +14,22 @@ from torch.utils.data import Sampler
 
 from ..fader.dataset import FaderAttributeDataset
 from .attribute_marginals import build_in_domain_class_pools
-from .ir_augmentation import ImpulseResponseAug
 
 DOMAIN_IN = "in_domain"
 DOMAIN_OOD = "ood"
 
 
 class OodAudioDataset(data.Dataset):
-    """OOD audio corpus with optional IR augmentation (plain or Fader-backed)."""
+    """OOD audio corpus (plain or Fader-backed)."""
 
     def __init__(
         self,
         base_dataset: data.Dataset,
-        ir_augment: Optional[ImpulseResponseAug] = None,
         *,
         fader_dataset: Optional[FaderAttributeDataset] = None,
     ) -> None:
         self._base = base_dataset
         self._fader = fader_dataset
-        self._ir_augment = ir_augment if (
-            ir_augment is not None and ir_augment.enabled) else None
 
     def __len__(self) -> int:
         return len(self._base)
@@ -50,8 +46,6 @@ class OodAudioDataset(data.Dataset):
         index: int,
     ) -> tuple[torch.Tensor, Optional[torch.Tensor], str]:
         audio_np = self._audio_at(index)
-        if self._ir_augment is not None:
-            audio_np = self._ir_augment.maybe_apply(audio_np)
 
         audio = torch.from_numpy(audio_np).float()
         if self._fader is not None:
@@ -67,13 +61,11 @@ class OodFaderDataset(OodAudioDataset):
     def __init__(
         self,
         fader_dataset: FaderAttributeDataset,
-        ir_augment: Optional[ImpulseResponseAug] = None,
     ) -> None:
         if not isinstance(fader_dataset, FaderAttributeDataset):
             raise TypeError("fader_dataset must be FaderAttributeDataset")
         super().__init__(
             fader_dataset,
-            ir_augment=ir_augment,
             fader_dataset=fader_dataset,
         )
 
@@ -538,26 +530,6 @@ class MixedCanonicalizerDataset(data.Dataset):
             return self._in_domain[idx]
         idx = index % len(self._ood)
         return self._ood[idx]
-
-
-@gin.configurable
-def make_ir_augment(
-    sampling_rate: int,
-    ir_path: str = "",
-    ir_prob: float = 0.0,
-    ir_wet_min: float = 0.15,
-    ir_wet_max: float = 0.55,
-) -> Optional[ImpulseResponseAug]:
-    if ir_prob <= 0.0:
-        return None
-    ir_aug = ImpulseResponseAug(
-        ir_path=ir_path or None,
-        sampling_rate=sampling_rate,
-        prob=ir_prob,
-        wet_min=ir_wet_min,
-        wet_max=ir_wet_max,
-    )
-    return ir_aug if ir_aug.enabled else None
 
 
 @gin.configurable

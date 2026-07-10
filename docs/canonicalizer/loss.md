@@ -29,7 +29,9 @@ Raw terms (STFT, RMS, GAN, FM) live on very different scales. Each is divided by
 then combined with explicit λ weights.
 
 ```
-L_total = λ_rec · L_recon + λ_gan · L̃_gan + λ_fm · L̃_fm
+L_total = λ_rec · L_recon
+        + gan_factor · (λ_gan · L̃_gan + λ_fm · L̃_fm)
+        + spread_factor · λ_spread · L̃_spread
 ```
 
 where `L̃_x = L_x / scale_x` (normalized), and:
@@ -150,6 +152,110 @@ Set `gan_ramp_duration = 0` for an immediate step from recon-only to full GAN (h
 - **G step**: `λ_rec · L_recon + gan_factor · (λ_gan · L̃_gan + λ_fm · L̃_fm)`
 - **D step** (every `update_discriminator_every` batches, once `gan_factor > 0`): raw hinge D loss
 
+## Latent spread (enabled by default)
+
+Audio GAN + feature matching are **mode-seeking**: OOD latents tend to collapse into a
+small region of latent space. The spread term counteracts that by matching the **per-channel
+variance** of OOD post-warp latents to in-domain encoder latents, plus optional
+training-only noise on OOD `z`.
+
+**Inference is deterministic** — noise and spread are training-only; export uses the same
+warp without sampling.
+
+### Spread ramp schedule
+
+Uses the same ramp math as GAN (`compute_gan_ramp_factor`). By default,
+`spread_phase_1_duration` and `spread_ramp_duration` copy `phase_1_duration` and
+`gan_ramp_duration`.
+
+| Phase | Steps | `spread_factor` | Training |
+|-------|-------|-----------------|----------|
+| Recon-only | `0 … spread_phase_1_duration−1` | `0` | No spread, no noise |
+| Ramp | linear over `spread_ramp_duration` | `0 → 1` | Spread + noise scaled |
+| Full spread | after ramp completes | `1` | Full `λ_spread` + noise |
+
+Effective spread terms:
+
+```
+λ_spread_eff = spread_factor · λ_spread
+noise_std_eff = spread_factor · latent_noise_std_fraction · latent_in_std_mean
+```
+
+### Spread loss modes
+
+Reference variance `v_ref[c]` is an EMA of in-domain **pre-warp** encoder `z` (per-channel).
+Target is OOD **post-warp** `z`.
+
+**`var_match`** (default):
+
+```
+L_spread = mean_c | log Var(z_ood[:,c,:]) − log v_ref[c] |
+```
+
+**`var_floor`** (anti-collapse safety net):
+
+```
+L_spread = mean_c ReLU( log v_ref[c] − log Var(z_ood[:,c,:]) )
+```
+
+### Training-only noise
+
+When `latent_noise_std_fraction > 0`, Gaussian noise is added to OOD post-warp `z`
+before decode during training only:
+
+```
+ε ~ N(0, noise_std_eff²),   noise_std_eff = spread_factor · fraction · latent_in_std_mean
+```
+
+`latent_in_std_mean` is measured at startup calibration from in-domain encoder latents.
+Tune the **fraction** (e.g. `0.10` = 10% of natural in-domain spread), not an absolute std.
+
+### Gin parameters
+
+| Parameter | Default (`brave_canonicalizer.gin`) | Role |
+|-----------|-----------------------------------|------|
+| `lambda_latent_spread` | `0.25` | Top-level spread weight; **`0.0` disables spread loss** |
+| `latent_noise_std_fraction` | `0.10` | Noise as fraction of `latent_in_std_mean`; **`0.0` disables noise** |
+| `latent_spread_mode` | `"var_match"` | `var_match` or `var_floor` |
+| `latent_spread_scale` | `1.0` | Fallback normalization scale |
+| `latent_spread_use_ema_ref` | `True` | EMA in-domain variance reference |
+| `latent_spread_ema_decay` | `0.99` | EMA decay for `v_ref` |
+| `spread_phase_1_duration` | *(unset → `phase_1_duration`)* | Recon-only steps before spread ramps |
+| `spread_ramp_duration` | *(unset → `gan_ramp_duration`)* | Linear ramp length for `spread_factor` |
+
+Disable spread entirely:
+
+```gin
+lambda_latent_spread = 0.0
+latent_noise_std_fraction = 0.0
+```
+
+Override spread timing independently of GAN:
+
+```gin
+spread_phase_1_duration = 30000
+spread_ramp_duration = 10000
+```
+
+### Calibration
+
+Startup calibration (when spread or noise is active) also measures:
+
+- `latent_in_std_mean` — mean per-channel std of in-domain pre-warp `z`
+- `latent_spread_scale` — mean raw `L_spread` at identity init (when `lambda_latent_spread > 0`)
+
+Saved to `loss_scales.json` alongside STFT/RMS/GAN/FM scales.
+
+### Tuning spread (use metrics, not PCA axis scale)
+
+PCA/t-SNE plots show 2D geometry only. Tune using W&B scalars:
+
+| Metric | Target | Action if off |
+|--------|--------|---------------|
+| `canon/latent_ood_in_var_ratio` | ≈ `1.0` | Raise `lambda_latent_spread` or `latent_noise_std_fraction` if ≪ 1 |
+| `val/recon_ood` | stable | Lower spread weights if recon degrades |
+| `canon/latent_spread_norm` | ~0.5–2.0 | Compare to other normalized terms |
+
 ## WandB / log metrics
 
 **Normalized** (`*_norm`): comparable ~1-scale terms that enter `L_total` (after
@@ -172,6 +278,13 @@ empirical scale division). Use these when tuning λ weights or comparing recon v
 | `canon/audio_disc` | D loss (logged on discriminator steps only) |
 | `canon/gan_factor` | GAN ramp weight in `[0, 1]` (linear ramp after recon-only phase) |
 | `canon/warmed_up` | `1.0` once `gan_factor` reaches `1.0` |
+| `canon/spread_factor` | Spread ramp weight in `[0, 1]` |
+| `canon/spread_warmed_up` | `1.0` once `spread_factor` reaches `1.0` |
+| `canon/latent_spread_norm` | Normalized spread loss / `latent_spread_scale` |
+| `canon/latent_spread_raw` | Raw spread loss |
+| `canon/latent_ood_in_var_ratio` | Mean per-channel Var_ood / Var_in_ref (primary spread dial) |
+| `canon/latent_noise_std_effective` | Effective OOD noise std this step |
+| `canon/latent_in_std_mean` | Calibrated in-domain latent std reference |
 | `val/recon_ood` | Raw STFT recon on OOD validation |
 | `val/rms_ood` | Raw RMS recon on OOD validation |
 | `val/disc_ood` | Mean fake logit on OOD (sanity check D is learning) |
@@ -226,6 +339,22 @@ gan_ramp_duration = 5000
 ```gin
 gan_ramp_duration = 0
 ```
+
+### Disable latent spread
+
+```gin
+lambda_latent_spread = 0.0
+latent_noise_std_fraction = 0.0
+```
+
+### More OOD latent spread
+
+```gin
+lambda_latent_spread = 0.35
+latent_noise_std_fraction = 0.15
+```
+
+Watch `canon/latent_ood_in_var_ratio` → 1.0 and guard with `val/recon_ood`.
 
 ## CycleGAN mapping
 
