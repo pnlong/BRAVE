@@ -33,7 +33,7 @@ OUT_PATH="${OUT_PATH:-${BRAVE_RUNS:-${BRAVE_ROOT}/runs}}"
 BATCH="${BATCH:-4}"
 WORKERS="${WORKERS:-0}"
 N_SIGNAL="${N_SIGNAL:-131072}"
-MAX_STEPS="${MAX_STEPS:-100000}"
+MAX_STEPS="${MAX_STEPS:-}"
 VAL_EVERY="${VAL_EVERY:-500}"
 WANDB_PROJECT="${WANDB_PROJECT:-brave}"
 
@@ -58,6 +58,11 @@ echo "DB_PATH=${DB_PATH}"
 echo "OOD_DB_PATH=${OOD_DB_PATH}"
 echo "CANONICALIZER_TYPE=${CANONICALIZER_TYPE}"
 echo "RUN_NAME=${RUN_NAME}"
+if [[ -n "${MAX_STEPS}" ]]; then
+  echo "MAX_STEPS=${MAX_STEPS} (CLI override)"
+else
+  echo "MAX_STEPS=(from CANON_MAX_STEPS in ${CANONICALIZER_CONFIG})"
+fi
 echo "GPUs: ${GPU_TRAIN_ARGS[*]}"
 
 CANON_ARGS=(
@@ -72,11 +77,14 @@ CANON_ARGS=(
   --batch="${BATCH}"
   --workers="${WORKERS}"
   --n_signal="${N_SIGNAL}"
-  --max_steps="${MAX_STEPS}"
   --val_every="${VAL_EVERY}"
   --wandb_project="${WANDB_PROJECT}"
   "${GPU_TRAIN_ARGS[@]}"
 )
+
+if [[ -n "${MAX_STEPS}" ]]; then
+  CANON_ARGS+=(--max_steps="${MAX_STEPS}")
+fi
 
 if [[ "${SMOKE_TEST:-0}" == "1" ]]; then
   CANON_ARGS+=(--smoke_test)

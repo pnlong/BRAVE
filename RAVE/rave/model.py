@@ -24,6 +24,26 @@ _default_loss_weights = {
     'feature_matching' : 20,
 }
 
+
+def _zero_cached_conv_state(module: nn.Module) -> None:
+    """Clear causal conv ring buffers before a fresh generator forward."""
+    for m in module.modules():
+        pad = getattr(m, "pad", None)
+        if isinstance(pad, torch.Tensor):
+            pad.zero_()
+        cache = getattr(m, "cache", None)
+        if isinstance(cache, torch.Tensor):
+            cache.zero_()
+
+
+def _disc_pair(x_raw: torch.Tensor, y_raw: torch.Tensor) -> torch.Tensor:
+    """Detached, contiguous real/fake batch for the audio discriminator."""
+    return torch.cat(
+        [x_raw.detach().clone(), y_raw.detach().clone()],
+        0,
+    ).contiguous()
+
+
 class Profiler:
 
     def __init__(self):
@@ -50,9 +70,18 @@ class WarmupCallback(pl.Callback):
 
     def on_train_batch_start(self, trainer, pl_module, batch,
                              batch_idx) -> None:
+        entering_phase_2 = (
+            self.state['training_steps'] >= pl_module.warmup
+            and not pl_module.warmed_up
+        )
         if self.state['training_steps'] >= pl_module.warmup:
             pl_module.warmed_up = True
         self.state['training_steps'] += 1
+        if entering_phase_2:
+            torch.backends.cudnn.benchmark = False
+            print("Phase 2: disabled cudnn.benchmark", flush=True)
+            _, dis_opt = pl_module.optimizers()
+            dis_opt.state.clear()
 
     def state_dict(self):
         return self.state.copy()
@@ -228,6 +257,40 @@ class RAVE(pl.LightningModule):
         self.latent_canonicalizer = latent_canonicalizer
         self.num_attributes = 0
 
+    def _synthesize_fake_audio(self, x_raw: torch.Tensor) -> torch.Tensor:
+        """Generator forward for discriminator fakes (no autograd graph)."""
+        _zero_cached_conv_state(self.encoder)
+        _zero_cached_conv_state(self.decoder)
+        _zero_cached_conv_state(self.pqmf)
+        batch_size = x_raw.shape[:-2]
+        with torch.no_grad():
+            z, _ = self.encode(x_raw, return_mb=True)
+            z, _ = self.encoder.reparametrize(z)[:2]
+            y = self.decoder(z)
+            if self.output_mode == "pqmf":
+                y_raw = _pqmf_decode(
+                    self.pqmf, y, batch_size=batch_size, n_channels=self.n_channels)
+            else:
+                y_raw = y
+            return y_raw[..., :x_raw.shape[-1]].clone()
+
+    def _step_discriminator(
+        self,
+        loss_dis: torch.Tensor,
+        dis_opt: torch.optim.Optimizer,
+    ) -> None:
+        dis_opt.zero_grad(set_to_none=True)
+        params = [p for p in self.discriminator.parameters() if p.requires_grad]
+        grads = torch.autograd.grad(
+            loss_dis,
+            params,
+            allow_unused=True,
+        )
+        for param, grad in zip(params, grads):
+            if grad is not None:
+                param.grad = grad
+        dis_opt.step()
+
     def configure_optimizers(self):
         gen_p = list(self.encoder.parameters())
         gen_p += list(self.decoder.parameters())
@@ -358,91 +421,86 @@ class RAVE(pl.LightningModule):
         p = Profiler()
         gen_opt, dis_opt = self.optimizers()
         x_raw = batch
-        x_raw.requires_grad = True
-
-        batch_size = x_raw.shape[:-2]
-        self.encoder.set_warmed_up(self.warmed_up)
-        self.decoder.set_warmed_up(self.warmed_up)
-
-        # ENCODE INPUT
-        # get multiband in case
-        z, x_multiband = self.encode(x_raw, return_mb=True)
-
-        z, reg = self.encoder.reparametrize(z)[:2]
-        p.tick('encode')
-
-        # DECODE LATENT
-        y = self.decoder(z)
-        if self.output_mode == "pqmf":
-            y_multiband = y
-            y_raw = _pqmf_decode(self.pqmf, y, batch_size=batch_size, n_channels=self.n_channels)
-        else:
-            y_raw = y 
-            y_multiband = _pqmf_encode(self.pqmf, y)
-
-        # TODO this has been added for training with num_samples = 65536 samples, output padding seems to mess with output dimensions. 
-        # this may probably conflict with cached_conv
-        y_raw = y_raw[..., :x_raw.shape[-1]]
-        y_multiband = y_multiband[..., :x_multiband.shape[-1]]
-
-        p.tick('decode')
-
-        if self.valid_signal_crop and self.receptive_field.sum():
-            x_multiband = rave.core.valid_signal_crop(
-                x_multiband,
-                *self.receptive_field,
-            )
-            y_multiband = rave.core.valid_signal_crop(
-                y_multiband,
-                *self.receptive_field,
-            )
-        p.tick('crop')
-
-        # DISTANCE BETWEEN INPUT AND OUTPUT
-        distances = {}
-        multiband_distance =  self.multiband_audio_distance(
-            x_multiband, y_multiband)
-        p.tick('mb distance')
-        for k, v in multiband_distance.items():
-            distances[f'multiband_{k}'] = self.weights['multiband_audio_distance'] * v
-
-        fullband_distance = self.audio_distance(x_raw, y_raw)
-        p.tick('fb distance')
-
-        for k, v in fullband_distance.items():
-            distances[f'fullband_{k}'] = self.weights['audio_distance'] *  v
-
-        feature_matching_distance = 0.
 
         is_gen_step = not (
             not (batch_idx % self.update_discriminator_every) and self.warmed_up)
+        disc_only = self.warmed_up and not is_gen_step
+
+        self.encoder.set_warmed_up(self.warmed_up)
+        self.decoder.set_warmed_up(self.warmed_up)
+
+        batch_size = x_raw.shape[:-2]
+        feature_matching_distance = 0.
+
+        if disc_only:
+            y_raw = self._synthesize_fake_audio(x_raw)
+            p.tick('encode')
+            p.tick('decode')
+            p.tick('crop')
+            reg = torch.zeros((), device=x_raw.device, dtype=x_raw.dtype)
+            distances = {}
+            p.tick('mb distance')
+            p.tick('fb distance')
+        else:
+            if is_gen_step or not self.warmed_up:
+                x_raw.requires_grad = True
+
+            z, x_multiband = self.encode(x_raw, return_mb=True)
+            z, reg = self.encoder.reparametrize(z)[:2]
+            p.tick('encode')
+
+            y = self.decoder(z)
+            if self.output_mode == "pqmf":
+                y_multiband = y
+                y_raw = _pqmf_decode(self.pqmf, y, batch_size=batch_size, n_channels=self.n_channels)
+            else:
+                y_raw = y
+                y_multiband = _pqmf_encode(self.pqmf, y)
+
+            y_raw = y_raw[..., :x_raw.shape[-1]]
+            y_multiband = y_multiband[..., :x_multiband.shape[-1]]
+            p.tick('decode')
+
+            if self.valid_signal_crop and self.receptive_field.sum():
+                x_multiband = rave.core.valid_signal_crop(
+                    x_multiband,
+                    *self.receptive_field,
+                )
+                y_multiband = rave.core.valid_signal_crop(
+                    y_multiband,
+                    *self.receptive_field,
+                )
+            p.tick('crop')
+
+            distances = {}
+            multiband_distance = self.multiband_audio_distance(
+                x_multiband, y_multiband)
+            p.tick('mb distance')
+            for k, v in multiband_distance.items():
+                distances[f'multiband_{k}'] = self.weights['multiband_audio_distance'] * v
+
+            fullband_distance = self.audio_distance(x_raw, y_raw)
+            p.tick('fb distance')
+
+            for k, v in fullband_distance.items():
+                distances[f'fullband_{k}'] = self.weights['audio_distance'] * v
 
         if self.warmed_up:  # DISCRIMINATION
-            # Disc steps must not backprop into the generator; gen steps need grad.
             if is_gen_step:
-                xy = torch.cat([x_raw, y_raw], 0)
+                xy = torch.cat([x_raw, y_raw], 0).contiguous()
             else:
-                xy = torch.cat([x_raw.detach(), y_raw.detach()], 0)
+                xy = _disc_pair(x_raw, y_raw)
             features = self.discriminator(xy)
 
             feature_real, feature_fake = self.split_features(features)
 
-            loss_dis = 0
-            loss_adv = 0
+            loss_dis = torch.tensor(0., device=x_raw.device)
+            loss_adv = torch.tensor(0., device=x_raw.device)
 
             pred_real = 0
             pred_fake = 0
 
             for scale_real, scale_fake in zip(feature_real, feature_fake):
-                current_feature_distance = sum(
-                    map(
-                        self.feature_matching_fun,
-                        scale_real[self.num_skipped_features:],
-                        scale_fake[self.num_skipped_features:],
-                    )) / len(scale_real[self.num_skipped_features:])
-
-                feature_matching_distance = feature_matching_distance + current_feature_distance
-
                 _dis, _adv = self.gan_loss(scale_real[-1], scale_fake[-1])
 
                 pred_real = pred_real + scale_real[-1].mean()
@@ -451,8 +509,20 @@ class RAVE(pl.LightningModule):
                 loss_dis = loss_dis + _dis
                 loss_adv = loss_adv + _adv
 
-            feature_matching_distance = feature_matching_distance / len(
-                feature_real)
+                if is_gen_step:
+                    current_feature_distance = sum(
+                        map(
+                            self.feature_matching_fun,
+                            scale_real[self.num_skipped_features:],
+                            scale_fake[self.num_skipped_features:],
+                        )) / len(scale_real[self.num_skipped_features:])
+
+                    feature_matching_distance = (
+                        feature_matching_distance + current_feature_distance)
+
+            if is_gen_step:
+                feature_matching_distance = feature_matching_distance / len(
+                    feature_real)
 
         else:
             pred_real = torch.tensor(0.).to(x_raw)
@@ -474,17 +544,21 @@ class RAVE(pl.LightningModule):
             loss_gen['adversarial'] = self.weights['adversarial'] * loss_adv
 
         # OPTIMIZATION
+        backward = self.manual_backward if getattr(self, "_trainer", None) else (
+            lambda loss: loss.backward()
+        )
         if not is_gen_step:
-            dis_opt.zero_grad()
-            loss_dis.backward()
-            dis_opt.step()
+            if self.warmed_up:
+                if x_raw.is_cuda:
+                    torch.cuda.synchronize()
+                self._step_discriminator(loss_dis, dis_opt)
             p.tick('dis opt')
         else:
             gen_opt.zero_grad()
             loss_gen_value = 0.
             for k, v in loss_gen.items():
                 loss_gen_value += v * self.weights.get(k, 1.)
-            loss_gen_value.backward()
+            backward(loss_gen_value)
             gen_opt.step()
 
         from .train_logging import log_generator_losses, log_train, log_train_dict

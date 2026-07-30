@@ -1,10 +1,22 @@
 # Stage-1 input canonicalizer (waveform or latent warp on frozen RAVE / FaderRAVE)
+#
+# Training schedule (CanonicalizerGanRampCallback):
+#   recon-only: steps 0 … phase_1_duration-1
+#   GAN ramp:   steps phase_1_duration … phase_1_duration + gan_ramp_duration - 1
+#   full GAN:   steps phase_1_duration + gan_ramp_duration … max_steps-1
+# Total training length is CANON_MAX_STEPS below (used automatically unless you
+# pass --max_steps on the CLI or MAX_STEPS in sbatch).
+#   CANON_MAX_STEPS = phase_1 + gan_ramp + gan_phase  (= 1_000_000 with defaults)
+#
 # Usage (plain BRAVE):
 #   python RAVE/scripts/train_canonicalizer.py \
 #     --config configs/brave_canonicalizer.gin \
 #     --backbone_config configs/brave.gin \
 #     --ckpt runs/brave.ckpt --db_path /data/in_domain_lmdb \
 #     --ood_db_path /data/tap_preprocessed --canonicalizer_type waveform --name wf_canon
+#
+# Override total steps (optional):
+#     --max_steps 2000000
 #
 # Usage (FaderRAVE):
 #   python RAVE/scripts/train_canonicalizer.py \
@@ -35,6 +47,12 @@ import rave.canonicalizer.waveform_canonicalizer
 import rave.canonicalizer.latent_canonicalizer
 
 import torch
+
+CANON_PHASE_1_DURATION = 100000
+CANON_GAN_RAMP_DURATION = 5000
+CANON_GAN_PHASE_DURATION = 95000
+CANON_MAX_STEPS = 200000
+# CANON_MAX_STEPS = CANON_PHASE_1 + CANON_GAN_RAMP + CANON_GAN_PHASE
 
 # --- Waveform canonicalizer (per-input knob encoder + EQ + optional reverb) ---
 # Knob layout K = n_eq_bands + n_reverb_knobs (default 6 + 7 = 13).
@@ -96,8 +114,8 @@ rave.canonicalizer.trainer.CanonicalizerTrainer:
     lambda_rec = 40.0
     lambda_gan = 1.0
     lambda_feature_matching = 0.5
-    recon_stft_weight = 0.9
-    recon_rms_weight = 0.1
+    recon_stft_weight = 0.0
+    recon_rms_weight = 1.0
     calibrate_loss_scales = True
     calibration_batches = 16
     stft_loss_scale = 45.0
@@ -109,8 +127,8 @@ rave.canonicalizer.trainer.CanonicalizerTrainer:
     gan_loss = "hinge"
     lr = 3e-4
     disc_lr = 2e-5
-    phase_1_duration = 25000
-    gan_ramp_duration = 25000
+    phase_1_duration = %CANON_PHASE_1_DURATION
+    gan_ramp_duration = %CANON_GAN_RAMP_DURATION
     update_discriminator_every = 2
     num_skipped_features = 1
     encode_use_mean = True

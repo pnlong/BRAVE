@@ -45,6 +45,14 @@ def parse_gin_file(
     return cfg_path
 
 
+def resolve_canon_max_steps(*, fallback: int = 100_000) -> int:
+    """Return ``CANON_MAX_STEPS`` from parsed gin, or ``fallback`` if unset."""
+    try:
+        return int(gin.query_parameter("%CANON_MAX_STEPS"))
+    except ValueError:
+        return fallback
+
+
 def validate_canonicalizer_gin(*, canon_cfg: Path) -> None:
     """Fail fast if canonicalizer gin did not parse."""
     cfg = gin.config_str()
@@ -95,5 +103,6 @@ __all__ = [
     "configure_backbone_gin",
     "configure_canonicalizer_gin",
     "parse_gin_file",
+    "resolve_canon_max_steps",
     "validate_canonicalizer_gin",
 ]

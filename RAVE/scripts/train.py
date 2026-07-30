@@ -170,7 +170,11 @@ def parse_augmentations(augmentations):
 
 def main(argv):
     torch.set_float32_matmul_precision('high')
-    torch.backends.cudnn.benchmark = True
+    if os.environ.get('CUDNN_BENCHMARK', '1') == '0':
+        torch.backends.cudnn.benchmark = False
+        print('cudnn.benchmark=False (CUDNN_BENCHMARK=0)', flush=True)
+    else:
+        torch.backends.cudnn.benchmark = True
 
     # check dataset channels
     n_channels = rave.dataset.get_training_channels(FLAGS.db_path, FLAGS.channels)

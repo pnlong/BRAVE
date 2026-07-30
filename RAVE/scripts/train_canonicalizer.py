@@ -47,6 +47,7 @@ from rave.canonicalizer.gin_setup import (
     build_in_domain_discriminator,
     configure_backbone_gin,
     configure_canonicalizer_gin,
+    resolve_canon_max_steps,
 )
 from rave.canonicalizer.trainer import CanonicalizerTrainer
 from rave.canonicalizer.callbacks import (
@@ -85,7 +86,8 @@ def parse_args():
     p.add_argument("--out_path", default="runs/")
     p.add_argument("--n_signal", type=int, default=131072)
     p.add_argument("--batch", type=int, default=4)
-    p.add_argument("--max_steps", type=int, default=100000)
+    p.add_argument("--max_steps", type=int, default=None,
+                   help="Total optimizer steps (default: CANON_MAX_STEPS from gin, else 100000)")
     p.add_argument("--workers", type=int, default=0)
     p.add_argument("--gpu", type=int, action="append", default=None)
     p.add_argument("--override", action="append", default=[])
@@ -214,6 +216,12 @@ def main():
 
     configure_canonicalizer_gin(canon_cfg, n_channels, overrides=args.override)
 
+    max_steps = (
+        args.max_steps
+        if args.max_steps is not None
+        else resolve_canon_max_steps()
+    )
+
     warp_kwargs: dict = {}
     if profile.is_fader and getattr(model, "num_attributes", 0) > 0:
         warp_kwargs = {
@@ -274,6 +282,12 @@ def main():
         canonicalizer_type=args.canonicalizer_type,
         in_domain_disc=in_domain_disc,
         discrete_class_labels=discrete_class_labels,
+    )
+    print(
+        f"Training for {max_steps:,} steps "
+        f"(recon-only={trainer_module.warmup:,}, "
+        f"gan_ramp={trainer_module.gan_ramp_duration:,}, "
+        f"full_gan≈{max(0, max_steps - trainer_module.warmup - trainer_module.gan_ramp_duration):,})",
     )
     n_disc = sum(p.numel() for p in in_domain_disc.parameters())
     print(f"InDomainAudioDiscriminator: {n_disc:,} trainable params")
@@ -394,7 +408,7 @@ def main():
             "backbone_kind": backbone_kind,
             "batch": args.batch,
             "n_signal": args.n_signal,
-            "max_steps": args.max_steps,
+            "max_steps": max_steps,
             "canonicalizer_type": args.canonicalizer_type,
             "calibrate_loss_scales": trainer_module.calibrate_loss_scales,
         },
@@ -464,7 +478,8 @@ def main():
     strategy = None
     if args.gpu and torch.cuda.is_available():
         accelerator = "gpu"
-        devices = args.gpu if len(args.gpu) > 1 else args.gpu[0]
+        # Always pass explicit GPU ids as a list — devices=0 means "zero GPUs" to PL.
+        devices = args.gpu
         if len(args.gpu) > 1:
             from pytorch_lightning.strategies import DDPStrategy
 
@@ -478,7 +493,7 @@ def main():
         print("CUDA not available; training on CPU")
 
     pl_trainer = pl.Trainer(
-        max_steps=1 if args.smoke_test else args.max_steps,
+        max_steps=1 if args.smoke_test else max_steps,
         accelerator=accelerator,
         devices=devices,
         strategy=strategy,
