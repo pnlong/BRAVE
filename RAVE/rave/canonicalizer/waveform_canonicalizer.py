@@ -121,7 +121,8 @@ class WaveformKnobEncoder(nn.Module):
         # EQ bands: tanh(0) → 0 dB
         if self.layout.n_reverb_knobs > 0:
             bias[self.layout.n_eq_bands] = _WET_NEUTRAL_LOGIT
-        nn.init.copy_(self.head.bias, bias)
+        with torch.no_grad():
+            self.head.bias.copy_(bias)
 
     def _map_knobs(self, raw: torch.Tensor) -> torch.Tensor:
         eq_end = self.layout.n_eq_bands

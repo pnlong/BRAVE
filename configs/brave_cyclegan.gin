@@ -1,0 +1,139 @@
+# Bidirectional CycleGAN between frozen Tap BRAVE (X) and Water BRAVE (Y).
+#
+# Usage (latent):
+#   python RAVE/scripts/train_cyclegan.py \
+#     --config configs/brave_cyclegan.gin \
+#     --backbone_x_config configs/brave.gin \
+#     --ckpt_x /path/to/tap_run.ckpt \
+#     --db_path_x /path/to/tap_lmdb \
+#     --backbone_y_config configs/brave.gin \
+#     --ckpt_y /path/to/water_run.ckpt \
+#     --db_path_y /path/to/water_lmdb \
+#     --canonicalizer_type latent \
+#     --name tap_water_lat_cyclegan
+#
+# Usage (waveform): same with --canonicalizer_type waveform
+
+include "brave.gin"
+
+from __gin__ import dynamic_registration
+
+import rave
+import rave.training
+from rave import pqmf
+from rave import core
+from rave import blocks
+from rave import discriminator
+from rave import dsp
+
+import rave.canonicalizer.dataset
+import rave.canonicalizer.trainer
+import rave.canonicalizer.cycle_trainer
+import rave.canonicalizer.callbacks
+import rave.canonicalizer.in_domain_discriminator
+import rave.canonicalizer.waveform_canonicalizer
+import rave.canonicalizer.latent_canonicalizer
+
+import torch
+
+CYCLE_WARMUP_DURATION = 50000
+CYCLE_GAN_RAMP_DURATION = 5000
+CYCLE_GAN_PHASE_DURATION = 145000
+CYCLE_MAX_STEPS = 200000
+
+rave.canonicalizer.waveform_canonicalizer.WaveformKnobLayout:
+    n_eq_bands = 6
+    n_reverb_knobs = 7
+
+dsp.BiquadBank:
+    sample_rate = %SAMPLING_RATE
+    n_bands = 6
+    min_freq = 80.0
+    max_freq = 12000.0
+    max_gain_db = 12.0
+
+dsp.CausalReverb:
+    sample_rate = %SAMPLING_RATE
+
+rave.canonicalizer.waveform_canonicalizer.WaveformKnobEncoder:
+    layout = @rave.canonicalizer.waveform_canonicalizer.WaveformKnobLayout
+    in_channels = 1
+    hidden_channels = 64
+    n_layers = 4
+    max_gain_db = 12.0
+
+rave.canonicalizer.waveform_canonicalizer.WaveformCanonicalizer:
+    encoder = @rave.canonicalizer.waveform_canonicalizer.WaveformKnobEncoder
+    eq = @dsp.BiquadBank
+    reverb = @dsp.CausalReverb
+    use_reverb = True
+    layout = @rave.canonicalizer.waveform_canonicalizer.WaveformKnobLayout
+    knob_ema_decay = 0.95
+
+rave.canonicalizer.latent_canonicalizer.LatentCanonicalizer:
+    latent_size = %LATENT_SIZE
+
+discriminator.ConvNet:
+    in_size = 1
+    out_size = 1
+    capacity = %CAPACITY
+    n_layers = 4
+    stride = 4
+
+scales/discriminator.ConvNet:
+    conv = @torch.nn.Conv1d
+    kernel_size = 15
+
+discriminator.MultiScaleDiscriminator:
+    n_discriminators = 1
+    convnet = @scales/discriminator.ConvNet
+
+rave.canonicalizer.in_domain_discriminator.InDomainAudioDiscriminator:
+    discriminator = @discriminator.MultiScaleDiscriminator
+    embed_dim = 32
+
+rave.canonicalizer.cycle_trainer.CycleGANTrainer:
+    lambda_cycle = 10.0
+    lambda_gan = 1.0
+    lambda_feature_matching = 0.5
+    lambda_identity = 0.0
+    cycle_stft_weight = 0.9
+    cycle_rms_weight = 0.1
+    calibrate_loss_scales = True
+    calibration_batches = 16
+    stft_loss_scale = 45.0
+    rms_loss_scale = 0.3
+    gan_loss_scale = 0.5
+    fm_loss_scale = 0.25
+    cycle_mode = "both"
+    gan_loss = "hinge"
+    lr = 3e-4
+    disc_lr = 2e-5
+    cycle_warmup_duration = %CYCLE_WARMUP_DURATION
+    gan_ramp_duration = %CYCLE_GAN_RAMP_DURATION
+    update_discriminator_every = 2
+    num_skipped_features = 1
+    encode_use_mean = True
+    lambda_latent_spread = 0.25
+    latent_spread_mode = "var_match"
+    latent_spread_scale = 1.0
+    # Keep Enc/Dec frozen by default. For ablations:
+    #   CycleGANTrainer.unfreeze_decoders = True
+    #   CycleGANTrainer.unfreeze_encoders = True
+    #   CycleGANTrainer.backbone_lr = 1e-5
+    # Prefer identity loss when unfreezing (e.g. lambda_identity = 1.0).
+    unfreeze_encoders = False
+    unfreeze_decoders = False
+    backbone_lr = 1e-5
+    disc_x = @rave.canonicalizer.in_domain_discriminator.InDomainAudioDiscriminator
+    disc_y = @rave.canonicalizer.in_domain_discriminator.InDomainAudioDiscriminator
+
+rave.canonicalizer.dataset.build_canonicalizer_dataloader:
+    in_domain_fraction = 0.5
+    stratified_batches = True
+
+rave.canonicalizer.dataset.build_canonicalizer_dataset:
+    in_domain_fraction = 0.5
+
+rave.canonicalizer.callbacks.CycleGANValVizCallback:
+    num_audio_samples = 8

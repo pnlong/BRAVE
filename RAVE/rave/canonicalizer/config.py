@@ -236,6 +236,88 @@ def load_canonicalizer_onto_model(
     return manifest
 
 
+@dataclass
+class CycleGANManifest:
+    canonicalizer_type: str
+    backbone_x_config: str
+    backbone_x_ckpt: str
+    backbone_y_config: str
+    backbone_y_ckpt: str
+    db_path_x: str
+    db_path_y: str
+    use_reverb: bool = True
+    backbone_kind: str = "RAVE"
+
+    def to_dict(self) -> dict:
+        return {
+            "canonicalizer_type": self.canonicalizer_type,
+            "backbone_x_config": self.backbone_x_config,
+            "backbone_x_ckpt": self.backbone_x_ckpt,
+            "backbone_y_config": self.backbone_y_config,
+            "backbone_y_ckpt": self.backbone_y_ckpt,
+            "db_path_x": self.db_path_x,
+            "db_path_y": self.db_path_y,
+            "use_reverb": self.use_reverb,
+            "backbone_kind": self.backbone_kind,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "CycleGANManifest":
+        return cls(
+            canonicalizer_type=data["canonicalizer_type"],
+            backbone_x_config=data["backbone_x_config"],
+            backbone_x_ckpt=data["backbone_x_ckpt"],
+            backbone_y_config=data["backbone_y_config"],
+            backbone_y_ckpt=data["backbone_y_ckpt"],
+            db_path_x=data["db_path_x"],
+            db_path_y=data["db_path_y"],
+            use_reverb=bool(data.get("use_reverb", True)),
+            backbone_kind=data.get("backbone_kind", "RAVE"),
+        )
+
+
+def save_cyclegan_checkpoint(
+    path: Union[str, Path],
+    warp_xy_state: dict,
+    warp_yx_state: dict,
+    manifest: CycleGANManifest,
+) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    sidecar = path.with_suffix(".manifest.json")
+    sidecar.write_text(json.dumps(manifest.to_dict(), indent=2))
+    torch_save = __import__("torch")
+    torch_save.save(
+        {
+            "warp_xy_state_dict": warp_xy_state,
+            "warp_yx_state_dict": warp_yx_state,
+            "manifest": manifest.to_dict(),
+        },
+        path,
+    )
+
+
+def load_cyclegan_checkpoint(
+    path: Union[str, Path],
+) -> tuple[dict, dict, CycleGANManifest]:
+    import torch
+
+    path = Path(path)
+    payload = torch.load(path, map_location="cpu", weights_only=False)
+    if isinstance(payload, dict) and "manifest" in payload:
+        manifest = CycleGANManifest.from_dict(payload["manifest"])
+        return (
+            payload["warp_xy_state_dict"],
+            payload["warp_yx_state_dict"],
+            manifest,
+        )
+    sidecar = path.with_suffix(".manifest.json")
+    if sidecar.is_file():
+        manifest = CycleGANManifest.from_dict(json.loads(sidecar.read_text()))
+        return payload["warp_xy_state_dict"], payload["warp_yx_state_dict"], manifest
+    raise ValueError(f"No manifest found for CycleGAN checkpoint: {path}")
+
+
 def validate_manifest(
     manifest: CanonicalizerManifest,
     *,

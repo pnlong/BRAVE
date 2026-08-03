@@ -252,3 +252,266 @@ class CanonicalizerValVizCallback(pl.Callback):
                         plt.close(class_fig)
 
         _ddp_barrier()
+
+
+@gin.configurable
+class CycleGANRampCallback(pl.Callback):
+    """
+    Cycle-only warmup (no adversarial / no D steps), then linear GAN ramp.
+
+    During warmup ``gan_factor=0``; latent spread ramps with GAN when active.
+    """
+
+    def on_train_batch_start(
+        self,
+        trainer: pl.Trainer,
+        pl_module: pl.LightningModule,
+        batch,
+        batch_idx: int,
+    ) -> None:
+        factor = compute_gan_ramp_factor(
+            trainer.global_step,
+            delay=int(pl_module.cycle_warmup_duration),
+            ramp_duration=int(pl_module.gan_ramp_duration),
+        )
+        pl_module.gan_factor = factor
+        pl_module.cycle_warmed_up = trainer.global_step >= int(
+            pl_module.cycle_warmup_duration)
+        if getattr(pl_module, "spread_active", False):
+            pl_module.spread_factor = factor
+        else:
+            pl_module.spread_factor = 0.0
+
+
+@gin.configurable
+class CycleGANValVizCallback(pl.Callback):
+    """
+    Validation monitoring for CycleGAN:
+
+    - ``val/audio_x`` / ``val/audio_y``: ``input | transfer | cycle``
+    - ``val/audio_x_to_y`` / ``val/audio_y_to_x``: transfer only
+    - ``val/latent_x_pca``: Enc_X(x) vs G_yx latent, colored by domain x/y
+    - ``val/latent_y_pca``: Enc_Y(y) vs G_xy latent, colored by domain x/y
+    """
+
+    def __init__(
+        self,
+        out_dir: Optional[str | Path] = None,
+        num_audio_samples: int = 8,
+        max_points_per_domain: int = 512,
+        also_tsne: bool = False,
+    ) -> None:
+        super().__init__()
+        self.out_dir = Path(out_dir) if out_dir is not None else None
+        self.num_audio_samples = num_audio_samples
+        self.max_points_per_domain = max_points_per_domain
+        self.also_tsne = also_tsne
+        self._x_audio: List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = []
+        self._y_audio: List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = []
+        # X-space: real Enc_X(x) vs transferred z_yx (from y)
+        self._x_space_from_x: List[np.ndarray] = []
+        self._x_space_from_y: List[np.ndarray] = []
+        # Y-space: real Enc_Y(y) vs transferred z_xy (from x)
+        self._y_space_from_y: List[np.ndarray] = []
+        self._y_space_from_x: List[np.ndarray] = []
+
+    def on_validation_epoch_start(self, trainer, pl_module) -> None:
+        self._x_audio.clear()
+        self._y_audio.clear()
+        self._x_space_from_x.clear()
+        self._x_space_from_y.clear()
+        self._y_space_from_y.clear()
+        self._y_space_from_x.clear()
+
+    def on_validation_batch_end(
+        self,
+        trainer,
+        pl_module,
+        outputs,
+        batch,
+        batch_idx,
+        dataloader_idx=0,
+    ) -> None:
+        if not trainer.is_global_zero or outputs is None:
+            return
+        domains = outputs["domains"]
+        fwd = outputs["fwd"]
+
+        if fwd["z_x"].shape[0] > 0:
+            self._x_space_from_x.append(
+                latent_frames_to_points(
+                    fwd["z_x"], max_points=self.max_points_per_domain))
+        if fwd["z_yx"].shape[0] > 0:
+            self._x_space_from_y.append(
+                latent_frames_to_points(
+                    fwd["z_yx"], max_points=self.max_points_per_domain))
+        if fwd["z_y"].shape[0] > 0:
+            self._y_space_from_y.append(
+                latent_frames_to_points(
+                    fwd["z_y"], max_points=self.max_points_per_domain))
+        if fwd["z_xy"].shape[0] > 0:
+            self._y_space_from_x.append(
+                latent_frames_to_points(
+                    fwd["z_xy"], max_points=self.max_points_per_domain))
+
+        x_ptr = 0
+        y_ptr = 0
+        for dom in domains:
+            if dom == DOMAIN_OOD and x_ptr < fwd["x"].shape[0]:
+                if len(self._x_audio) < self.num_audio_samples:
+                    # x | G_xy(x) | x_cycle
+                    triplet = (
+                        fwd["x"][x_ptr].cpu(),
+                        fwd["y_fake"][x_ptr].cpu(),
+                        fwd["x_cycle"][x_ptr].cpu(),
+                    )
+                    self._x_audio.append(triplet)
+                x_ptr += 1
+            elif dom == DOMAIN_IN and y_ptr < fwd["y"].shape[0]:
+                if len(self._y_audio) < self.num_audio_samples:
+                    # y | G_yx(y) | y_cycle
+                    triplet = (
+                        fwd["y"][y_ptr].cpu(),
+                        fwd["x_fake"][y_ptr].cpu(),
+                        fwd["y_cycle"][y_ptr].cpu(),
+                    )
+                    self._y_audio.append(triplet)
+                y_ptr += 1
+
+    def _write_wav(self, name: str, wav: np.ndarray, sr: int, step: int) -> None:
+        if self.out_dir is None or wav.size == 0:
+            return
+        import soundfile as sf
+
+        viz_dir = self.out_dir / "viz"
+        viz_dir.mkdir(parents=True, exist_ok=True)
+        sf.write(str(viz_dir / f"{name}_val_step{step}.wav"), wav, sr)
+
+    def _log_triplets(
+        self,
+        pl_module,
+        *,
+        key: str,
+        file_stem: str,
+        samples: List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
+        step: int,
+    ) -> None:
+        if not samples:
+            return
+        sr = pl_module.backbone_y.sr
+        wav = concat_val_audio_triplets(samples, max_samples=self.num_audio_samples)
+        log_wandb_audio(pl_module, key, wav, sr)
+        self._write_wav(file_stem, wav, sr, step)
+
+    def _log_transfers(
+        self,
+        pl_module,
+        *,
+        key: str,
+        file_stem: str,
+        samples: List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
+        step: int,
+    ) -> None:
+        """Log middle channel of each triplet (transfer only)."""
+        if not samples:
+            return
+        from .viz import mono_waveform
+
+        sr = pl_module.backbone_y.sr
+        chunks = [
+            mono_waveform(transfer)
+            for _, transfer, _ in samples[: self.num_audio_samples]
+        ]
+        wav = np.concatenate(chunks) if chunks else np.array([], dtype=np.float32)
+        log_wandb_audio(pl_module, key, wav, sr)
+        self._write_wav(file_stem, wav, sr, step)
+
+    def _log_latent_space(
+        self,
+        pl_module,
+        *,
+        space: str,
+        from_x: List[np.ndarray],
+        from_y: List[np.ndarray],
+        step: int,
+    ) -> None:
+        if not from_x or not from_y:
+            return
+        pts_x = np.concatenate(from_x, axis=0)
+        pts_y = np.concatenate(from_y, axis=0)
+        methods = ["pca"]
+        if self.also_tsne:
+            methods.append("tsne")
+        for method in methods:
+            # Args: label_a = first array, label_b = second.
+            # For X-space: real x vs transferred-from-y.
+            # For Y-space: transferred-from-x vs real y — keep color meaning
+            # consistent (x=orange-ish second / y=teal first) by always
+            # passing (from_y, from_x) so label_a=y, label_b=x.
+            fig = plot_latent_domain_scatter(
+                pts_y,
+                pts_x,
+                method=method,
+                title=f"CycleGAN {space}-space latents ({method.upper()})",
+                max_points_per_domain=self.max_points_per_domain,
+                label_a="domain y",
+                label_b="domain x",
+            )
+            key = f"val/latent_{space}_{method}"
+            log_wandb_figure(pl_module, key, fig)
+            if self.out_dir is not None:
+                save_figure(
+                    fig,
+                    self.out_dir / "viz" / f"latent_{space}_{method}_step{step}.png",
+                )
+            import matplotlib.pyplot as plt
+            plt.close(fig)
+
+    def on_validation_epoch_end(self, trainer, pl_module) -> None:
+        if trainer.is_global_zero:
+            step = trainer.global_step
+            self._log_triplets(
+                pl_module,
+                key="val/audio_x",
+                file_stem="x",
+                samples=self._x_audio,
+                step=step,
+            )
+            self._log_triplets(
+                pl_module,
+                key="val/audio_y",
+                file_stem="y",
+                samples=self._y_audio,
+                step=step,
+            )
+            self._log_transfers(
+                pl_module,
+                key="val/audio_x_to_y",
+                file_stem="x_to_y",
+                samples=self._x_audio,
+                step=step,
+            )
+            self._log_transfers(
+                pl_module,
+                key="val/audio_y_to_x",
+                file_stem="y_to_x",
+                samples=self._y_audio,
+                step=step,
+            )
+            # X decoder space: Enc_X(real x) vs G_yx warp (from y)
+            self._log_latent_space(
+                pl_module,
+                space="x",
+                from_x=self._x_space_from_x,
+                from_y=self._x_space_from_y,
+                step=step,
+            )
+            # Y decoder space: Enc_Y(real y) vs G_xy warp (from x)
+            self._log_latent_space(
+                pl_module,
+                space="y",
+                from_x=self._y_space_from_x,
+                from_y=self._y_space_from_y,
+                step=step,
+            )
+        _ddp_barrier()

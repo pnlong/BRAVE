@@ -39,9 +39,11 @@ def plot_latent_domain_scatter(
     method: Literal["pca", "tsne"] = "pca",
     title: str = "Latent space (validation)",
     max_points_per_domain: int = 512,
+    label_a: str = "in-domain",
+    label_b: str = "OOD",
 ) -> plt.Figure:
     """
-    2D scatter: in-domain vs OOD latents (post-canonicalizer path).
+    2D scatter: two latent populations (e.g. in-domain vs OOD, or domain X vs Y).
     """
     if in_domain.shape[0] > max_points_per_domain:
         in_domain = in_domain[
@@ -73,11 +75,11 @@ def plot_latent_domain_scatter(
     mask_ood = labels == 1
     ax.scatter(
         xy[mask_in, 0], xy[mask_in, 1],
-        c="#2a9d8f", alpha=0.45, s=12, label="in-domain",
+        c="#2a9d8f", alpha=0.45, s=12, label=label_a,
     )
     ax.scatter(
         xy[mask_ood, 0], xy[mask_ood, 1],
-        c="#e76f51", alpha=0.55, s=14, label="OOD",
+        c="#e76f51", alpha=0.55, s=14, label=label_b,
     )
     ax.set_xlabel(xlab)
     ax.set_ylabel(ylab)

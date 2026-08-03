@@ -98,11 +98,55 @@ def configure_canonicalizer_gin(
     return canon_cfg
 
 
+_CYCLEGAN_MARKERS: tuple[str, ...] = (
+    "CycleGANTrainer.lambda_cycle",
+    "CycleGANTrainer.lambda_gan",
+    "InDomainAudioDiscriminator.discriminator",
+)
+
+
+def resolve_cycle_max_steps(*, fallback: int = 200_000) -> int:
+    """Return ``CYCLE_MAX_STEPS`` from parsed gin, or ``fallback`` if unset."""
+    try:
+        return int(gin.query_parameter("%CYCLE_MAX_STEPS"))
+    except ValueError:
+        return fallback
+
+
+def validate_cyclegan_gin(*, cycle_cfg: Path) -> None:
+    """Fail fast if CycleGAN gin did not parse."""
+    cfg = gin.config_str()
+    missing = [m for m in _CYCLEGAN_MARKERS if m not in cfg]
+    if not missing:
+        return
+    raise RuntimeError(
+        f"CycleGAN gin {cycle_cfg.name!r} is missing bindings {missing}. "
+        f"config_str length={len(cfg)}."
+    )
+
+
+def configure_cyclegan_gin(
+    cycle_cfg: str | Path,
+    n_channels: int,
+    *,
+    overrides: Iterable[str] | None = None,
+) -> Path:
+    """Parse CycleGAN gin (includes brave.gin via include)."""
+    gin.clear_config()
+    cycle_cfg = parse_gin_file(cycle_cfg, overrides=overrides)
+    gin.bind_parameter("RAVE.n_channels", n_channels)
+    validate_cyclegan_gin(cycle_cfg=cycle_cfg)
+    return cycle_cfg
+
+
 __all__ = [
     "build_in_domain_discriminator",
     "configure_backbone_gin",
     "configure_canonicalizer_gin",
+    "configure_cyclegan_gin",
     "parse_gin_file",
     "resolve_canon_max_steps",
+    "resolve_cycle_max_steps",
     "validate_canonicalizer_gin",
+    "validate_cyclegan_gin",
 ]

@@ -9,6 +9,7 @@ from .waveform_canonicalizer import (
 )
 from .in_domain_discriminator import InDomainAudioDiscriminator
 from .trainer import CanonicalizerTrainer
+from .cycle_trainer import CycleGANTrainer
 
 __all__ = [
     "LatentCanonicalizer",
@@ -18,6 +19,7 @@ __all__ = [
     "build_waveform_canonicalizer",
     "InDomainAudioDiscriminator",
     "CanonicalizerTrainer",
+    "CycleGANTrainer",
 ]
 
 # Export helpers: ``rave.canonicalizer.export``
