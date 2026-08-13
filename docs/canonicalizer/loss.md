@@ -358,14 +358,14 @@ Watch `canon/latent_ood_in_var_ratio` → 1.0 and guard with `val/recon_ood`.
 
 ## CycleGAN mapping
 
-| CycleGAN | Canonicalizer |
-|----------|---------------|
+Stage-1 is **one-way** (X→Y + `D_Y` only). Full bidirectional CycleGAN (two backbones, waveform vs latent cycle/D, AE-aware vs direct, random warp init) is documented in [`docs/cyclegan/README.md`](../cyclegan/README.md).
+
+| CycleGAN | Canonicalizer (Stage-1) |
+|----------|-------------------------|
 | Generator X→Y | Warp + frozen decode path on OOD |
 | Discriminator on Y | `InDomainAudioDiscriminator` |
 | Cycle consistency | `L_rec` on OOD (and in-domain) |
 | Identity | In-domain `L_rec` + identity init of warp |
-
-Full one-way transfer: we do **not** train a reverse mapper or an OOD discriminator.
 
 ## Conditional FaderRAVE (attribute-conditioned D)
 

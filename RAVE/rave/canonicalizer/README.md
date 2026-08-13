@@ -4,7 +4,7 @@ Stage-1 **input adapter** for frozen RAVE / FaderRAVE backbones. Trains a small 
 **out-of-domain** audio (e.g. tap) reconstructs with timbre closer to the **in-domain** corpus
 the backbone was trained on — without retraining the autoencoder.
 
-**User docs:** [`docs/canonicalizer/`](../../../docs/canonicalizer/README.md) — overview plus dedicated guides for [waveform](../../../docs/canonicalizer/waveform.md) and [latent](../../../docs/canonicalizer/latent.md) canonicalizers.
+**User docs:** [`docs/canonicalizer/`](../../../docs/canonicalizer/README.md) — overview plus dedicated guides for [waveform](../../../docs/canonicalizer/waveform.md) and [latent](../../../docs/canonicalizer/latent.md) canonicalizers. Bidirectional CycleGAN (waveform vs latent cycle/D, AE-aware vs direct): [`docs/cyclegan/README.md`](../../../docs/cyclegan/README.md).
 
 Loss derivation, metric scales, and tuning: [`docs/canonicalizer/loss.md`](../../../docs/canonicalizer/loss.md).
 
@@ -23,7 +23,8 @@ Loss derivation, metric scales, and tuning: [`docs/canonicalizer/loss.md`](../..
 |------------|------|
 | [`latent_canonicalizer.py`](latent_canonicalizer.py) | `LatentCanonicalizer` — residual 1×1 conv on content `z` after encode |
 | [`waveform_canonicalizer.py`](waveform_canonicalizer.py) | `WaveformCanonicalizer` — per-input knob encoder + EQ + optional reverb |
-| [`in_domain_discriminator.py`](in_domain_discriminator.py) | `InDomainAudioDiscriminator` — multi-scale audio GAN (real in-domain vs OOD fake) |
+| [`in_domain_discriminator.py`](in_domain_discriminator.py) | Audio MSD + `InDomainLatentDiscriminator` (CycleGAN z-GAN) |
+| [`cycle_trainer.py`](cycle_trainer.py) | `CycleGANTrainer` — bidirectional tap↔Y |
 | [`trainer.py`](trainer.py) | `CanonicalizerTrainer` — Lightning Stage-1 loop |
 | [`losses.py`](losses.py) | RMS recon helpers, GAN loss resolver |
 | [`dataset.py`](dataset.py) | Mixed in-domain / OOD datasets, collate |

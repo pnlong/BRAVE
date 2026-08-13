@@ -52,6 +52,7 @@ Both stay `k=1` (no extra latency). `hidden_size` defaults to `latent_size`.
 rave.canonicalizer.latent_canonicalizer.LatentCanonicalizer:
     latent_size = %LATENT_SIZE   # 128 for BRAVE
     n_layers = 1
+    init_mode = "identity"       # Stage-1; CycleGAN train script forces "random"
     # n_layers = 2
     # hidden_size = %LATENT_SIZE
 ```
