@@ -129,7 +129,7 @@ Writes `waveform_canonicalizer.ckpt` or `latent_canonicalizer.ckpt`. Embed at ex
 
 ## CycleGAN (Tap ↔ Water)
 
-Bidirectional CycleGAN between two frozen plain BRAVE backbones (latent or waveform warps). Docs: [`docs/cyclegan/README.md`](docs/cyclegan/README.md).
+Bidirectional CycleGAN between two frozen plain BRAVE backbones. Latent warps are **cross-space** (`Enc_src → W → Dec_tgt`, random init). Waveform warps are shelved. Docs: [`docs/cyclegan/README.md`](docs/cyclegan/README.md).
 
 ```bash
 python RAVE/scripts/train_cyclegan.py \
@@ -139,16 +139,23 @@ python RAVE/scripts/train_cyclegan.py \
   --backbone_y_config configs/brave.gin \
   --ckpt_y /path/to/water_run.ckpt --db_path_y /path/to/water_lmdb \
   --canonicalizer_type latent \
-  --name tap_water_lat_cyclegan
+  --name tap_water_wf_cycle
 ```
 
-Writes `cyclegan_latent.ckpt` or `cyclegan_waveform.ckpt` with a dual-backbone manifest. Cycle warmup (no D) then hinge GAN ramp; see gin `CYCLE_WARMUP_DURATION` / `CYCLE_MAX_STEPS`.
+`cycle_domain` couples cycle + D: `"waveform"` (default, STFT+RMS + audio D) or `"latent"` (z L1 + latent D). Latent cycle modes: `ae_aware` (Dec+re-Enc, 50k warmup) or `direct` (compose-L1, no warmup / no decode in train).
+
+```bash
+OVERRIDE='CycleGANTrainer.cycle_domain="latent"'
+OVERRIDE='CycleGANTrainer.cycle_domain="latent" CycleGANTrainer.latent_cycle_mode="direct"'
+```
+
+Writes `cyclegan_latent.ckpt` with a dual-backbone manifest (`cycle_domain`, `init_mode`, …). See gin `CYCLE_WARMUP_DURATION` / `CYCLE_MAX_STEPS`.
 
 SLURM (export vars in the shell, then sbatch — avoid multiline `--export`):
 ```bash
-sbatch scripts/train_cyclegan.sbatch
+sbatch scripts/train_cyclegan.sbatch   # CANONICALIZER_TYPE=latent by default
 ```
-2-layer latent warp: `OVERRIDE='LatentCanonicalizer.n_layers=2'` (optionally with `CycleGANTrainer.use_latent_cycle=True`).
+Optional: `CYCLE_DOMAIN=latent LATENT_CYCLE_MODE=direct`. 2-layer warp: `OVERRIDE='LatentCanonicalizer.n_layers=2'`.
 
 **Export Fader plain TorchScript (128+D concat, Python demos):**
 ```bash

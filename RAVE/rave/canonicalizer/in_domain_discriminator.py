@@ -108,6 +108,59 @@ class InDomainAudioDiscriminator(nn.Module):
         return loss_d / n_scales, loss_g / n_scales
 
 
+@gin.configurable
+class InDomainLatentDiscriminator(nn.Module):
+    """
+    Real/fake discriminator on content latent z (B, latent_size, T_lat).
+
+    Returns a single-scale feature pyramid ``[[h1, h2, ..., logit]]`` compatible
+    with ``gan_utils`` hinge + feature matching.
+    """
+
+    def __init__(
+        self,
+        latent_size: int = 128,
+        hidden_size: int = 256,
+        n_layers: int = 3,
+        kernel_size: int = 7,
+        negative_slope: float = 0.2,
+    ) -> None:
+        super().__init__()
+        if n_layers < 1:
+            raise ValueError("n_layers must be >= 1")
+        blocks: List[nn.Module] = []
+        in_ch = int(latent_size)
+        pad = int(kernel_size) // 2
+        for _ in range(int(n_layers)):
+            blocks.append(
+                nn.Sequential(
+                    nn.Conv1d(in_ch, hidden_size, kernel_size, padding=pad),
+                    nn.LeakyReLU(negative_slope),
+                )
+            )
+            in_ch = int(hidden_size)
+        self.blocks = nn.ModuleList(blocks)
+        self.logit = nn.Conv1d(in_ch, 1, kernel_size=1)
+
+    def forward(self, z: torch.Tensor) -> List[List[torch.Tensor]]:
+        feats: List[torch.Tensor] = []
+        h = z
+        for block in self.blocks:
+            h = block(h)
+            feats.append(h)
+        feats.append(self.logit(h))
+        return [feats]
+
+    @staticmethod
+    def gan_losses(
+        features_real: List[List[torch.Tensor]],
+        features_fake: List[List[torch.Tensor]],
+        gan_loss_fn,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        return InDomainAudioDiscriminator.gan_losses(
+            features_real, features_fake, gan_loss_fn)
+
+
 _MSD_SCOPE = "discriminator.MultiScaleDiscriminator"
 
 
@@ -140,4 +193,18 @@ def build_in_domain_discriminator(
         n_channels=n_channels,
         num_attributes=num_attributes,
         num_classes_per_attribute=num_classes_per_attribute,
+    )
+
+
+def build_latent_discriminator(
+    latent_size: int,
+    *,
+    hidden_size: int = 256,
+    n_layers: int = 3,
+) -> InDomainLatentDiscriminator:
+    """Construct a latent real/fake D (gin-configurable class)."""
+    return InDomainLatentDiscriminator(
+        latent_size=latent_size,
+        hidden_size=hidden_size,
+        n_layers=n_layers,
     )

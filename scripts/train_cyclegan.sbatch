@@ -13,13 +13,14 @@
 
 set -euo pipefail
 
-# Dual frozen BRAVE CycleGAN (latent or waveform warps).
+# Dual frozen BRAVE CycleGAN (latent warps; waveform warps shelved).
 # Domain X = source (e.g. tap), domain Y = target (e.g. birdsong / water).
+# CYCLE_DOMAIN=waveform|latent (optional gin override). LATENT_CYCLE_MODE=ae_aware|direct.
 : "${CKPT_X:?Set CKPT_X to domain-X checkpoint or run directory}"
 : "${DB_PATH_X:?Set DB_PATH_X to domain-X LMDB}"
 : "${CKPT_Y:?Set CKPT_Y to domain-Y checkpoint or run directory}"
 : "${DB_PATH_Y:?Set DB_PATH_Y to domain-Y LMDB}"
-: "${CANONICALIZER_TYPE:?Set CANONICALIZER_TYPE to waveform or latent}"
+: "${CANONICALIZER_TYPE:=latent}"
 : "${RUN_NAME:?Set RUN_NAME for output folder name}"
 
 BRAVE_ROOT="${BRAVE_ROOT:-/data/hai-res/p1long/BRAVE}"
@@ -60,6 +61,8 @@ echo "BACKBONE_Y_CONFIG=${BACKBONE_Y_CONFIG}"
 echo "CKPT_Y=${CKPT_Y}"
 echo "DB_PATH_Y=${DB_PATH_Y}"
 echo "CANONICALIZER_TYPE=${CANONICALIZER_TYPE}"
+echo "CYCLE_DOMAIN=${CYCLE_DOMAIN:-}"
+echo "LATENT_CYCLE_MODE=${LATENT_CYCLE_MODE:-}"
 echo "RUN_NAME=${RUN_NAME}"
 echo "OUT_PATH=${OUT_PATH}"
 if [[ -n "${OVERRIDE:-}" ]]; then
@@ -93,6 +96,18 @@ CYCLE_ARGS=(
 
 if [[ -n "${MAX_STEPS}" ]]; then
   CYCLE_ARGS+=(--max_steps="${MAX_STEPS}")
+fi
+
+if [[ "${CANONICALIZER_TYPE}" == "waveform" ]]; then
+  echo "WARNING: waveform CycleGAN warps are shelved; prefer CANONICALIZER_TYPE=latent."
+fi
+
+# Optional domain switches (appended before OVERRIDE).
+if [[ -n "${CYCLE_DOMAIN:-}" ]]; then
+  CYCLE_ARGS+=(--override="CycleGANTrainer.cycle_domain=\"${CYCLE_DOMAIN}\"")
+fi
+if [[ -n "${LATENT_CYCLE_MODE:-}" ]]; then
+  CYCLE_ARGS+=(--override="CycleGANTrainer.latent_cycle_mode=\"${LATENT_CYCLE_MODE}\"")
 fi
 
 # Gin overrides: OVERRIDE='binding1 binding2' (space-separated).

@@ -55,10 +55,16 @@ def test_cyclegan_manifest_latent_layers_roundtrip():
         db_path_y="/y",
         latent_n_layers=2,
         latent_hidden_size=128,
+        cycle_domain="latent",
+        latent_cycle_mode="direct",
+        init_mode="random",
     ).to_dict()
     loaded = CycleGANManifest.from_dict(data)
     assert loaded.latent_n_layers == 2
     assert loaded.latent_hidden_size == 128
+    assert loaded.cycle_domain == "latent"
+    assert loaded.latent_cycle_mode == "direct"
+    assert loaded.init_mode == "random"
     legacy = CycleGANManifest.from_dict({
         "canonicalizer_type": "latent",
         "backbone_x_config": "/x.gin",
@@ -70,6 +76,9 @@ def test_cyclegan_manifest_latent_layers_roundtrip():
     })
     assert legacy.latent_n_layers == 1
     assert legacy.latent_hidden_size is None
+    assert legacy.cycle_domain is None
+    assert legacy.latent_cycle_mode == "ae_aware"
+    assert legacy.init_mode == "identity"
 
 
 def test_validate_manifest_warns_on_mismatch():

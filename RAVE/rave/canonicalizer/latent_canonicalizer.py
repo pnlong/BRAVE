@@ -33,10 +33,14 @@ def infer_latent_warp_hparams(state_dict: dict) -> dict:
 @gin.configurable
 class LatentCanonicalizer(nn.Module):
     """
-    L(z) on content latent (B, latent_size, T_lat). Identity init via residual form.
+    L(z) on content latent (B, latent_size, T_lat).
 
-    ``n_layers=1`` (default): gated residual 1×1 conv.
-    ``n_layers=2``: Conv1d → LeakyReLU → Conv1d residual MLP (last conv zero-init).
+    ``init_mode="identity"`` (Stage-1 default): gated residual, identity at init.
+    ``init_mode="random"`` (CycleGAN): no residual gate; variance-preserving random
+    weights (orthogonal 1×1, or Kaiming MLP).
+
+    ``n_layers=1`` (default): 1×1 conv.
+    ``n_layers=2``: Conv1d → LeakyReLU → Conv1d.
 
     Optional ``attr_cls`` FiLM modulates the pre-residual warp when ``num_attributes > 0``.
     """
@@ -50,14 +54,19 @@ class LatentCanonicalizer(nn.Module):
         num_attributes: int = 0,
         num_classes_per_attribute: Optional[Sequence[int]] = None,
         embed_dim: int = 32,
+        init_mode: str = "identity",
     ) -> None:
         super().__init__()
         if n_layers not in (1, 2):
             raise ValueError(f"n_layers must be 1 or 2, got {n_layers}")
+        if init_mode not in ("identity", "random"):
+            raise ValueError("init_mode must be 'identity' or 'random'")
         self.latent_size = latent_size
         self.n_layers = int(n_layers)
         self.hidden_size = int(hidden_size) if hidden_size else latent_size
         self.num_attributes = int(num_attributes)
+        self.init_mode = init_mode
+        self.negative_slope = float(negative_slope)
         self.alpha = nn.Parameter(torch.zeros(1))
 
         if self.n_layers == 1:
@@ -87,7 +96,10 @@ class LatentCanonicalizer(nn.Module):
             )
             self.film = FiLM(self.cond_embed.out_dim, latent_size)
 
-        self._init_identity()
+        if self.init_mode == "identity":
+            self._init_identity()
+        else:
+            self._init_random()
 
     def _init_identity(self) -> None:
         if self.n_layers == 1:
@@ -102,12 +114,28 @@ class LatentCanonicalizer(nn.Module):
         nn.init.zeros_(self.conv2.weight)
         nn.init.zeros_(self.conv2.bias)
 
+    def _init_random(self) -> None:
+        if self.n_layers == 1:
+            assert self.conv is not None
+            with torch.no_grad():
+                nn.init.orthogonal_(self.conv.weight[:, :, 0])
+            nn.init.zeros_(self.conv.bias)
+            return
+        assert self.conv1 is not None and self.conv2 is not None
+        nn.init.kaiming_uniform_(self.conv1.weight, a=self.negative_slope)
+        nn.init.zeros_(self.conv1.bias)
+        nn.init.kaiming_uniform_(self.conv2.weight, a=self.negative_slope)
+        nn.init.zeros_(self.conv2.bias)
+
     def _warp(self, z: torch.Tensor) -> torch.Tensor:
         if self.n_layers == 1:
             assert self.conv is not None
             return self.conv(z)
         assert self.conv1 is not None and self.conv2 is not None and self.act is not None
-        return z + self.conv2(self.act(self.conv1(z)))
+        h = self.conv2(self.act(self.conv1(z)))
+        if self.init_mode == "identity":
+            return z + h
+        return h
 
     def forward(
         self,
@@ -118,5 +146,7 @@ class LatentCanonicalizer(nn.Module):
         if self.film is not None and self.cond_embed is not None and attr_cls is not None:
             cond = self.cond_embed(attr_cls=attr_cls)
             warped = self.film(warped, cond)
+        if self.init_mode == "random":
+            return warped
         alpha = torch.sigmoid(self.alpha)
         return z + alpha * (warped - z)

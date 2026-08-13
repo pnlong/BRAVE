@@ -35,6 +35,7 @@ from rave.canonicalizer.dataset import (
 )
 from rave.canonicalizer.gin_setup import (
     build_in_domain_discriminator,
+    build_latent_discriminator,
     configure_backbone_gin,
     configure_cyclegan_gin,
     resolve_cycle_max_steps,
@@ -155,6 +156,10 @@ def main():
     )
 
     if args.canonicalizer_type == "waveform":
+        print(
+            "WARNING: waveform CycleGAN warps are shelved; prefer "
+            "--canonicalizer_type latent with CycleGANTrainer.cycle_domain."
+        )
         warp_xy = build_waveform_canonicalizer(
             sample_rate=backbone_y.sr,
             n_channels=n_channels,
@@ -164,13 +169,31 @@ def main():
             n_channels=n_channels,
         )
         ckpt_name = "cyclegan_waveform.ckpt"
+        warp_init_mode = "identity"
     else:
-        warp_xy = LatentCanonicalizer(latent_size=backbone_x.latent_size)
-        warp_yx = LatentCanonicalizer(latent_size=backbone_y.latent_size)
+        warp_init_mode = "random"
+        warp_xy = LatentCanonicalizer(
+            latent_size=backbone_x.latent_size, init_mode=warp_init_mode)
+        warp_yx = LatentCanonicalizer(
+            latent_size=backbone_y.latent_size, init_mode=warp_init_mode)
         ckpt_name = "cyclegan_latent.ckpt"
 
-    disc_x = build_in_domain_discriminator(n_channels)
-    disc_y = build_in_domain_discriminator(n_channels)
+    cycle_domain = None
+    for key in (
+        "CycleGANTrainer.cycle_domain",
+        "rave.canonicalizer.cycle_trainer.CycleGANTrainer.cycle_domain",
+    ):
+        try:
+            cycle_domain = gin.query_parameter(key)
+            break
+        except ValueError:
+            continue
+    if cycle_domain == "latent":
+        disc_x = build_latent_discriminator(backbone_x.latent_size)
+        disc_y = build_latent_discriminator(backbone_y.latent_size)
+    else:
+        disc_x = build_in_domain_discriminator(n_channels)
+        disc_y = build_in_domain_discriminator(n_channels)
 
     trainer_module = CycleGANTrainer(
         backbone_x=backbone_x,
@@ -201,6 +224,14 @@ def main():
         f"Unfreeze: encoders={trainer_module.unfreeze_encoders}, "
         f"decoders={trainer_module.unfreeze_decoders}, "
         f"backbone_lr={trainer_module.backbone_lr}",
+    )
+    print(
+        f"cycle_domain={trainer_module.cycle_domain}, "
+        f"gan_domain={trainer_module.gan_domain}, "
+        f"latent_cycle_mode={trainer_module.latent_cycle_mode}, "
+        f"ae_aware={trainer_module.use_ae_aware_cycle}, "
+        f"direct={trainer_module.use_latent_cycle}, "
+        f"warp_init={warp_init_mode}",
     )
 
     train_x, val_x = _load_plain_lmdb_pair(
@@ -283,6 +314,9 @@ def main():
             "n_signal": args.n_signal,
             "max_steps": max_steps,
             "canonicalizer_type": args.canonicalizer_type,
+            "cycle_domain": trainer_module.cycle_domain,
+            "latent_cycle_mode": trainer_module.latent_cycle_mode,
+            "warp_init_mode": warp_init_mode,
             "calibrate_loss_scales": trainer_module.calibrate_loss_scales,
         },
     )
@@ -366,6 +400,9 @@ def main():
         latent_n_layers=int(getattr(warp_xy, "n_layers", 1)),
         latent_hidden_size=getattr(warp_xy, "hidden_size", None)
         if args.canonicalizer_type == "latent" else None,
+        cycle_domain=trainer_module.cycle_domain,
+        latent_cycle_mode=trainer_module.latent_cycle_mode,
+        init_mode=warp_init_mode,
     )
     save_cyclegan_checkpoint(
         out_dir / ckpt_name,

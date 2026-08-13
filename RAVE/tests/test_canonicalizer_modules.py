@@ -211,6 +211,19 @@ def test_latent_canonicalizer_identity():
     z2 = lc(z)
     assert z2.shape == z.shape
     assert torch.allclose(z2, z, atol=1e-5)
+    assert lc.init_mode == "identity"
+
+
+def test_latent_canonicalizer_random_not_identity():
+    torch.manual_seed(0)
+    lc = LatentCanonicalizer(latent_size=16, init_mode="random")
+    z = torch.randn(2, 16, 8)
+    z2 = lc(z)
+    assert z2.shape == z.shape
+    assert not torch.allclose(z2, z, atol=1e-3)
+    loss = z2.sum()
+    loss.backward()
+    assert lc.conv.weight.grad is not None
 
 
 def test_latent_canonicalizer_two_layer_identity_and_grad():

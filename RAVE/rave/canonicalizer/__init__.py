@@ -7,7 +7,10 @@ from .waveform_canonicalizer import (
     WaveformKnobLayout,
     build_waveform_canonicalizer,
 )
-from .in_domain_discriminator import InDomainAudioDiscriminator
+from .in_domain_discriminator import (
+    InDomainAudioDiscriminator,
+    InDomainLatentDiscriminator,
+)
 from .trainer import CanonicalizerTrainer
 from .cycle_trainer import CycleGANTrainer
 
@@ -19,6 +22,7 @@ __all__ = [
     "WaveformKnobLayout",
     "build_waveform_canonicalizer",
     "InDomainAudioDiscriminator",
+    "InDomainLatentDiscriminator",
     "CanonicalizerTrainer",
     "CycleGANTrainer",
 ]

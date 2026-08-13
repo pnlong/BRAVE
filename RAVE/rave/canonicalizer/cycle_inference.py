@@ -24,8 +24,11 @@ def build_cyclegan_warps(
     if mode == "latent":
         xy_h = infer_latent_warp_hparams(warp_xy_state)
         yx_h = infer_latent_warp_hparams(warp_yx_state)
-        warp_xy = LatentCanonicalizer(latent_size=backbone_x.latent_size, **xy_h)
-        warp_yx = LatentCanonicalizer(latent_size=backbone_y.latent_size, **yx_h)
+        init_mode = getattr(manifest, "init_mode", "identity") or "identity"
+        warp_xy = LatentCanonicalizer(
+            latent_size=backbone_x.latent_size, init_mode=init_mode, **xy_h)
+        warp_yx = LatentCanonicalizer(
+            latent_size=backbone_y.latent_size, init_mode=init_mode, **yx_h)
     elif mode == "waveform":
         warp_xy = build_waveform_canonicalizer(
             sample_rate=backbone_y.sr,

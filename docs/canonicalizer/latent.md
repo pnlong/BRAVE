@@ -37,12 +37,14 @@ L(z) = z + σ(α) · (f(z) − z)
 
 Both stay `k=1` (no extra latency). `hidden_size` defaults to `latent_size`.
 
-### Identity initialization
+### Initialization (`init_mode`)
 
-At init `L(z) = z` exactly:
+**`identity`** (Stage-1 default): `L(z) = z` exactly at init via the residual gate.
 
 - **1-layer:** `conv.weight` is identity, bias zero. `α = 0` → `sigmoid(α) = 0.5`, but `f(z) = z`.
-- **2-layer:** last conv (`conv2`) is all zeros, so the MLP residual is 0. `α = 0` still, gradients flow through `σ(α)`.
+- **2-layer:** last conv (`conv2`) is all zeros, so the MLP residual is 0.
+
+**`random`** (CycleGAN latent warps): no residual gate; orthogonal 1×1 or Kaiming MLP so output z stays ~unit variance. `L(z) = f(z)`.
 
 ## Gin configuration
 

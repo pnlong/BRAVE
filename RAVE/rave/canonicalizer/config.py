@@ -258,6 +258,9 @@ class CycleGANManifest:
     backbone_kind: str = "RAVE"
     latent_n_layers: int = 1
     latent_hidden_size: Optional[int] = None
+    cycle_domain: Optional[str] = None
+    latent_cycle_mode: str = "ae_aware"
+    init_mode: str = "identity"
 
     def to_dict(self) -> dict:
         out = {
@@ -270,6 +273,9 @@ class CycleGANManifest:
             "db_path_y": self.db_path_y,
             "use_reverb": self.use_reverb,
             "backbone_kind": self.backbone_kind,
+            "cycle_domain": self.cycle_domain,
+            "latent_cycle_mode": self.latent_cycle_mode,
+            "init_mode": self.init_mode,
         }
         if self.canonicalizer_type == "latent":
             out["latent_n_layers"] = self.latent_n_layers
@@ -292,6 +298,9 @@ class CycleGANManifest:
             backbone_kind=data.get("backbone_kind", "RAVE"),
             latent_n_layers=int(data.get("latent_n_layers", 1)),
             latent_hidden_size=int(hidden) if hidden is not None else None,
+            cycle_domain=data.get("cycle_domain"),
+            latent_cycle_mode=str(data.get("latent_cycle_mode", "ae_aware")),
+            init_mode=str(data.get("init_mode", "identity")),
         )
 
 

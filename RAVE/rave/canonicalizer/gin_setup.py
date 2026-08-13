@@ -8,7 +8,10 @@ from typing import Iterable
 
 import gin
 
-from .in_domain_discriminator import build_in_domain_discriminator
+from .in_domain_discriminator import (
+    build_in_domain_discriminator,
+    build_latent_discriminator,
+)
 
 # Bindings that exist only in configs/brave_canonicalizer.gin (not plain brave.gin).
 _CANONICALIZER_MARKERS: tuple[str, ...] = (
@@ -141,6 +144,7 @@ def configure_cyclegan_gin(
 
 __all__ = [
     "build_in_domain_discriminator",
+    "build_latent_discriminator",
     "configure_backbone_gin",
     "configure_canonicalizer_gin",
     "configure_cyclegan_gin",

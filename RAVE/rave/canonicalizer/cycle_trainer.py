@@ -30,11 +30,17 @@ class CycleGANTrainer(pl.LightningModule):
     """
     Full CycleGAN between domain X (tap) and domain Y (water) on frozen BRAVE.
 
-    Supports latent or waveform warps for G_{X→Y} and G_{Y→X}.
+    Latent warps are cross-space: Enc_src → W → Dec_tgt. Waveform warps are
+    shelved for new runs.
 
-    Cycle consistency can be measured in waveform space (STFT+RMS), latent space
-    (``z ≈ W_rev(W_fwd(z))``, no re-encode), or both — see ``use_waveform_cycle`` /
-    ``use_latent_cycle``.
+    ``cycle_domain`` (preferred) couples cycle loss and discriminator:
+    - ``"waveform"``: STFT+RMS cycle + audio D
+    - ``"latent"``: z L1 cycle + latent D; ``latent_cycle_mode`` is
+      ``"ae_aware"`` (Dec+re-Enc in the cycle) or ``"direct"`` (compose warps
+      only, no decode in train, warmup forced to 0)
+
+    Legacy ``use_waveform_cycle`` / ``use_latent_cycle`` still apply when
+    ``cycle_domain`` is unset (audio D always).
     """
 
     automatic_optimization = False
@@ -62,6 +68,8 @@ class CycleGANTrainer(pl.LightningModule):
         calibration_batches: int = 16,
         loss_scale_min: float = 1e-3,
         cycle_mode: str = "both",
+        cycle_domain: Optional[str] = None,
+        latent_cycle_mode: str = "ae_aware",
         use_waveform_cycle: bool = True,
         use_latent_cycle: bool = False,
         lambda_latent_cycle: float = 10.0,
@@ -88,15 +96,45 @@ class CycleGANTrainer(pl.LightningModule):
             raise ValueError("canonicalizer_type must be waveform or latent")
         if cycle_mode not in ("stft", "rms", "both"):
             raise ValueError("cycle_mode must be stft, rms, or both")
-        if use_latent_cycle and canonicalizer_type != "latent":
-            raise ValueError(
-                "use_latent_cycle=True requires canonicalizer_type='latent' "
-                "(warps must map Z_X ↔ Z_Y)"
+        if latent_cycle_mode not in ("ae_aware", "direct"):
+            raise ValueError("latent_cycle_mode must be ae_aware or direct")
+
+        if cycle_domain is not None:
+            if cycle_domain not in ("waveform", "latent"):
+                raise ValueError("cycle_domain must be waveform or latent")
+            if cycle_domain == "latent" and canonicalizer_type != "latent":
+                raise ValueError(
+                    "cycle_domain='latent' requires canonicalizer_type='latent'"
+                )
+            self.cycle_domain = cycle_domain
+            self.gan_domain = "latent" if cycle_domain == "latent" else "audio"
+            self.latent_cycle_mode = latent_cycle_mode
+            self.use_waveform_cycle = cycle_domain == "waveform"
+            self.use_ae_aware_cycle = (
+                cycle_domain == "latent" and latent_cycle_mode == "ae_aware"
             )
-        if not use_waveform_cycle and not use_latent_cycle:
-            raise ValueError(
-                "at least one of use_waveform_cycle / use_latent_cycle must be True"
+            self.use_latent_cycle = (
+                cycle_domain == "latent" and latent_cycle_mode == "direct"
             )
+            if self.use_latent_cycle:
+                cycle_warmup_duration = 0
+        else:
+            self.cycle_domain = None
+            self.gan_domain = "audio"
+            self.latent_cycle_mode = latent_cycle_mode
+            self.use_waveform_cycle = use_waveform_cycle
+            self.use_ae_aware_cycle = False
+            self.use_latent_cycle = use_latent_cycle
+            if use_latent_cycle and canonicalizer_type != "latent":
+                raise ValueError(
+                    "use_latent_cycle=True requires canonicalizer_type='latent' "
+                    "(warps must map Z_X ↔ Z_Y)"
+                )
+            if not use_waveform_cycle and not use_latent_cycle:
+                raise ValueError(
+                    "at least one of use_waveform_cycle / use_latent_cycle must "
+                    "be True when cycle_domain is unset"
+                )
 
         self.backbone_x = backbone_x
         self.backbone_y = backbone_y
@@ -106,7 +144,10 @@ class CycleGANTrainer(pl.LightningModule):
 
         for disc, name in ((disc_x, "disc_x"), (disc_y, "disc_y")):
             if disc is not None and isinstance(disc, type):
-                disc = disc(n_channels=backbone_x.n_channels)
+                if self.gan_domain == "latent":
+                    disc = disc(latent_size=backbone_x.latent_size)
+                else:
+                    disc = disc(n_channels=backbone_x.n_channels)
             setattr(self, name, disc)
 
         self.lambda_cycle = lambda_cycle
@@ -124,8 +165,6 @@ class CycleGANTrainer(pl.LightningModule):
         self.loss_scale_min = loss_scale_min
         self.loss_scales_calibrated = False
         self.cycle_mode = cycle_mode
-        self.use_waveform_cycle = use_waveform_cycle
-        self.use_latent_cycle = use_latent_cycle
         self.lambda_latent_cycle = lambda_latent_cycle
         self.latent_cycle_loss_scale = latent_cycle_loss_scale
         self.gan_loss_fn = resolve_gan_loss(gan_loss)
@@ -256,6 +295,19 @@ class CycleGANTrainer(pl.LightningModule):
     def _apply_warp(self, warp: nn.Module, tensor: torch.Tensor) -> torch.Tensor:
         return warp(tensor)
 
+    @property
+    def _latent_cycle_active(self) -> bool:
+        return self.use_ae_aware_cycle or self.use_latent_cycle
+
+    def _needs_train_decode(self) -> bool:
+        if self.canonicalizer_type == "waveform":
+            return True
+        if self.use_ae_aware_cycle or self.use_waveform_cycle:
+            return True
+        if self.gan_domain == "audio":
+            return True
+        return False
+
     def _forward_g_xy(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """G_{X→Y}(x) → waveform, multiband, latent (post-warp)."""
         if self.canonicalizer_type == "waveform":
@@ -362,20 +414,51 @@ class CycleGANTrainer(pl.LightningModule):
         x_raw: torch.Tensor,
         x_mask: torch.Tensor,
         y_mask: torch.Tensor,
+        *,
+        decode: Optional[bool] = None,
     ) -> Dict[str, torch.Tensor]:
+        if decode is None:
+            decode = True
         zero_idx = torch.zeros(0, dtype=torch.long, device=self.device)
         outputs: Dict[str, torch.Tensor] = {}
 
         if x_mask.any():
             x_samples = x_raw[x_mask]
             z_x, x_mb = self._encode_latent(self.backbone_x, x_samples)
-            y_fake, y_fake_mb, z_xy = self._forward_g_xy(x_samples)
-            x_cycle, x_cycle_mb, _ = self._forward_g_yx(y_fake)
-            z_x_cycle = (
-                self._apply_warp(
-                    self.warp_yx, self._apply_warp(self.warp_xy, z_x))
-                if self.use_latent_cycle else z_x[:0]
-            )
+            if self.canonicalizer_type == "waveform":
+                y_fake, y_fake_mb, z_xy = self._forward_g_xy(x_samples)
+                x_cycle, x_cycle_mb, z_x_cycle_ae = self._forward_g_yx(y_fake)
+                z_x_cycle = (
+                    self._apply_warp(
+                        self.warp_yx, self._apply_warp(self.warp_xy, z_x))
+                    if self.use_latent_cycle else z_x[:0]
+                )
+            elif not decode:
+                z_xy = self._apply_warp(self.warp_xy, z_x)
+                z_x_cycle = (
+                    self._apply_warp(self.warp_yx, z_xy)
+                    if self._latent_cycle_active else z_x[:0]
+                )
+                empty = x_samples[:0]
+                y_fake, y_fake_mb = empty, empty
+                x_cycle, x_cycle_mb = empty, empty
+            else:
+                y_fake, y_fake_mb, z_xy = self._forward_g_xy(x_samples)
+                if self.use_ae_aware_cycle or self.use_waveform_cycle:
+                    x_cycle, x_cycle_mb, z_x_cycle_ae = self._forward_g_yx(
+                        y_fake)
+                else:
+                    z_direct = self._apply_warp(self.warp_yx, z_xy)
+                    x_cycle, x_cycle_mb = self._decode(
+                        self.backbone_x, z_direct)
+                    x_cycle = self._align_waveforms(x_samples, x_cycle)
+                    z_x_cycle_ae = z_direct
+                if self.use_ae_aware_cycle:
+                    z_x_cycle = z_x_cycle_ae
+                elif self.use_latent_cycle:
+                    z_x_cycle = self._apply_warp(self.warp_yx, z_xy)
+                else:
+                    z_x_cycle = z_x[:0]
             outputs.update({
                 "x": x_samples,
                 "x_mb": x_mb,
@@ -406,13 +489,40 @@ class CycleGANTrainer(pl.LightningModule):
         if y_mask.any():
             y_samples = x_raw[y_mask]
             z_y, y_mb = self._encode_latent(self.backbone_y, y_samples)
-            x_fake, x_fake_mb, z_yx = self._forward_g_yx(y_samples)
-            y_cycle, y_cycle_mb, _ = self._forward_g_xy(x_fake)
-            z_y_cycle = (
-                self._apply_warp(
-                    self.warp_xy, self._apply_warp(self.warp_yx, z_y))
-                if self.use_latent_cycle else z_y[:0]
-            )
+            if self.canonicalizer_type == "waveform":
+                x_fake, x_fake_mb, z_yx = self._forward_g_yx(y_samples)
+                y_cycle, y_cycle_mb, z_y_cycle_ae = self._forward_g_xy(x_fake)
+                z_y_cycle = (
+                    self._apply_warp(
+                        self.warp_xy, self._apply_warp(self.warp_yx, z_y))
+                    if self.use_latent_cycle else z_y[:0]
+                )
+            elif not decode:
+                z_yx = self._apply_warp(self.warp_yx, z_y)
+                z_y_cycle = (
+                    self._apply_warp(self.warp_xy, z_yx)
+                    if self._latent_cycle_active else z_y[:0]
+                )
+                empty = y_samples[:0]
+                x_fake, x_fake_mb = empty, empty
+                y_cycle, y_cycle_mb = empty, empty
+            else:
+                x_fake, x_fake_mb, z_yx = self._forward_g_yx(y_samples)
+                if self.use_ae_aware_cycle or self.use_waveform_cycle:
+                    y_cycle, y_cycle_mb, z_y_cycle_ae = self._forward_g_xy(
+                        x_fake)
+                else:
+                    z_direct = self._apply_warp(self.warp_xy, z_yx)
+                    y_cycle, y_cycle_mb = self._decode(
+                        self.backbone_y, z_direct)
+                    y_cycle = self._align_waveforms(y_samples, y_cycle)
+                    z_y_cycle_ae = z_direct
+                if self.use_ae_aware_cycle:
+                    z_y_cycle = z_y_cycle_ae
+                elif self.use_latent_cycle:
+                    z_y_cycle = self._apply_warp(self.warp_xy, z_yx)
+                else:
+                    z_y_cycle = z_y[:0]
             outputs.update({
                 "y": y_samples,
                 "y_mb": y_mb,
@@ -478,6 +588,18 @@ class CycleGANTrainer(pl.LightningModule):
         if self.lambda_identity <= 0.0:
             return zero
 
+        if self.gan_domain == "latent" and self.canonicalizer_type == "latent":
+            loss = zero
+            if y_mask.any() and fwd["z_y"].numel():
+                z_y_via_x, _ = self._encode_latent(self.backbone_x, fwd["y"])
+                z_y_id = self._apply_warp(self.warp_xy, z_y_via_x)
+                loss = loss + self._latent_cycle_loss(fwd["z_y"], z_y_id)
+            if x_mask.any() and fwd["z_x"].numel():
+                z_x_via_y, _ = self._encode_latent(self.backbone_y, fwd["x"])
+                z_x_id = self._apply_warp(self.warp_yx, z_x_via_y)
+                loss = loss + self._latent_cycle_loss(fwd["z_x"], z_x_id)
+            return loss
+
         loss = zero
         if y_mask.any():
             y_id, y_id_mb, _ = self._forward_g_xy(fwd["y"])
@@ -502,6 +624,29 @@ class CycleGANTrainer(pl.LightningModule):
             )
             loss = loss + self._weighted_cycle(stft, rms)
         return loss
+
+    def _gan_pairs(
+        self,
+        fwd: Dict[str, torch.Tensor],
+        *,
+        detach: bool,
+    ) -> Tuple[
+        List[List[torch.Tensor]],
+        List[List[torch.Tensor]],
+        List[List[torch.Tensor]],
+        List[List[torch.Tensor]],
+    ]:
+        if self.gan_domain == "latent":
+            feat_real_y, feat_fake_y = self._disc_features(
+                self.disc_y, fwd["z_y"], fwd["z_xy"], detach=detach)
+            feat_real_x, feat_fake_x = self._disc_features(
+                self.disc_x, fwd["z_x"], fwd["z_yx"], detach=detach)
+        else:
+            feat_real_y, feat_fake_y = self._disc_features(
+                self.disc_y, fwd["y"], fwd["y_fake"], detach=detach)
+            feat_real_x, feat_fake_x = self._disc_features(
+                self.disc_x, fwd["x"], fwd["x_fake"], detach=detach)
+        return feat_real_y, feat_fake_y, feat_real_x, feat_fake_x
 
     def _update_latent_var_refs(
         self,
@@ -550,7 +695,8 @@ class CycleGANTrainer(pl.LightningModule):
         x_raw, domain = self._parse_batch(batch)
         x_raw = x_raw.to(self.device)
         y_mask, x_mask = self._domain_masks(domain)
-        fwd = self._forward_batch(x_raw, x_mask, y_mask)
+        fwd = self._forward_batch(
+            x_raw, x_mask, y_mask, decode=self._needs_train_decode())
 
         out: Dict[str, Optional[float]] = {
             "cycle_x": None,
@@ -575,7 +721,7 @@ class CycleGANTrainer(pl.LightningModule):
                     fwd["z_xy"].shape[-1],
                 )
                 out["cycle_x"] = float((stft + rms).detach().cpu())
-            if self.use_latent_cycle and fwd["z_x_cycle"].numel():
+            if self._latent_cycle_active and fwd["z_x_cycle"].numel():
                 out["latent_cycle_x"] = float(
                     self._latent_cycle_loss(fwd["z_x"], fwd["z_x_cycle"]).detach().cpu())
 
@@ -590,15 +736,13 @@ class CycleGANTrainer(pl.LightningModule):
                     fwd["z_yx"].shape[-1],
                 )
                 out["cycle_y"] = float((stft + rms).detach().cpu())
-            if self.use_latent_cycle and fwd["z_y_cycle"].numel():
+            if self._latent_cycle_active and fwd["z_y_cycle"].numel():
                 out["latent_cycle_y"] = float(
                     self._latent_cycle_loss(fwd["z_y"], fwd["z_y_cycle"]).detach().cpu())
 
         if include_adversarial and self.disc_y is not None and x_mask.any() and y_mask.any():
-            feat_real_y, feat_fake_y = self._disc_features(
-                self.disc_y, fwd["y"], fwd["y_fake"], detach=True)
-            feat_real_x, feat_fake_x = self._disc_features(
-                self.disc_x, fwd["x"], fwd["x_fake"], detach=True)
+            feat_real_y, feat_fake_y, feat_real_x, feat_fake_x = self._gan_pairs(
+                fwd, detach=True)
             out["gan_y"] = float(audio_gan_g(feat_fake_y, self.gan_loss_fn).detach().cpu())
             out["gan_x"] = float(audio_gan_g(feat_fake_x, self.gan_loss_fn).detach().cpu())
             out["fm_y"] = float(feature_matching_loss(
@@ -705,7 +849,7 @@ class CycleGANTrainer(pl.LightningModule):
         self.log("cycle/cycle_y_norm", loss_cycle_y, batch_size=batch_size)
         self.log("cycle/gan_factor", float(self.gan_factor), batch_size=batch_size)
         self.log("cycle/cycle_warmed_up", float(self.cycle_warmed_up), batch_size=batch_size)
-        if self.use_latent_cycle:
+        if self._latent_cycle_active:
             self.log("cycle/latent_cycle_norm", loss_latent_cycle, batch_size=batch_size)
         if self.gan_factor > 0.0:
             self.log("cycle/adv_norm", loss_adv, batch_size=batch_size)
@@ -725,7 +869,8 @@ class CycleGANTrainer(pl.LightningModule):
         y_mask, x_mask = self._domain_masks(domain)
 
         self._update_latent_var_refs(x_raw, x_mask, y_mask)
-        fwd = self._forward_batch(x_raw, x_mask, y_mask)
+        fwd = self._forward_batch(
+            x_raw, x_mask, y_mask, decode=self._needs_train_decode())
 
         zero = torch.tensor(0.0, device=self.device)
         loss_cycle_x = zero
@@ -741,7 +886,7 @@ class CycleGANTrainer(pl.LightningModule):
                 fwd["x_cycle_mb"],
                 fwd["z_xy"].shape[-1],
             )
-            if self.use_latent_cycle:
+            if self._latent_cycle_active:
                 loss_latent_cycle = loss_latent_cycle + normalize_loss(
                     self._latent_cycle_loss(fwd["z_x"], fwd["z_x_cycle"]),
                     self.latent_cycle_loss_scale,
@@ -756,7 +901,7 @@ class CycleGANTrainer(pl.LightningModule):
                 fwd["y_cycle_mb"],
                 fwd["z_yx"].shape[-1],
             )
-            if self.use_latent_cycle:
+            if self._latent_cycle_active:
                 loss_latent_cycle = loss_latent_cycle + normalize_loss(
                     self._latent_cycle_loss(fwd["z_y"], fwd["z_y_cycle"]),
                     self.latent_cycle_loss_scale,
@@ -777,10 +922,8 @@ class CycleGANTrainer(pl.LightningModule):
         )
 
         if is_disc_step:
-            feat_real_y, feat_fake_y = self._disc_features(
-                self.disc_y, fwd["y"], fwd["y_fake"], detach=True)
-            feat_real_x, feat_fake_x = self._disc_features(
-                self.disc_x, fwd["x"], fwd["x_fake"], detach=True)
+            feat_real_y, feat_fake_y, feat_real_x, feat_fake_x = self._gan_pairs(
+                fwd, detach=True)
             loss_d_y = audio_gan_d(feat_real_y, feat_fake_y, self.gan_loss_fn)
             loss_d_x = audio_gan_d(feat_real_x, feat_fake_x, self.gan_loss_fn)
             loss_d = loss_d_y + loss_d_x
@@ -803,10 +946,8 @@ class CycleGANTrainer(pl.LightningModule):
             return loss_d
 
         if gan_active:
-            feat_real_y, feat_fake_y = self._disc_features(
-                self.disc_y, fwd["y"], fwd["y_fake"], detach=False)
-            feat_real_x, feat_fake_x = self._disc_features(
-                self.disc_x, fwd["x"], fwd["x_fake"], detach=False)
+            feat_real_y, feat_fake_y, feat_real_x, feat_fake_x = self._gan_pairs(
+                fwd, detach=False)
             loss_gan_y = audio_gan_g(feat_fake_y, self.gan_loss_fn)
             loss_gan_x = audio_gan_g(feat_fake_x, self.gan_loss_fn)
             loss_fm_y = feature_matching_loss(
@@ -862,7 +1003,7 @@ class CycleGANTrainer(pl.LightningModule):
         y_mask, x_mask = self._domain_masks(domain)
 
         with torch.no_grad():
-            fwd = self._forward_batch(x_raw, x_mask, y_mask)
+            fwd = self._forward_batch(x_raw, x_mask, y_mask, decode=True)
 
             if x_mask.any():
                 if self.use_waveform_cycle:
@@ -882,7 +1023,7 @@ class CycleGANTrainer(pl.LightningModule):
                         sync_dist=True,
                         batch_size=batch_size,
                     )
-                if self.use_latent_cycle and fwd["z_x_cycle"].numel():
+                if self._latent_cycle_active and fwd["z_x_cycle"].numel():
                     self.log(
                         "val/latent_cycle_x",
                         normalize_loss(
@@ -895,8 +1036,12 @@ class CycleGANTrainer(pl.LightningModule):
                         sync_dist=True,
                         batch_size=batch_size,
                     )
-                if self.disc_y is not None and fwd["y_fake"].shape[0] > 0:
-                    feat_fake = self.disc_y(fwd["y_fake"])
+                if self.disc_y is not None and (
+                    fwd["z_xy"].shape[0] > 0 if self.gan_domain == "latent"
+                    else fwd["y_fake"].shape[0] > 0
+                ):
+                    feat_fake = self.disc_y(
+                        fwd["z_xy"] if self.gan_domain == "latent" else fwd["y_fake"])
                     self.log(
                         "val/disc_y_fake",
                         mean_fake_logit(feat_fake),
@@ -924,7 +1069,7 @@ class CycleGANTrainer(pl.LightningModule):
                         sync_dist=True,
                         batch_size=batch_size,
                     )
-                if self.use_latent_cycle and fwd["z_y_cycle"].numel():
+                if self._latent_cycle_active and fwd["z_y_cycle"].numel():
                     self.log(
                         "val/latent_cycle_y",
                         normalize_loss(
@@ -937,8 +1082,12 @@ class CycleGANTrainer(pl.LightningModule):
                         sync_dist=True,
                         batch_size=batch_size,
                     )
-                if self.disc_x is not None and fwd["x_fake"].shape[0] > 0:
-                    feat_fake = self.disc_x(fwd["x_fake"])
+                if self.disc_x is not None and (
+                    fwd["z_yx"].shape[0] > 0 if self.gan_domain == "latent"
+                    else fwd["x_fake"].shape[0] > 0
+                ):
+                    feat_fake = self.disc_x(
+                        fwd["z_yx"] if self.gan_domain == "latent" else fwd["x_fake"])
                     self.log(
                         "val/disc_x_fake",
                         mean_fake_logit(feat_fake),
