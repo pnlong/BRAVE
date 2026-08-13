@@ -87,6 +87,10 @@ rave.canonicalizer.waveform_canonicalizer.WaveformCanonicalizer:
 
 rave.canonicalizer.latent_canonicalizer.LatentCanonicalizer:
     latent_size = %LATENT_SIZE
+    n_layers = 1
+    # 2-layer residual MLP (Conv → LeakyReLU → Conv), identity at init:
+    #   n_layers = 2
+    #   hidden_size = %LATENT_SIZE
 
 discriminator.ConvNet:
     in_size = 1

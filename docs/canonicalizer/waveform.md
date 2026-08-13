@@ -138,6 +138,10 @@ rave.canonicalizer.waveform_canonicalizer.WaveformCanonicalizer:
     knob_ema_decay = 0.95   # set null / omit binding for no smoothing
 ```
 
+## Performance note (CausalReverb)
+
+Comb / allpass stages use **delay-line** implementations (`O(T)` per filter), not dense `lfilter` with coefficient vectors of length `delay`. The transfer functions are unchanged; training graphs are dramatically cheaper at BRAVE clip lengths (`n_signal ≈ 2¹⁷`).
+
 Disable streaming cached conv for offline-only TorchScript:
 
 ```bash

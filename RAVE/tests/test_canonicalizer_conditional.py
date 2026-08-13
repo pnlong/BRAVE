@@ -110,3 +110,19 @@ def test_latent_canonicalizer_conditional_identity():
     z2 = lc(z, attr_cls=attr_cls)
     assert z2.shape == z.shape
     assert torch.allclose(z2, z, atol=1e-5)
+
+
+def test_latent_canonicalizer_conditional_two_layer_identity():
+    lc = LatentCanonicalizer(
+        latent_size=16,
+        n_layers=2,
+        hidden_size=24,
+        num_attributes=2,
+        num_classes_per_attribute=[16, 4],
+        embed_dim=8,
+    )
+    z = torch.randn(2, 16, 32)
+    attr_cls = torch.zeros(2, 2, 32, dtype=torch.long)
+    z2 = lc(z, attr_cls=attr_cls)
+    assert z2.shape == z.shape
+    assert torch.allclose(z2, z, atol=1e-5)

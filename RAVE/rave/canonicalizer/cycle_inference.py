@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 
 from .config import CycleGANManifest, load_cyclegan_checkpoint
-from .latent_canonicalizer import LatentCanonicalizer
+from .latent_canonicalizer import LatentCanonicalizer, infer_latent_warp_hparams
 from .waveform_canonicalizer import build_waveform_canonicalizer
 
 
@@ -22,8 +22,10 @@ def build_cyclegan_warps(
 ) -> Tuple[nn.Module, nn.Module]:
     mode = manifest.canonicalizer_type
     if mode == "latent":
-        warp_xy = LatentCanonicalizer(latent_size=backbone_x.latent_size)
-        warp_yx = LatentCanonicalizer(latent_size=backbone_y.latent_size)
+        xy_h = infer_latent_warp_hparams(warp_xy_state)
+        yx_h = infer_latent_warp_hparams(warp_yx_state)
+        warp_xy = LatentCanonicalizer(latent_size=backbone_x.latent_size, **xy_h)
+        warp_yx = LatentCanonicalizer(latent_size=backbone_y.latent_size, **yx_h)
     elif mode == "waveform":
         warp_xy = build_waveform_canonicalizer(
             sample_rate=backbone_y.sr,

@@ -7,7 +7,10 @@ from rave.canonicalizer.waveform_canonicalizer import (
     WaveformKnobLayout,
     layout_from_modules,
 )
-from rave.canonicalizer.latent_canonicalizer import LatentCanonicalizer
+from rave.canonicalizer.latent_canonicalizer import (
+    LatentCanonicalizer,
+    infer_latent_warp_hparams,
+)
 
 
 def _make_waveform_canonicalizer(
@@ -208,6 +211,37 @@ def test_latent_canonicalizer_identity():
     z2 = lc(z)
     assert z2.shape == z.shape
     assert torch.allclose(z2, z, atol=1e-5)
+
+
+def test_latent_canonicalizer_two_layer_identity_and_grad():
+    lc = LatentCanonicalizer(latent_size=16, n_layers=2, hidden_size=32)
+    z = torch.randn(2, 16, 8)
+    z2 = lc(z)
+    assert z2.shape == z.shape
+    assert torch.allclose(z2, z, atol=1e-5)
+    loss = z2.sum()
+    loss.backward()
+    assert lc.conv2.weight.grad is not None
+    assert lc.conv1.weight.grad is not None
+
+
+def test_latent_canonicalizer_n_layers_invalid():
+    try:
+        LatentCanonicalizer(latent_size=8, n_layers=3)
+        assert False, "expected ValueError"
+    except ValueError:
+        pass
+
+
+def test_infer_latent_warp_hparams():
+    one = LatentCanonicalizer(latent_size=8).state_dict()
+    assert infer_latent_warp_hparams(one) == {"n_layers": 1}
+    two = LatentCanonicalizer(latent_size=8, n_layers=2, hidden_size=12).state_dict()
+    assert infer_latent_warp_hparams(two) == {"n_layers": 2, "hidden_size": 12}
+    loaded = LatentCanonicalizer(latent_size=8, **infer_latent_warp_hparams(two))
+    loaded.load_state_dict(two)
+    z = torch.randn(1, 8, 4)
+    assert torch.allclose(loaded(z), z, atol=1e-5)
 
 
 def test_frame_rms_curve_shape_and_grad():

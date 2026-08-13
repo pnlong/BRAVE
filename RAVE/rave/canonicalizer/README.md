@@ -57,7 +57,7 @@ Applied on the backbone via `waveform_canonicalizer` slot
 x → Enc → L(z) → Dec → y
 ```
 
-`L` is a gated residual 1×1 conv, identity at init. Applied via `latent_canonicalizer` slot.
+`L` is a gated residual 1×1 conv (`n_layers=1`, default) or Conv→LeakyReLU→Conv MLP (`n_layers=2`), identity at init. Applied via `latent_canonicalizer` slot.
 
 ## Training loss
 

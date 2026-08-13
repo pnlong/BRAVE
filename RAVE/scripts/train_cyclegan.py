@@ -363,6 +363,9 @@ def main():
         db_path_x=str(Path(args.db_path_x).resolve()),
         db_path_y=str(Path(args.db_path_y).resolve()),
         use_reverb=getattr(warp_xy, "use_reverb", False),
+        latent_n_layers=int(getattr(warp_xy, "n_layers", 1)),
+        latent_hidden_size=getattr(warp_xy, "hidden_size", None)
+        if args.canonicalizer_type == "latent" else None,
     )
     save_cyclegan_checkpoint(
         out_dir / ckpt_name,

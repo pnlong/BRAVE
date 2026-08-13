@@ -2,42 +2,86 @@
 
 from __future__ import annotations
 
-from typing import Optional, Sequence
+from typing import Optional, Sequence, Union
 
 import gin
 import torch
 import torch.nn as nn
-import torchaudio.functional as AF
+import torch.nn.functional as F
 
 
-def _lfilter(x: torch.Tensor, b: torch.Tensor, a: torch.Tensor) -> torch.Tensor:
-    dtype = x.dtype
-    device = x.device
-    return AF.lfilter(x, a.to(dtype=dtype, device=device), b.to(dtype=dtype, device=device), clamp=False)
+def _as_batch_param(
+    value: Union[float, torch.Tensor],
+    batch: int,
+    *,
+    dtype: torch.dtype,
+    device: torch.device,
+) -> torch.Tensor:
+    """Broadcast a scalar or (B,) tensor to (B, 1, 1) for audio (B, C, T)."""
+    if not torch.is_tensor(value):
+        t = torch.full((batch,), float(value), dtype=dtype, device=device)
+    else:
+        t = value.to(dtype=dtype, device=device).reshape(-1)
+        if t.numel() == 1 and batch > 1:
+            t = t.expand(batch)
+        elif t.numel() != batch:
+            raise ValueError(f"expected {batch} params, got {t.numel()}")
+    return t.view(batch, 1, 1)
 
 
-def _comb_filter(x: torch.Tensor, delay_samples: int, feedback: torch.Tensor) -> torch.Tensor:
-    """y[n] = x[n] + fb * y[n - delay]."""
-    d = delay_samples
-    fb = feedback.reshape(()).to(dtype=x.dtype, device=x.device)
-    a = x.new_zeros(d + 1)
-    a[0] = 1.0
-    a[d] = -fb
-    b = x.new_zeros(d + 1)
-    b[0] = 1.0
-    return _lfilter(x, b, a)
+def _feedback_comb(
+    x: torch.Tensor,
+    delay_samples: int,
+    feedback: Union[float, torch.Tensor],
+) -> torch.Tensor:
+    """
+    Exact feedback comb: ``y[n] = x[n] + fb * y[n - delay]`` (zero initial state).
+
+    Implements the same filter as a dense ``lfilter`` with coeffs of length
+    ``delay+1``, but in ``O(T)`` via delay-line blocks instead of ``O(T·delay)``.
+    """
+    if x.dim() != 3:
+        raise ValueError(f"expected (B, C, T), got {tuple(x.shape)}")
+    if delay_samples < 1:
+        raise ValueError("delay_samples must be >= 1")
+
+    bsz, _, length = x.shape
+    if length <= delay_samples:
+        return x
+
+    fb = _as_batch_param(feedback, bsz, dtype=x.dtype, device=x.device)
+    blocks = [x[..., :delay_samples]]
+    prev = blocks[0]
+    pos = delay_samples
+    while pos < length:
+        end = min(pos + delay_samples, length)
+        seg = end - pos
+        curr = x[..., pos:end] + fb * prev[..., :seg]
+        blocks.append(curr)
+        prev = curr
+        pos = end
+    return torch.cat(blocks, dim=-1)
 
 
-def _allpass_filter(x: torch.Tensor, delay_samples: int, gain: torch.Tensor) -> torch.Tensor:
-    """y[n] = x[n-d] + g * (x[n] - x[n-d])."""
-    d = delay_samples
-    g = gain.reshape(()).to(dtype=x.dtype, device=x.device)
-    a = x.new_zeros(d + 1)
-    a[0] = 1.0
-    b = x.new_zeros(d + 1)
-    b[0] = g
-    b[d] = 1.0 - g
-    return _lfilter(x, b, a)
+def _feedforward_allpass(
+    x: torch.Tensor,
+    delay_samples: int,
+    gain: Union[float, torch.Tensor],
+) -> torch.Tensor:
+    """
+    Exact feedforward allpass matching the historical coeff form:
+
+    ``y[n] = g * x[n] + (1 - g) * x[n - delay]`` (zeros for ``n < delay``).
+    """
+    if x.dim() != 3:
+        raise ValueError(f"expected (B, C, T), got {tuple(x.shape)}")
+    if delay_samples < 1:
+        raise ValueError("delay_samples must be >= 1")
+
+    bsz = x.shape[0]
+    g = _as_batch_param(gain, bsz, dtype=x.dtype, device=x.device)
+    x_delayed = F.pad(x, (delay_samples, 0))[..., : x.shape[-1]]
+    return g * x + (1.0 - g) * x_delayed
 
 
 class _CombFilter(nn.Module):
@@ -54,8 +98,8 @@ class _CombFilter(nn.Module):
         if feedback is None:
             fb = torch.sigmoid(self.feedback) * 0.85
         else:
-            fb = torch.sigmoid(feedback.reshape(())) * 0.85
-        return _comb_filter(x, self.delay_samples, fb)
+            fb = torch.sigmoid(feedback) * 0.85
+        return _feedback_comb(x, self.delay_samples, fb)
 
 
 class _AllpassFilter(nn.Module):
@@ -72,8 +116,8 @@ class _AllpassFilter(nn.Module):
         if gain is None:
             g = torch.sigmoid(self.gain) * 0.7
         else:
-            g = torch.sigmoid(gain.reshape(())) * 0.7
-        return _allpass_filter(x, self.delay_samples, g)
+            g = torch.sigmoid(gain) * 0.7
+        return _feedforward_allpass(x, self.delay_samples, g)
 
 
 @gin.configurable
@@ -113,22 +157,6 @@ class CausalReverb(nn.Module):
     def n_knobs(self) -> int:
         return 1 + self.n_combs + self.n_allpasses
 
-    def _forward_single(
-        self,
-        x: torch.Tensor,
-        wet_logit: torch.Tensor,
-        comb_raw: torch.Tensor,
-        ap_raw: torch.Tensor,
-    ) -> torch.Tensor:
-        wet = torch.sigmoid(wet_logit.reshape(()))
-        comb_sum = 0.0
-        for i, comb in enumerate(self.combs):
-            comb_sum = comb_sum + comb(x, feedback=comb_raw[i])
-        rev = comb_sum / len(self.combs)
-        for j, ap in enumerate(self.allpasses):
-            rev = ap(rev, gain=ap_raw[j])
-        return x + wet * (rev - x)
-
     def forward(
         self,
         x: torch.Tensor,
@@ -145,19 +173,25 @@ class CausalReverb(nn.Module):
                 rev = ap(rev)
             return x + wet * (rev - x)
 
+        if knobs.dim() != 2 or knobs.shape[0] != x.shape[0]:
+            raise ValueError(
+                f"knobs must be (B, n_knobs) matching x batch {x.shape[0]}, "
+                f"got {tuple(knobs.shape)}"
+            )
         if knobs.shape[-1] != self.n_knobs:
             raise ValueError(
                 f"expected knobs with {self.n_knobs} slots, got {knobs.shape[-1]}"
             )
 
-        outs = []
+        wet = torch.sigmoid(knobs[:, 0]).view(-1, 1, 1)
         n_comb = self.n_combs
-        for b in range(x.shape[0]):
-            row = knobs[b]
-            outs.append(self._forward_single(
-                x[b:b + 1],
-                row[0],
-                row[1:1 + n_comb],
-                row[1 + n_comb:],
-            ))
-        return torch.cat(outs, dim=0)
+        comb_raw = knobs[:, 1:1 + n_comb]
+        ap_raw = knobs[:, 1 + n_comb:]
+
+        comb_sum = 0.0
+        for i, comb in enumerate(self.combs):
+            comb_sum = comb_sum + comb(x, feedback=comb_raw[:, i])
+        rev = comb_sum / len(self.combs)
+        for j, ap in enumerate(self.allpasses):
+            rev = ap(rev, gain=ap_raw[:, j])
+        return x + wet * (rev - x)

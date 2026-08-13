@@ -148,6 +148,7 @@ SLURM (export vars in the shell, then sbatch — avoid multiline `--export`):
 ```bash
 sbatch scripts/train_cyclegan.sbatch
 ```
+2-layer latent warp: `OVERRIDE='LatentCanonicalizer.n_layers=2'` (optionally with `CycleGANTrainer.use_latent_cycle=True`).
 
 **Export Fader plain TorchScript (128+D concat, Python demos):**
 ```bash

@@ -9,6 +9,7 @@ import yaml
 
 from rave.canonicalizer.config import (
     CanonicalizerManifest,
+    CycleGANManifest,
     descriptor_loss_attributes,
     save_canonicalizer_checkpoint,
     load_canonicalizer_checkpoint,
@@ -40,6 +41,35 @@ def test_manifest_roundtrip():
         state, loaded = load_canonicalizer_checkpoint(path)
         assert loaded.canonicalizer_type == "waveform"
         assert "eq.filters.0.gain_db" in state
+        assert loaded.latent_n_layers == 1
+
+
+def test_cyclegan_manifest_latent_layers_roundtrip():
+    data = CycleGANManifest(
+        canonicalizer_type="latent",
+        backbone_x_config="/x.gin",
+        backbone_x_ckpt="/x.ckpt",
+        backbone_y_config="/y.gin",
+        backbone_y_ckpt="/y.ckpt",
+        db_path_x="/x",
+        db_path_y="/y",
+        latent_n_layers=2,
+        latent_hidden_size=128,
+    ).to_dict()
+    loaded = CycleGANManifest.from_dict(data)
+    assert loaded.latent_n_layers == 2
+    assert loaded.latent_hidden_size == 128
+    legacy = CycleGANManifest.from_dict({
+        "canonicalizer_type": "latent",
+        "backbone_x_config": "/x.gin",
+        "backbone_x_ckpt": "/x.ckpt",
+        "backbone_y_config": "/y.gin",
+        "backbone_y_ckpt": "/y.ckpt",
+        "db_path_x": "/x",
+        "db_path_y": "/y",
+    })
+    assert legacy.latent_n_layers == 1
+    assert legacy.latent_hidden_size is None
 
 
 def test_validate_manifest_warns_on_mismatch():

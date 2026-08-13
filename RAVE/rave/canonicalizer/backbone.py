@@ -8,7 +8,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from .latent_canonicalizer import LatentCanonicalizer
+from .latent_canonicalizer import LatentCanonicalizer, infer_latent_warp_hparams
 from .waveform_canonicalizer import build_waveform_canonicalizer
 
 
@@ -36,7 +36,11 @@ def attach_canonicalizer_modules(
         warp.load_state_dict(state_dict)
         model.waveform_canonicalizer = warp.to(device)
     elif canonicalizer_type == "latent":
-        warp = LatentCanonicalizer(latent_size=model.latent_size, **cond_kwargs)
+        warp = LatentCanonicalizer(
+            latent_size=model.latent_size,
+            **infer_latent_warp_hparams(state_dict),
+            **cond_kwargs,
+        )
         warp.load_state_dict(state_dict)
         model.latent_canonicalizer = warp.to(device)
     else:

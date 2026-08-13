@@ -13,9 +13,24 @@ Config: [`configs/brave_cyclegan.gin`](../../configs/brave_cyclegan.gin).
 | `G_{Y→X}` | `warp_yx` + frozen Enc/Dec (water → tap) |
 | `D_Y` | Real water vs `G_{X→Y}(x)` |
 | `D_X` | Real tap vs `G_{Y→X}(y)` |
-| Cycle | `x ≈ G_{Y→X}(G_{X→Y}(x))`, `y ≈ G_{X→Y}(G_{Y→X}(y))` (STFT + RMS) |
+| Waveform cycle | `x ≈ G_{Y→X}(G_{X→Y}(x))` via STFT + RMS (`use_waveform_cycle`) |
+| Latent cycle | `z_x ≈ W_{yx}(W_{xy}(z_x))` L1, no re-encode (`use_latent_cycle`; latent warps only) |
 
 Relation to one-way canonicalizer: see [`docs/canonicalizer/loss.md`](../canonicalizer/loss.md) CycleGAN mapping — canonicalizer is **one-way** (X→Y + `D_Y` only).
+
+Enable latent cycle (optionally drop waveform cycle):
+
+```bash
+OVERRIDE='CycleGANTrainer.use_latent_cycle=True'
+# latent-only cycle:
+# OVERRIDE='CycleGANTrainer.use_latent_cycle=True CycleGANTrainer.use_waveform_cycle=False'
+```
+
+2-layer latent warp (Conv → LeakyReLU → Conv; still identity at init):
+
+```bash
+OVERRIDE='CycleGANTrainer.use_latent_cycle=True LatentCanonicalizer.n_layers=2'
+```
 
 ## Training schedule
 
@@ -86,8 +101,10 @@ y = transfer_x_to_y(x_tap, backbone_x, backbone_y, warp_xy, mode="latent")
 | Key | Meaning |
 |-----|---------|
 | `cycle/gan_factor` | 0 during warmup, ramps to 1 |
-| `cycle/cycle_x_norm`, `cycle/cycle_y_norm` | Normalized cycle losses |
-| `val/cycle_x`, `val/cycle_y` | Validation cycle (primary warmup signal) |
+| `cycle/cycle_x_norm`, `cycle/cycle_y_norm` | Normalized waveform cycle losses |
+| `cycle/latent_cycle_norm` | Normalized latent cycle (when enabled) |
+| `val/cycle_x`, `val/cycle_y` | Validation waveform cycle |
+| `val/latent_cycle_x`, `val/latent_cycle_y` | Validation latent cycle |
 | `val/disc_x_fake`, `val/disc_y_fake` | Fake logits after GAN phase |
 | `val/audio_x`, `val/audio_y` | `input \| transfer \| cycle` |
 | `val/audio_x_to_y`, `val/audio_y_to_x` | Transfer only |

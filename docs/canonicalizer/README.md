@@ -9,8 +9,8 @@ Implementation lives in [`RAVE/rave/canonicalizer/`](../../RAVE/rave/canonicaliz
 | | [Waveform](waveform.md) | [Latent](latent.md) |
 |---|-------------------------|---------------------|
 | **Where it acts** | On raw audio, before PQMF encode | On content latent `z`, after encode |
-| **Mechanism** | Per-input knob encoder → causal EQ + optional reverb | Gated residual 1×1 conv on `z` |
-| **Interpretability** | Explicit DSP knobs (EQ bands, reverb wet/comb/allpass) | Learned linear mix in latent space |
+| **Mechanism** | Per-input knob encoder → causal EQ + optional reverb | Gated residual 1×1 (`n_layers=1`) or Conv→LeakyReLU→Conv MLP (`n_layers=2`) on `z` |
+| **Interpretability** | Explicit DSP knobs (EQ bands, reverb wet/comb/allpass) | Learned mix in latent space (affine, or small MLP) |
 | **Typical use** | Timbre/room correction you can reason about in Hz and wet/dry | Broader latent remapping when waveform DSP is too constrained |
 | **Realtime caveat** | Per-block knob estimates; use EMA smoothing in export | Stateless per latent frame; no knob smoothing needed |
 | **Checkpoint** | `waveform_canonicalizer.ckpt` | `latent_canonicalizer.ckpt` |

@@ -18,33 +18,49 @@ Training Stage-1 with `--canonicalizer_type latent` optimizes only `L`; the back
 
 ## Architecture
 
-`L` is a **gated residual** 1×1 convolution:
+`L` is a **gated residual** warp. Default (`n_layers=1`) is a 1×1 convolution:
 
 ```
-L(z) = z + σ(α) · (Conv1d(z) − z)
+L(z) = z + σ(α) · (f(z) − z)
 ```
+
+| `n_layers` | `f(z)` | Notes |
+|------------|--------|--------|
+| `1` (default) | `Conv1d(z)` | Affine channel mix |
+| `2` | `z + Conv2(LeakyReLU(Conv1(z)))` | Residual MLP; last conv zero-init |
 
 | Parameter | Shape | Role |
 |-----------|-------|------|
-| `conv` | `(latent_size, latent_size, 1)` | Linear mix across latent channels per time step |
+| `conv` (`n_layers=1`) | `(latent_size, latent_size, 1)` | Linear mix across latent channels per time step |
+| `conv1` / `conv2` (`n_layers=2`) | `(hidden, latent, 1)` / `(latent, hidden, 1)` | Pointwise MLP |
 | `α` | scalar | Gate in `[0, 1]` via `sigmoid`; starts at 0 |
+
+Both stay `k=1` (no extra latency). `hidden_size` defaults to `latent_size`.
 
 ### Identity initialization
 
-At init:
+At init `L(z) = z` exactly:
 
-- `conv.weight` is **identity** (ones on the diagonal, zeros elsewhere)
-- `conv.bias` is zero
-- `α = 0` → `sigmoid(α) = 0.5`, but `conv(z) = z`, so `L(z) = z` exactly
+- **1-layer:** `conv.weight` is identity, bias zero. `α = 0` → `sigmoid(α) = 0.5`, but `f(z) = z`.
+- **2-layer:** last conv (`conv2`) is all zeros, so the MLP residual is 0. `α = 0` still, gradients flow through `σ(α)`.
 
 ## Gin configuration
 
 ```gin
 rave.canonicalizer.latent_canonicalizer.LatentCanonicalizer:
     latent_size = %LATENT_SIZE   # 128 for BRAVE
+    n_layers = 1
+    # n_layers = 2
+    # hidden_size = %LATENT_SIZE
 ```
 
 `latent_size` must match the backbone (`RAVE.latent_size` / FaderRAVE content latent dim).
+
+Override without editing gin:
+
+```bash
+OVERRIDE='LatentCanonicalizer.n_layers=2'
+```
 
 ## Training
 
@@ -120,7 +136,7 @@ python scripts/export_model.py \
 ## When to choose latent
 
 - OOD gap is **not** well captured by EQ + short reverb (e.g. complex excitation / playing style)
-- You want a **compact** warp (~`latent_size²` params in the 1×1 conv plus one gate)
+- You want a **compact** warp (~`latent_size²` params for `n_layers=1`, or ~`2 · latent_size · hidden` for `n_layers=2`)
 - You do not need interpretable DSP knobs
 
 Prefer the [waveform canonicalizer](waveform.md) when corrections should stay in an explicit audio-effects chain or when you want per-clip knob telemetry.
@@ -129,8 +145,8 @@ Prefer the [waveform canonicalizer](waveform.md) when corrections should stay in
 
 With `latent_size = 128`:
 
-- `conv`: 128 × 128 + 128 bias ≈ **16.5k** parameters
-- `α`: 1 parameter
+- `n_layers=1`: `conv` 128 × 128 + 128 bias ≈ **16.5k**, plus `α`
+- `n_layers=2`, `hidden_size=128`: two 1×1 convs ≈ **33k**, plus `α`
 
 Total warp is small relative to the backbone (~4.9M params for BRAVE).
 

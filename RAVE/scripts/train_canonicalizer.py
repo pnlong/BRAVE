@@ -519,6 +519,9 @@ def main():
         use_reverb=getattr(warp, "use_reverb", False),
         stats_hash=profile.stats_hash,
         backbone_kind=backbone_kind,
+        latent_n_layers=int(getattr(warp, "n_layers", 1)),
+        latent_hidden_size=getattr(warp, "hidden_size", None)
+        if args.canonicalizer_type == "latent" else None,
     )
     save_canonicalizer_checkpoint(
         out_dir / ckpt_name,

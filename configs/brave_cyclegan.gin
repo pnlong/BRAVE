@@ -72,6 +72,10 @@ rave.canonicalizer.waveform_canonicalizer.WaveformCanonicalizer:
 
 rave.canonicalizer.latent_canonicalizer.LatentCanonicalizer:
     latent_size = %LATENT_SIZE
+    n_layers = 1
+    # 2-layer residual MLP (Conv → LeakyReLU → Conv), identity at init:
+    #   n_layers = 2
+    #   hidden_size = %LATENT_SIZE
 
 discriminator.ConvNet:
     in_size = 1
@@ -106,6 +110,12 @@ rave.canonicalizer.cycle_trainer.CycleGANTrainer:
     gan_loss_scale = 0.5
     fm_loss_scale = 0.25
     cycle_mode = "both"
+    # Waveform cycle (STFT+RMS) on by default. Latent cycle (Zhu-style in z):
+    #   z → W_xy → W_yx → ẑ , L1; requires --canonicalizer_type latent
+    use_waveform_cycle = True
+    use_latent_cycle = False
+    lambda_latent_cycle = 10.0
+    latent_cycle_loss_scale = 1.0
     gan_loss = "hinge"
     lr = 3e-4
     disc_lr = 2e-5

@@ -156,6 +156,8 @@ class CanonicalizerManifest:
     use_reverb: bool = True
     stats_hash: str = ""
     backbone_kind: str = "RAVE"
+    latent_n_layers: int = 1
+    latent_hidden_size: Optional[int] = None
 
     def to_dict(self) -> dict:
         out = {
@@ -169,10 +171,15 @@ class CanonicalizerManifest:
         }
         if self.ood_db_path:
             out["ood_db_path"] = self.ood_db_path
+        if self.canonicalizer_type == "latent":
+            out["latent_n_layers"] = self.latent_n_layers
+            if self.latent_hidden_size is not None:
+                out["latent_hidden_size"] = self.latent_hidden_size
         return out
 
     @classmethod
     def from_dict(cls, data: dict) -> "CanonicalizerManifest":
+        hidden = data.get("latent_hidden_size")
         return cls(
             canonicalizer_type=data["canonicalizer_type"],
             backbone_config=data["backbone_config"],
@@ -182,6 +189,8 @@ class CanonicalizerManifest:
             use_reverb=bool(data.get("use_reverb", True)),
             stats_hash=data.get("stats_hash", ""),
             backbone_kind=data.get("backbone_kind", "RAVE"),
+            latent_n_layers=int(data.get("latent_n_layers", 1)),
+            latent_hidden_size=int(hidden) if hidden is not None else None,
         )
 
 
@@ -247,9 +256,11 @@ class CycleGANManifest:
     db_path_y: str
     use_reverb: bool = True
     backbone_kind: str = "RAVE"
+    latent_n_layers: int = 1
+    latent_hidden_size: Optional[int] = None
 
     def to_dict(self) -> dict:
-        return {
+        out = {
             "canonicalizer_type": self.canonicalizer_type,
             "backbone_x_config": self.backbone_x_config,
             "backbone_x_ckpt": self.backbone_x_ckpt,
@@ -260,9 +271,15 @@ class CycleGANManifest:
             "use_reverb": self.use_reverb,
             "backbone_kind": self.backbone_kind,
         }
+        if self.canonicalizer_type == "latent":
+            out["latent_n_layers"] = self.latent_n_layers
+            if self.latent_hidden_size is not None:
+                out["latent_hidden_size"] = self.latent_hidden_size
+        return out
 
     @classmethod
     def from_dict(cls, data: dict) -> "CycleGANManifest":
+        hidden = data.get("latent_hidden_size")
         return cls(
             canonicalizer_type=data["canonicalizer_type"],
             backbone_x_config=data["backbone_x_config"],
@@ -273,6 +290,8 @@ class CycleGANManifest:
             db_path_y=data["db_path_y"],
             use_reverb=bool(data.get("use_reverb", True)),
             backbone_kind=data.get("backbone_kind", "RAVE"),
+            latent_n_layers=int(data.get("latent_n_layers", 1)),
+            latent_hidden_size=int(hidden) if hidden is not None else None,
         )
 
 
