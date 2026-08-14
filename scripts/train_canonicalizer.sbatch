@@ -34,7 +34,7 @@ BATCH="${BATCH:-4}"
 WORKERS="${WORKERS:-0}"
 N_SIGNAL="${N_SIGNAL:-131072}"
 MAX_STEPS="${MAX_STEPS:-}"
-VAL_EVERY="${VAL_EVERY:-500}"
+VAL_EVERY="${VAL_EVERY:-1000}"
 WANDB_PROJECT="${WANDB_PROJECT:-brave}"
 
 mkdir -p logs "${OUT_PATH}"
@@ -81,6 +81,10 @@ CANON_ARGS=(
   --wandb_project="${WANDB_PROJECT}"
   "${GPU_TRAIN_ARGS[@]}"
 )
+
+if [[ -n "${LOG_AUDIO_EVERY:-}" ]]; then
+  CANON_ARGS+=(--log_audio_every_n_steps="${LOG_AUDIO_EVERY}")
+fi
 
 if [[ -n "${MAX_STEPS}" ]]; then
   CANON_ARGS+=(--max_steps="${MAX_STEPS}")

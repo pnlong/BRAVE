@@ -6,6 +6,7 @@ from random import random
 from typing import Callable, Optional, Sequence, Union
 
 import GPUtil as gpu
+import gin
 import librosa as li
 import lmdb
 import numpy as np
@@ -640,6 +641,56 @@ def get_valid_extensions():
         return ['.wav', '.flac', '.ogg', '.aiff', '.aif', '.aifc']
 
 
+DEFAULT_LOG_AUDIO_EVERY_N_STEPS = 20000
+_AUDIO_LOG_LAST_STEP = "_brave_audio_log_step"
+
+
+def should_log_audio(
+    pl_module,
+    key: str,
+    step: Optional[int],
+    every_n_steps: int,
+) -> bool:
+    """Whether to emit this audio key at ``step``.
+
+    Logs the first real validation for each key, then at most once per
+    ``every_n_steps`` training steps. ``every_n_steps <= 0`` logs every call
+    (legacy / smoke-test). Sanity-check validations are skipped.
+    """
+    if pl_module is not None:
+        trainer = getattr(pl_module, "trainer", None)
+        if trainer is not None:
+            stage = getattr(getattr(trainer, "state", None), "stage", None)
+            if stage is not None and "SANITY" in str(stage).upper():
+                return False
+    if every_n_steps <= 0:
+        return True
+    if step is None:
+        return True
+    if pl_module is None:
+        step_i = int(step)
+        return step_i == 0 or step_i % int(every_n_steps) == 0
+    cache = getattr(pl_module, _AUDIO_LOG_LAST_STEP, None)
+    if cache is None:
+        cache = {}
+        setattr(pl_module, _AUDIO_LOG_LAST_STEP, cache)
+    last = cache.get(key)
+    step_i = int(step)
+    if last is not None and step_i - int(last) < int(every_n_steps):
+        return False
+    cache[key] = step_i
+    return True
+
+
+def bind_log_audio_every_n_steps(every_n_steps: Optional[int]) -> None:
+    """Apply a CLI override after gin parse. ``None`` leaves gin/default as-is."""
+    if every_n_steps is None:
+        return
+    with gin.unlock_config():
+        gin.bind_parameter("core.log_audio.every_n_steps", int(every_n_steps))
+
+
+@gin.configurable(module="core")
 def log_audio(
     logger,
     key: str,
@@ -648,16 +699,20 @@ def log_audio(
     step: Optional[int] = None,
     *,
     pl_module=None,
-):
-    import wandb
-    if logger is None or wandb.run is None:
-        return
+    every_n_steps: int = DEFAULT_LOG_AUDIO_EVERY_N_STEPS,
+) -> bool:
+    """Log waveform to W&B. Returns whether this call was allowed to log."""
     if step is None and pl_module is not None:
         trainer = getattr(pl_module, "trainer", None)
         if trainer is not None:
             step = trainer.global_step
-    audio = wandb.Audio(np.asarray(waveform), sample_rate=sample_rate)
-    wandb.log({key: audio}, step=step)
+    if not should_log_audio(pl_module, key, step, every_n_steps):
+        return False
+    import wandb
+    if logger is not None and wandb.run is not None:
+        audio = wandb.Audio(np.asarray(waveform), sample_rate=sample_rate)
+        wandb.log({key: audio}, step=step)
+    return True
 
 
 def log_text(logger, key: str, text: str):

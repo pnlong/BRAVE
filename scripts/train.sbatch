@@ -78,5 +78,8 @@ fi
 if [[ -n "${CKPT}" ]]; then
   TRAIN_ARGS+=(--ckpt="${CKPT}")
 fi
+if [[ -n "${LOG_AUDIO_EVERY:-}" ]]; then
+  TRAIN_ARGS+=(--log_audio_every_n_steps="${LOG_AUDIO_EVERY}")
+fi
 
 python RAVE/scripts/train.py "${TRAIN_ARGS[@]}"

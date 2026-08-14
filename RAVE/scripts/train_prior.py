@@ -27,6 +27,7 @@ from absl import flags, app
 from torch.utils.data import DataLoader
 
 import rave
+import rave.core
 import rave.dataset
 import rave.prior
 
@@ -44,7 +45,7 @@ flags.DEFINE_string('ckpt', default=None, help="checkpoint to resume")
 flags.DEFINE_integer('workers',
                      default=8,
                      help='Number of workers to spawn for dataset loading')
-flags.DEFINE_integer('val_every', 10000, help='Checkpoint model every n steps')
+flags.DEFINE_integer('val_every', 10000, help='Run validation every n steps')
 flags.DEFINE_integer('save_every',
                      None,
                      help='save every n steps (default: just last)')
@@ -75,6 +76,11 @@ flags.DEFINE_string('wandb_entity',
 flags.DEFINE_bool('wandb_offline',
                   default=False,
                   help='Log to W&B in offline mode')
+flags.DEFINE_integer(
+    'log_audio_every_n_steps',
+    default=20000,
+    help='W&B audio at most every N train steps (default: 20000; 0 = every val epoch)',
+)
 
 flags.DEFINE_bool('fader',
                   default=False,
@@ -134,6 +140,8 @@ def main(argv):
             FLAGS.override
         )
 
+    rave.core.bind_log_audio_every_n_steps(FLAGS.log_audio_every_n_steps)
+
     # create model
     if isinstance(pretrained.encoder, rave.blocks.VariationalEncoder):
         prior = rave.prior.VariationalPrior(pretrained_vae=pretrained)
@@ -180,17 +188,6 @@ def main(argv):
         step_period=FLAGS.save_every,
     )
 
-    val_check = {}
-    if len(train) >= FLAGS.val_every:
-        val_check["val_check_interval"] = 1 if FLAGS.smoke_test else FLAGS.val_every
-    else:
-        nepoch = FLAGS.val_every // len(train)
-        val_check["check_val_every_n_epoch"] = nepoch
-
-    if FLAGS.smoke_test:
-        val_check['limit_train_batches'] = 1
-        val_check['limit_val_batches'] = 1
-
     if FLAGS.gpu == [-1]:
         gpu = 0
     else:
@@ -200,11 +197,18 @@ def main(argv):
 
     accelerator = None
     devices = None
+    n_devices = 1
     if FLAGS.gpu == [-1]:
         pass
     elif torch.cuda.is_available():
         accelerator = "cuda"
         devices = FLAGS.gpu or rave.core.setup_gpu()
+        if isinstance(devices, int):
+            n_devices = devices if devices > 0 else 1
+        elif isinstance(devices, (list, tuple)):
+            n_devices = len(devices)
+        else:
+            n_devices = 1
     elif torch.backends.mps.is_available():
         print(
             "Training on mac is not available yet. Use --gpu -1 to train on CPU (not recommended)."
@@ -212,6 +216,17 @@ def main(argv):
         exit()
         accelerator = "mps"
         devices = 1
+
+    batches_per_rank = max(1, len(train) // max(1, n_devices))
+    val_check = {}
+    if FLAGS.smoke_test:
+        val_check["val_check_interval"] = 1
+        val_check["limit_train_batches"] = 1
+        val_check["limit_val_batches"] = 1
+    elif batches_per_rank >= FLAGS.val_every:
+        val_check["val_check_interval"] = FLAGS.val_every
+    else:
+        val_check["check_val_every_n_epoch"] = max(1, FLAGS.val_every // batches_per_rank)
 
     callbacks = [
         validation_checkpoint,

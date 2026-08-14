@@ -125,3 +125,8 @@ rave.BetaWarmupCallback:
     initial_value = .1
     target_value = .1
     warmup_len = 1
+
+# W&B audio: first real val, then at most once per N train steps.
+# BRAVE/prior CLI default is 20000; CycleGAN/canonicalizer override to 1000.
+# 0 = log every validation epoch (legacy).
+core.log_audio.every_n_steps = 20000

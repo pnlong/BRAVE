@@ -86,7 +86,7 @@ python RAVE/scripts/train.py \
   --db_path=/path/to/preprocessed/dataset/
 ```
 
-Optional W&B flags: `--wandb_project`, `--wandb_entity`, `--wandb_offline`.
+Optional W&B flags: `--wandb_project`, `--wandb_entity`, `--wandb_offline`, `--log_audio_every_n_steps`.
 
 Checkpoints and run metadata are written under `--out_path` (default `runs/`). View scalars and validation audio on [wandb.ai](https://wandb.ai).
 

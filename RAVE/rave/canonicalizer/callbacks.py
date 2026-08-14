@@ -188,8 +188,8 @@ class CanonicalizerValVizCallback(pl.Callback):
             return
         sr = pl_module.backbone.sr
         wav = concat_val_audio_triplets(samples, max_samples=self.num_audio_samples)
-        log_wandb_audio(pl_module, f"val/audio_{prefix}", wav, sr)
-        if self.out_dir is None:
+        logged = log_wandb_audio(pl_module, f"val/audio_{prefix}", wav, sr)
+        if self.out_dir is None or not logged:
             return
         import soundfile as sf
 
@@ -400,8 +400,9 @@ class CycleGANValVizCallback(pl.Callback):
             return
         sr = pl_module.backbone_y.sr
         wav = concat_val_audio_triplets(samples, max_samples=self.num_audio_samples)
-        log_wandb_audio(pl_module, key, wav, sr)
-        self._write_wav(file_stem, wav, sr, step)
+        logged = log_wandb_audio(pl_module, key, wav, sr)
+        if logged:
+            self._write_wav(file_stem, wav, sr, step)
 
     def _log_transfers(
         self,
@@ -423,8 +424,9 @@ class CycleGANValVizCallback(pl.Callback):
             for _, transfer, _ in samples[: self.num_audio_samples]
         ]
         wav = np.concatenate(chunks) if chunks else np.array([], dtype=np.float32)
-        log_wandb_audio(pl_module, key, wav, sr)
-        self._write_wav(file_stem, wav, sr, step)
+        logged = log_wandb_audio(pl_module, key, wav, sr)
+        if logged:
+            self._write_wav(file_stem, wav, sr, step)
 
     def _log_latent_space(
         self,

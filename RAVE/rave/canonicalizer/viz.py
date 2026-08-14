@@ -154,12 +154,10 @@ def log_wandb_figure(module, key: str, fig: plt.Figure) -> None:
     wandb.log({key: wandb.Image(figure_to_rgb_array(fig))}, step=step)
 
 
-def log_wandb_audio(module, key: str, waveform: np.ndarray, sample_rate: int) -> None:
-    import wandb
-
+def log_wandb_audio(module, key: str, waveform: np.ndarray, sample_rate: int) -> bool:
     from ..core import log_audio
 
-    log_audio(module.logger, key, waveform, sample_rate, pl_module=module)
+    return bool(log_audio(module.logger, key, waveform, sample_rate, pl_module=module))
 
 
 @torch.no_grad()

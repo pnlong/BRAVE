@@ -54,4 +54,13 @@ Fader logs **aggregate** latent-discriminator metrics (not per-attribute curves)
 
 ## Validation audio
 
-On validation epochs, `audio_val` (main RAVE model) and `generation` (prior) are logged as W&B Audio panels. Gin config and model architecture strings are stored in the run summary as `config` and `model`.
+On validation epochs, `audio_val` (main RAVE model), `val/audio_*` (canonicalizer / CycleGAN), and `generation` (prior) are logged as W&B Audio panels. Audio is throttled after the first real val:
+
+| Trainer | `--val_every` | `--log_audio_every_n_steps` |
+| --- | --- | --- |
+| BRAVE / prior | 10 000 | **20 000** |
+| CycleGAN / canonicalizer | 1 000 | **1 000** |
+
+Override with `--log_audio_every_n_steps=N` (or gin `core.log_audio.every_n_steps`). `0` logs on every validation epoch.
+
+Gin config and model architecture strings are stored in the run summary as `config` and `model`.

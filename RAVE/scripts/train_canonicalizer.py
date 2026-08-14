@@ -21,6 +21,7 @@ import numpy as np
 import pytorch_lightning as pl
 import torch
 import rave
+import rave.core
 import rave.dataset
 import rave.training
 from rave.canonicalizer.callbacks import CanonicalizerValVizCallback
@@ -93,13 +94,19 @@ def parse_args():
     p.add_argument("--override", action="append", default=[])
     p.add_argument("--smoke_test", action="store_true")
     p.add_argument("--val_scatter", choices=("pca", "tsne", "both"), default="both")
-    p.add_argument("--val_every", type=int, default=500)
+    p.add_argument("--val_every", type=int, default=1000)
     p.add_argument("--val_batches", type=int, default=8)
     p.add_argument("--val_audio_samples", type=int, default=8)
     p.add_argument("--wandb_project", default="brave")
     p.add_argument("--wandb_entity", default=None)
     p.add_argument("--wandb_offline", action="store_true")
     p.add_argument("--log_every_n_steps", type=int, default=None)
+    p.add_argument(
+        "--log_audio_every_n_steps",
+        type=int,
+        default=1000,
+        help="W&B audio at most every N train steps (default: 1000; 0 = every val)",
+    )
     p.add_argument("--calibration_batches", type=int, default=None)
     p.add_argument("--no_calibrate_scales", action="store_true")
     return p.parse_args()
@@ -215,6 +222,7 @@ def main():
         p.requires_grad = False
 
     configure_canonicalizer_gin(canon_cfg, n_channels, overrides=args.override)
+    rave.core.bind_log_audio_every_n_steps(args.log_audio_every_n_steps)
 
     max_steps = (
         args.max_steps
