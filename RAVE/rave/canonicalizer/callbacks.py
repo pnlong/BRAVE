@@ -283,6 +283,27 @@ class CycleGANRampCallback(pl.Callback):
             pl_module.spread_factor = 0.0
 
 
+class CycleGANExportCallback(pl.Callback):
+    """Write inference ``cyclegan_*.ckpt`` whenever Lightning saves ``last.ckpt``."""
+
+    def __init__(self, path, manifest) -> None:
+        super().__init__()
+        self.path = Path(path)
+        self.manifest = manifest
+
+    def on_save_checkpoint(self, trainer, pl_module, checkpoint) -> None:
+        if getattr(trainer, "global_rank", 0) != 0:
+            return
+        from .config import save_cyclegan_checkpoint
+
+        save_cyclegan_checkpoint(
+            self.path,
+            pl_module.warp_xy.state_dict(),
+            pl_module.warp_yx.state_dict(),
+            self.manifest,
+        )
+
+
 @gin.configurable
 class CycleGANValVizCallback(pl.Callback):
     """

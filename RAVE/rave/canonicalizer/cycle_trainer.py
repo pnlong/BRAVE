@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import gin
 import pytorch_lightning as pl
@@ -237,6 +237,50 @@ class CycleGANTrainer(pl.LightningModule):
             return warp_opt
         disc_opt = torch.optim.Adam(disc_params, lr=self.disc_lr, betas=(0.5, 0.9))
         return [warp_opt, disc_opt]
+
+    _EXTRA_FLOAT_KEYS = (
+        "stft_loss_scale",
+        "rms_loss_scale",
+        "gan_loss_scale",
+        "fm_loss_scale",
+        "latent_spread_scale",
+        "latent_cycle_loss_scale",
+    )
+
+    def on_save_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
+        """Drop frozen backbones; persist loss scales and spread EMA refs."""
+        state = checkpoint.get("state_dict")
+        if isinstance(state, dict) and not (self.unfreeze_encoders or self.unfreeze_decoders):
+            for key in [k for k in state if k.startswith(("backbone_x.", "backbone_y."))]:
+                del state[key]
+        extra: Dict[str, Any] = {
+            key: float(getattr(self, key)) for key in self._EXTRA_FLOAT_KEYS
+        }
+        extra["loss_scales_calibrated"] = bool(self.loss_scales_calibrated)
+        for name in ("latent_var_ref_x", "latent_var_ref_y"):
+            value = getattr(self, name)
+            extra[name] = value.detach().cpu() if isinstance(value, torch.Tensor) else None
+        checkpoint["cyclegan_extra"] = extra
+
+    def on_load_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
+        extra = checkpoint.get("cyclegan_extra") or {}
+        for key in self._EXTRA_FLOAT_KEYS:
+            if key in extra:
+                setattr(self, key, float(extra[key]))
+        if extra.get("loss_scales_calibrated"):
+            self.loss_scales_calibrated = True
+            self.calibrate_loss_scales = False
+        device = next(self.parameters()).device
+        for name in ("latent_var_ref_x", "latent_var_ref_y"):
+            value = extra.get(name)
+            if value is not None:
+                setattr(self, name, torch.as_tensor(value).to(device))
+        state = checkpoint.setdefault("state_dict", {})
+        if isinstance(state, dict):
+            current = self.state_dict()
+            for key, value in current.items():
+                if key.startswith(("backbone_x.", "backbone_y.")):
+                    state.setdefault(key, value)
 
     def _optimizers(self) -> Tuple[torch.optim.Optimizer, Optional[torch.optim.Optimizer]]:
         opts = self.optimizers()

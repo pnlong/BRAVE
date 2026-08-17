@@ -196,6 +196,30 @@ y = transfer_x_to_y(x_tap, backbone_x, backbone_y, warp_xy, mode="latent")
 
 Always `Enc_src → warp → Dec_tgt`.
 
+## Export for Max / nn~
+
+X→Y timbre transfer only (`Enc_X → W_xy → Dec_Y`). Uses `cyclegan_latent.ckpt`, **not** Lightning `last.ckpt`.
+
+```bash
+export PYTHONPATH="${PWD}/RAVE:${PYTHONPATH}"
+python scripts/export_model.py \
+  --model runs/tap_rain_sounds_wf_cyc_mlp2_<hash> \
+  --output_dir exports/tap_rain_sounds_cyc
+```
+
+Writes:
+
+```
+exports/tap_rain_sounds_cyc/
+  model.ts
+  cyclegan_latent.manifest.json
+  play.maxpat
+```
+
+Copy the folder to `~/Documents/Max 9/Packages/nn_tilde/models/`, open `play.maxpat`, set Max audio to **44100 Hz**. Same nn~ setup as [Fader Max bundles](../../RAVE/rave/fader/export/README.md#max-9--nn-bundles).
+
+`forward` is live tap (or file) in → Y-domain audio out. Do not pass `--canonicalizer`; Stage-1 attach is a different graph (same encoder and decoder).
+
 ## W&B metrics
 
 | Key | Meaning |

@@ -27,3 +27,20 @@ def test_resolve_canonicalizer_auto_in_run_dir(tmp_path):
 
 def test_resolve_canonicalizer_none():
     assert resolve_canonicalizer_ckpt("/nonexistent", mode="none") is None
+
+
+def test_resolve_cyclegan_ckpt_prefers_latent_not_last(tmp_path):
+    from rave.canonicalizer.export import resolve_cyclegan_ckpt
+
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "last.ckpt").write_bytes(b"lightning")
+    latent = run_dir / "cyclegan_latent.ckpt"
+    latent.write_bytes(b"warps")
+    assert resolve_cyclegan_ckpt(str(run_dir)) == str(latent.resolve())
+    assert resolve_cyclegan_ckpt(str(run_dir / "last.ckpt")) == str(latent.resolve())
+    assert resolve_cyclegan_ckpt(str(latent)) == str(latent.resolve())
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    (empty / "last.ckpt").write_bytes(b"x")
+    assert resolve_cyclegan_ckpt(str(empty)) is None

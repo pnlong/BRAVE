@@ -157,6 +157,14 @@ sbatch scripts/train_cyclegan.sbatch   # CANONICALIZER_TYPE=latent by default
 ```
 Optional: `CYCLE_DOMAIN=latent LATENT_CYCLE_MODE=direct`. 2-layer warp: `OVERRIDE='LatentCanonicalizer.n_layers=2'`.
 
+**Export CycleGAN for Max/nn~** (Enc_X → W_xy → Dec_Y):
+```bash
+python scripts/export_model.py \
+  --model runs/tap_rain_sounds_wf_cyc_mlp2_<hash> \
+  --output_dir exports/tap_rain_sounds_cyc
+```
+See [`docs/cyclegan/README.md`](docs/cyclegan/README.md#export-for-max--nn).
+
 **Export Fader plain TorchScript (128+D concat, Python demos):**
 ```bash
 python scripts/export_model.py --model runs/brave_fader_run --host ts \

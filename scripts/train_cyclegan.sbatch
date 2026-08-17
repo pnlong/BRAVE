@@ -16,6 +16,8 @@ set -euo pipefail
 # Dual frozen BRAVE CycleGAN (latent warps; waveform warps shelved).
 # Domain X = source (e.g. tap), domain Y = target (e.g. birdsong / water).
 # CYCLE_DOMAIN=waveform|latent (optional gin override). LATENT_CYCLE_MODE=ae_aware|direct.
+# Resumable: last.ckpt is written every SAVE_EVERY steps. Resubmit the same
+# command to continue; FRESH=1 starts over in the same hashed run dir.
 : "${CKPT_X:?Set CKPT_X to domain-X checkpoint or run directory}"
 : "${DB_PATH_X:?Set DB_PATH_X to domain-X LMDB}"
 : "${CKPT_Y:?Set CKPT_Y to domain-Y checkpoint or run directory}"
@@ -37,7 +39,9 @@ WORKERS="${WORKERS:-0}"
 N_SIGNAL="${N_SIGNAL:-131072}"
 MAX_STEPS="${MAX_STEPS:-}"
 VAL_EVERY="${VAL_EVERY:-1000}"
+SAVE_EVERY="${SAVE_EVERY:-5000}"
 WANDB_PROJECT="${WANDB_PROJECT:-brave}"
+WANDB_RUN_ID="${WANDB_RUN_ID:-}"
 
 mkdir -p logs "${OUT_PATH}"
 
@@ -68,6 +72,16 @@ echo "OUT_PATH=${OUT_PATH}"
 if [[ -n "${OVERRIDE:-}" ]]; then
   echo "OVERRIDE=${OVERRIDE}"
 fi
+echo "SAVE_EVERY=${SAVE_EVERY}"
+if [[ -n "${RESUME:-}" ]]; then
+  echo "RESUME=${RESUME}"
+fi
+if [[ "${FRESH:-0}" == "1" ]]; then
+  echo "FRESH=1 (ignore last.ckpt)"
+fi
+if [[ -n "${WANDB_RUN_ID}" ]]; then
+  echo "WANDB_RUN_ID=${WANDB_RUN_ID}"
+fi
 if [[ -n "${MAX_STEPS}" ]]; then
   echo "MAX_STEPS=${MAX_STEPS} (CLI override)"
 else
@@ -90,6 +104,7 @@ CYCLE_ARGS=(
   --workers="${WORKERS}"
   --n_signal="${N_SIGNAL}"
   --val_every="${VAL_EVERY}"
+  --save_every="${SAVE_EVERY}"
   --wandb_project="${WANDB_PROJECT}"
   "${GPU_TRAIN_ARGS[@]}"
 )
@@ -112,6 +127,16 @@ if [[ -n "${CYCLE_DOMAIN:-}" ]]; then
 fi
 if [[ -n "${LATENT_CYCLE_MODE:-}" ]]; then
   CYCLE_ARGS+=(--override="CycleGANTrainer.latent_cycle_mode=\"${LATENT_CYCLE_MODE}\"")
+fi
+
+if [[ -n "${RESUME:-}" ]]; then
+  CYCLE_ARGS+=(--resume="${RESUME}")
+fi
+if [[ "${FRESH:-0}" == "1" ]]; then
+  CYCLE_ARGS+=(--fresh)
+fi
+if [[ -n "${WANDB_RUN_ID}" ]]; then
+  CYCLE_ARGS+=(--wandb_run_id="${WANDB_RUN_ID}")
 fi
 
 # Gin overrides: OVERRIDE='binding1 binding2' (space-separated).

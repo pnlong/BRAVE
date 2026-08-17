@@ -22,8 +22,16 @@ import torch
 import rave
 import rave.core
 import rave.dataset
-from rave.canonicalizer.callbacks import CycleGANRampCallback, CycleGANValVizCallback
-from rave.canonicalizer.config import CycleGANManifest, save_cyclegan_checkpoint
+from rave.canonicalizer.callbacks import (
+    CycleGANExportCallback,
+    CycleGANRampCallback,
+    CycleGANValVizCallback,
+)
+from rave.canonicalizer.config import (
+    CycleGANManifest,
+    resolve_cyclegan_lightning_ckpt,
+    save_cyclegan_checkpoint,
+)
 from rave.canonicalizer.cycle_trainer import CycleGANTrainer
 from rave.canonicalizer.dataset import (
     DOMAIN_IN,
@@ -79,6 +87,23 @@ def parse_args():
     p.add_argument("--n_signal", type=int, default=131072)
     p.add_argument("--batch", type=int, default=4)
     p.add_argument("--max_steps", type=int, default=None)
+    p.add_argument(
+        "--resume",
+        default=None,
+        help="Run dir or last.ckpt. Default: auto-resume if last.ckpt exists in the run dir.",
+    )
+    p.add_argument(
+        "--fresh",
+        action="store_true",
+        help="Ignore last.ckpt and start a new run in the hashed directory.",
+    )
+    p.add_argument(
+        "--save_every",
+        type=int,
+        default=5000,
+        help="Write last.ckpt every N train steps (0 = only at end).",
+    )
+    p.add_argument("--wandb_run_id", default=None)
     p.add_argument("--workers", type=int, default=0)
     p.add_argument("--gpu", type=int, action="append", default=None)
     p.add_argument("--override", action="append", default=[])
@@ -222,6 +247,18 @@ def main():
     with open(out_dir / "config.gin", "w") as config_out:
         config_out.write(gin_snapshot)
 
+    lightning_ckpt = resolve_cyclegan_lightning_ckpt(
+        out_dir=out_dir,
+        resume=_resolve(args.resume) if args.resume else None,
+        fresh=args.fresh,
+    )
+    if lightning_ckpt is not None:
+        print(f"Resuming Lightning checkpoint: {lightning_ckpt}")
+    elif args.resume:
+        raise FileNotFoundError(
+            f"No last.ckpt found for --resume={args.resume} (looked in {out_dir})"
+        )
+
     print(
         f"Training for {max_steps:,} steps "
         f"(cycle_warmup={trainer_module.cycle_warmup_duration:,}, "
@@ -277,7 +314,7 @@ def main():
         num_workers=num_workers,
     )
 
-    if args.no_calibrate_scales:
+    if args.no_calibrate_scales or lightning_ckpt is not None:
         trainer_module.calibrate_loss_scales = False
 
     if trainer_module.calibrate_loss_scales and not args.smoke_test:
@@ -302,12 +339,45 @@ def main():
 
     from pytorch_lightning.loggers import WandbLogger
 
+    manifest = CycleGANManifest(
+        canonicalizer_type=args.canonicalizer_type,
+        backbone_x_config=str(Path(backbone_x_cfg).resolve()),
+        backbone_x_ckpt=str(Path(args.ckpt_x).resolve()),
+        backbone_y_config=str(Path(backbone_y_cfg).resolve()),
+        backbone_y_ckpt=str(Path(args.ckpt_y).resolve()),
+        db_path_x=str(Path(args.db_path_x).resolve()),
+        db_path_y=str(Path(args.db_path_y).resolve()),
+        use_reverb=getattr(warp_xy, "use_reverb", False),
+        latent_n_layers=int(getattr(warp_xy, "n_layers", 1)),
+        latent_hidden_size=getattr(warp_xy, "hidden_size", None)
+        if args.canonicalizer_type == "latent" else None,
+        cycle_domain=trainer_module.cycle_domain,
+        latent_cycle_mode=trainer_module.latent_cycle_mode,
+        init_mode=warp_init_mode,
+    )
+
+    ckpt_callback_kwargs = dict(
+        dirpath=str(out_dir),
+        filename="unused",
+        save_top_k=0,
+        save_last=True,
+        save_on_train_epoch_end=False,
+    )
+    if args.smoke_test:
+        ckpt_callback_kwargs["every_n_train_steps"] = 1
+    elif args.save_every and args.save_every > 0:
+        ckpt_callback_kwargs["every_n_train_steps"] = args.save_every
+    checkpoint_cb = pl.callbacks.ModelCheckpoint(**ckpt_callback_kwargs)
+
     callbacks = [
+        checkpoint_cb,
         CycleGANRampCallback(),
         CycleGANValVizCallback(
             out_dir=out_dir,
             num_audio_samples=args.val_audio_samples,
         ),
+        CycleGANExportCallback(out_dir / ckpt_name, manifest),
+        rave.core.SaveWandbRunIdCallback(str(out_dir)),
     ]
 
     wandb_kwargs = dict(
@@ -336,6 +406,13 @@ def main():
         })
     if args.wandb_entity:
         wandb_kwargs["entity"] = args.wandb_entity
+    wandb_run_id = args.wandb_run_id
+    if wandb_run_id is None and lightning_ckpt is not None:
+        wandb_run_id = rave.core.find_wandb_run_id(str(out_dir))
+    if wandb_run_id:
+        wandb_kwargs["id"] = wandb_run_id
+        wandb_kwargs["resume"] = "must"
+        print(f"W&B: resuming run id={wandb_run_id}")
     logger = WandbLogger(**wandb_kwargs)
 
     train_batches = len(loader)
@@ -383,7 +460,6 @@ def main():
         devices=devices,
         strategy=strategy,
         default_root_dir=str(out_dir),
-        enable_checkpointing=False,
         logger=logger,
         callbacks=callbacks,
         num_sanity_val_steps=0,
@@ -392,26 +468,16 @@ def main():
         **val_check_kwargs,
     )
 
-    print("Running initial validation (step 0 baseline)...")
-    pl_trainer.validate(trainer_module, val_loader)
-    pl_trainer.fit(trainer_module, loader, val_loader)
+    ckpt_path = str(lightning_ckpt) if lightning_ckpt is not None else None
+    if ckpt_path is None:
+        print("Running initial validation (step 0 baseline)...")
+        pl_trainer.validate(trainer_module, val_loader)
+    else:
+        loaded = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+        pl_trainer.fit_loop.epoch_loop._batches_that_stepped = loaded["global_step"]
 
-    manifest = CycleGANManifest(
-        canonicalizer_type=args.canonicalizer_type,
-        backbone_x_config=str(Path(backbone_x_cfg).resolve()),
-        backbone_x_ckpt=str(Path(args.ckpt_x).resolve()),
-        backbone_y_config=str(Path(backbone_y_cfg).resolve()),
-        backbone_y_ckpt=str(Path(args.ckpt_y).resolve()),
-        db_path_x=str(Path(args.db_path_x).resolve()),
-        db_path_y=str(Path(args.db_path_y).resolve()),
-        use_reverb=getattr(warp_xy, "use_reverb", False),
-        latent_n_layers=int(getattr(warp_xy, "n_layers", 1)),
-        latent_hidden_size=getattr(warp_xy, "hidden_size", None)
-        if args.canonicalizer_type == "latent" else None,
-        cycle_domain=trainer_module.cycle_domain,
-        latent_cycle_mode=trainer_module.latent_cycle_mode,
-        init_mode=warp_init_mode,
-    )
+    pl_trainer.fit(trainer_module, loader, val_loader, ckpt_path=ckpt_path)
+
     save_cyclegan_checkpoint(
         out_dir / ckpt_name,
         warp_xy.state_dict(),

@@ -146,3 +146,29 @@ def test_gan_pairs_use_latents_in_latent_domain():
     assert feat_fake_y[0][-1].shape[0] == 2
     assert feat_real_x[0][-1].shape[0] == 2
     assert feat_fake_x[0][-1].shape[0] == 2
+
+
+def test_cyclegan_checkpoint_strips_backbones_and_restores_scales():
+    t = _tiny_trainer(cycle_domain="waveform")
+    t.stft_loss_scale = 12.5
+    t.loss_scales_calibrated = True
+    t.latent_var_ref_x = torch.ones(8)
+    checkpoint = {
+        "state_dict": {
+            "backbone_x._dummy": torch.tensor([1.0]),
+            "warp_xy.conv.weight": torch.zeros(8, 8, 1),
+        }
+    }
+    t.on_save_checkpoint(checkpoint)
+    assert "backbone_x._dummy" not in checkpoint["state_dict"]
+    assert "warp_xy.conv.weight" in checkpoint["state_dict"]
+    assert checkpoint["cyclegan_extra"]["stft_loss_scale"] == 12.5
+    assert checkpoint["cyclegan_extra"]["loss_scales_calibrated"] is True
+
+    t2 = _tiny_trainer(cycle_domain="waveform")
+    t2.on_load_checkpoint(checkpoint)
+    assert t2.stft_loss_scale == 12.5
+    assert t2.loss_scales_calibrated is True
+    assert t2.calibrate_loss_scales is False
+    assert torch.equal(t2.latent_var_ref_x.cpu(), torch.ones(8))
+    assert any(k.startswith("backbone_x.") for k in checkpoint["state_dict"])

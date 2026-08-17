@@ -74,6 +74,8 @@ python scripts/export_model.py \
 
 Writes a bundle: `model.ts`, sidecars, and pre-wired `play.maxpat` (see **Max 9 / nn~ bundles** above).
 
+CycleGAN X→Y (`Enc_X → W_xy → Dec_Y`): pass a run dir that contains `cyclegan_latent.ckpt` to the same `export_model.py` (no `--db_path`). See [`docs/cyclegan/README.md`](../../../../docs/cyclegan/README.md#export-for-max--nn).
+
 ### nn~ (Max / Pd) — attribute knobs
 
 ```bash

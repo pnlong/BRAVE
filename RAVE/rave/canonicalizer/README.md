@@ -107,8 +107,9 @@ Canonicalizer checkpoints embed into realtime bundles through [`export/`](export
 
 - `resolve_canonicalizer_ckpt` — find `*canonicalizer.ckpt` in run dir or accept explicit path
 - `attach_canonicalizer_for_export` — load warp onto backbone before TorchScript
+- `resolve_cyclegan_ckpt` / `export_cyclegan_nn` — CycleGAN X→Y (`Enc_X → W_xy → Dec_Y`); not the Stage-1 attach path
 
-Used by [`scripts/export_model.py`](../../../scripts/export_model.py) for both vanilla RAVE and FaderRAVE.
+Used by [`scripts/export_model.py`](../../../scripts/export_model.py) for vanilla RAVE, FaderRAVE, and CycleGAN.
 Fader-specific export UI (stats, host controls, `play.maxpat`) stays in [`rave/fader/export/`](../fader/export/).
 
 **Realtime note:** export calls `waveform_canonicalizer(x)` per streaming block. Per-input knobs can change block-to-block; enable `knob_ema_decay` (default in gin) for eval/export stability.

@@ -346,6 +346,57 @@ def load_cyclegan_checkpoint(
     raise ValueError(f"No manifest found for CycleGAN checkpoint: {path}")
 
 
+def looks_like_lightning_ckpt(path: Union[str, Path]) -> bool:
+    """True for PL ``last.ckpt`` (not inference ``cyclegan_*.ckpt`` dumps)."""
+    name = Path(path).name
+    if name in ("cyclegan_latent.ckpt", "cyclegan_waveform.ckpt"):
+        return False
+    return name.startswith("last")
+
+
+def resolve_cyclegan_lightning_ckpt(
+    *,
+    out_dir: Union[str, Path],
+    resume: Optional[Union[str, Path]] = None,
+    fresh: bool = False,
+) -> Optional[Path]:
+    """Find a Lightning ``last.ckpt`` for resume, or ``None`` for a fresh run."""
+    if fresh:
+        return None
+    search_dirs: List[Path] = []
+    if resume:
+        resume_path = Path(resume)
+        if resume_path.is_file():
+            if looks_like_lightning_ckpt(resume_path):
+                return resume_path
+            raise ValueError(
+                f"{resume_path} is not a Lightning last.ckpt. "
+                "Inference warp dumps cannot restore discriminator/optimizer state."
+            )
+        search_dirs.append(resume_path)
+    search_dirs.append(Path(out_dir))
+    seen = set()
+    for folder in search_dirs:
+        folder = folder.resolve() if folder.exists() else folder
+        if folder in seen:
+            continue
+        seen.add(folder)
+        if not folder.is_dir():
+            continue
+        last = folder / "last.ckpt"
+        if last.is_file():
+            return last
+        versions = sorted(
+            folder.glob("last*.ckpt"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+        for candidate in versions:
+            if looks_like_lightning_ckpt(candidate):
+                return candidate
+    return None
+
+
 def validate_manifest(
     manifest: CanonicalizerManifest,
     *,

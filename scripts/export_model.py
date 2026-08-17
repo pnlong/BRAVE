@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Unified export router for BRAVE / FaderRAVE / canonicalizer models.
+Unified export router for BRAVE / FaderRAVE / canonicalizer / CycleGAN models.
 
 Usage (BRAVE root):
   export PYTHONPATH="${PWD}/RAVE:${PYTHONPATH}"
@@ -8,6 +8,11 @@ Usage (BRAVE root):
     --model runs/my_run \\
     --db_path /path/to/lmdb \\
     --output_dir exports/my_run
+
+CycleGAN (Enc_X → W_xy → Dec_Y):
+  python scripts/export_model.py \\
+    --model runs/tap_rain_sounds_wf_cyc_mlp2_abc \\
+    --output_dir exports/tap_rain_sounds_cyc
 """
 
 from __future__ import annotations
@@ -25,7 +30,11 @@ import rave
 from absl import app, flags, logging
 from rave.fader.export.bundle import print_max_copy_instructions
 from rave.fader.export.load_for_export import is_fader_model
-from rave.canonicalizer.export import resolve_canonicalizer_ckpt
+from rave.canonicalizer.export import (
+    export_cyclegan_nn,
+    resolve_canonicalizer_ckpt,
+    resolve_cyclegan_ckpt,
+)
 from rave.fader.export.max_patch import write_vanilla_play_patch
 
 FLAGS = flags.FLAGS
@@ -116,8 +125,32 @@ def main(argv):
         )
         sys.exit(1)
 
-    output_dir = Path(FLAGS.output_dir) if FLAGS.output_dir else _default_output_dir(model_path)
+    output_dir = Path(FLAGS.output_dir) if FLAGS.output_dir else None
+    cyclegan_ckpt = resolve_cyclegan_ckpt(model_path)
+    if output_dir is None:
+        if cyclegan_ckpt:
+            output_dir = _BRAVE_ROOT / "exports" / Path(cyclegan_ckpt).parent.name
+        else:
+            output_dir = _default_output_dir(model_path)
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    if cyclegan_ckpt:
+        if FLAGS.host == "h5":
+            logging.error("CycleGAN export is nn~/TorchScript only (--host nn or ts)")
+            sys.exit(1)
+        logging.info("CycleGAN X→Y export from %s", cyclegan_ckpt)
+        ts_path = output_dir / "model.ts"
+        export_cyclegan_nn(
+            cyclegan_ckpt, ts_path, streaming=FLAGS.streaming)
+        if FLAGS.host == "nn":
+            write_vanilla_play_patch(
+                output_dir / "play.maxpat",
+                ts_name="model.ts",
+                title="CycleGAN X→Y — set Max Audio to 44100 Hz",
+            )
+            print_max_copy_instructions(output_dir)
+        logging.info("done: %s", output_dir)
+        return
 
     fader = is_fader_model(model_path)
     logging.info("model type: %s", "FaderRAVE" if fader else "RAVE")

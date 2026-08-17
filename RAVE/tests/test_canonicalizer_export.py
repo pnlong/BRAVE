@@ -57,3 +57,45 @@ def test_fader_canonicalizer_nn_export_roundtrip(tmp_path):
 
     z = loaded.encode(x)
     assert z.shape[1] == 1
+
+
+def test_scripted_cyclegan_xy_forward():
+    import rave.blocks
+    from rave.canonicalizer.export.cyclegan_nn import ScriptedCycleGANXY
+    from rave.canonicalizer.latent_canonicalizer import LatentCanonicalizer
+
+    class _InnerEnc(nn.Module):
+        def __init__(self, n_channels=1):
+            super().__init__()
+            self.n_channels = n_channels
+
+        def forward(self, x):
+            return torch.cat([x[:, :1], x[:, :1]], dim=1)
+
+    class _Dec(nn.Module):
+        def forward(self, z):
+            return z[:, :1, :]
+
+    class _Backbone(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.encoder = rave.blocks.VariationalEncoder(
+                encoder=_InnerEnc, n_channels=1)
+            self.decoder = _Dec()
+            self.pqmf = None
+            self.n_channels = 1
+            self.latent_size = 1
+            self.input_mode = "raw"
+            self.output_mode = "raw"
+            self.sr = 44100
+
+    bb_x = _Backbone()
+    bb_y = _Backbone()
+    warp = LatentCanonicalizer(latent_size=1, init_mode="random")
+    mod = ScriptedCycleGANXY(bb_x, bb_y, warp)
+    x = torch.randn(1, 1, 4096)
+    y = mod(x)
+    assert y.shape[0] == 1
+    assert y.shape[1] == 1
+    z = mod.encode(x)
+    assert z.shape[1] == 1

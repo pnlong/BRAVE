@@ -9,6 +9,7 @@ import rave
 
 CANON_WAVEFORM_NAME = "waveform_canonicalizer.ckpt"
 CANON_LATENT_NAME = "latent_canonicalizer.ckpt"
+CYCLEGAN_LATENT_NAME = "cyclegan_latent.ckpt"
 
 
 def resolve_canonicalizer_ckpt(
@@ -46,4 +47,28 @@ def resolve_canonicalizer_ckpt(
         return str(wf)
     if lt.is_file():
         return str(lt)
+    return None
+
+
+def resolve_cyclegan_ckpt(model_path: str) -> Optional[str]:
+    """Return ``cyclegan_latent.ckpt`` for a run dir or file; never Lightning ``last.ckpt``."""
+    path = Path(model_path)
+    if path.is_file():
+        if path.name == CYCLEGAN_LATENT_NAME:
+            return str(path.resolve())
+        sibling = path.parent / CYCLEGAN_LATENT_NAME
+        if sibling.is_file():
+            return str(sibling.resolve())
+        return None
+    if path.is_dir():
+        candidate = path / CYCLEGAN_LATENT_NAME
+        if candidate.is_file():
+            return str(candidate.resolve())
+        return None
+    run = rave.core.search_for_run(model_path)
+    if run is None:
+        return None
+    candidate = Path(rave.core.run_dir_from_checkpoint(run)) / CYCLEGAN_LATENT_NAME
+    if candidate.is_file():
+        return str(candidate.resolve())
     return None

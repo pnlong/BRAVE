@@ -1,0 +1,27 @@
+# CycleGAN recipe matching tap_bird_wf_cyc_mlp2_ec827dcb5f:
+# latent 2-layer MLP warps, waveform cycle + audio D, 400k steps
+# (2× the original 200k: same 50k warmup + 5k GAN ramp, then 345k full GAN).
+# train_cyclegan.py still forces LatentCanonicalizer.init_mode="random".
+#
+# Usage:
+#   CYCLEGAN_CONFIG=configs/brave_cyclegan_best.gin \
+#   CANONICALIZER_TYPE=latent \
+#   CKPT_X=... DB_PATH_X=... BACKBONE_X_CONFIG=configs/brave.gin \
+#   CKPT_Y=... DB_PATH_Y=... BACKBONE_Y_CONFIG=configs/brave.gin \
+#   OUT_PATH=... RUN_NAME=... \
+#   sbatch scripts/train_cyclegan.sbatch
+#
+# SLURM: last.ckpt is written every 5k steps. Resubmit the same command to
+# continue; FRESH=1 starts over.
+
+include "brave_cyclegan.gin"
+
+CYCLE_MAX_STEPS = 400000
+CYCLE_GAN_PHASE_DURATION = 345000
+
+rave.canonicalizer.latent_canonicalizer.LatentCanonicalizer:
+    n_layers = 2
+    hidden_size = %LATENT_SIZE
+
+rave.canonicalizer.cycle_trainer.CycleGANTrainer:
+    cycle_domain = "waveform"

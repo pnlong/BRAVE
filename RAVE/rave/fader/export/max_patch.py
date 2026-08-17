@@ -403,7 +403,11 @@ def _build_play_patch(
     ])
 
 
-def write_vanilla_play_patch(output_path: Union[str, Path], ts_name: str = "model.ts") -> Path:
+def write_vanilla_play_patch(
+    output_path: Union[str, Path],
+    ts_name: str = "model.ts",
+    title: str = "BRAVE nn~ — set Max Audio to 44100 Hz",
+) -> Path:
     output_path = Path(output_path)
     boxes: List[Dict] = []
     lines: List[Dict] = []
@@ -419,7 +423,7 @@ def write_vanilla_play_patch(output_path: Union[str, Path], ts_name: str = "mode
         boxes,
         lines,
         next_id,
-        title="BRAVE nn~ — set Max Audio to 44100 Hz",
+        title=title,
         ts_name=ts_name,
         extract_only=False,
     )

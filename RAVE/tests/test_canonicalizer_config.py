@@ -11,6 +11,8 @@ from rave.canonicalizer.config import (
     CanonicalizerManifest,
     CycleGANManifest,
     descriptor_loss_attributes,
+    looks_like_lightning_ckpt,
+    resolve_cyclegan_lightning_ckpt,
     save_canonicalizer_checkpoint,
     load_canonicalizer_checkpoint,
     validate_manifest,
@@ -99,3 +101,23 @@ def test_validate_manifest_warns_on_mismatch():
         assert False, "expected ValueError"
     except ValueError:
         pass
+
+
+def test_resolve_cyclegan_lightning_ckpt_prefers_last():
+    with tempfile.TemporaryDirectory() as td:
+        run = Path(td)
+        (run / "cyclegan_latent.ckpt").write_bytes(b"warp-dump")
+        last = run / "last.ckpt"
+        last.write_bytes(b"lightning")
+        assert looks_like_lightning_ckpt(last)
+        assert not looks_like_lightning_ckpt(run / "cyclegan_latent.ckpt")
+        assert resolve_cyclegan_lightning_ckpt(out_dir=run) == last
+        assert resolve_cyclegan_lightning_ckpt(out_dir=run, fresh=True) is None
+        assert resolve_cyclegan_lightning_ckpt(
+            out_dir=run / "missing", resume=run) == last
+        try:
+            resolve_cyclegan_lightning_ckpt(
+                out_dir=run, resume=run / "cyclegan_latent.ckpt")
+            assert False, "expected ValueError"
+        except ValueError:
+            pass

@@ -110,5 +110,5 @@ See [waveform export notes](waveform.md#realtime-export-and-knob-ema) for stream
 - [Training loss](loss.md) — STFT scale, λ weights, warmup phases, WandB metrics, tuning
 - [Waveform canonicalizer](waveform.md) — knob encoder, DSP layout, gin knobs
 - [Latent canonicalizer](latent.md) — residual warp, identity vs random init
-- [CycleGAN](../cyclegan/README.md) — bidirectional tap↔Y: waveform vs latent cycle/D, AE-aware vs direct, losses
+- [CycleGAN](../cyclegan/README.md) — bidirectional tap↔Y, including [Max/nn~ export](../cyclegan/README.md#export-for-max--nn)
 - Package README: [`RAVE/rave/canonicalizer/README.md`](../../RAVE/rave/canonicalizer/README.md)
