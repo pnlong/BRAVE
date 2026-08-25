@@ -42,7 +42,7 @@ flags.DEFINE_integer('max_steps',
 flags.DEFINE_integer('val_every', 10000, help='Run validation every n steps')
 flags.DEFINE_integer('save_every',
                      500000,
-                     help='save every n steps (default: just last)')
+                     help='Write epoch_{global_step}.ckpt every n steps and at train end')
 flags.DEFINE_integer('n_signal',
                      131072,
                      help='Number of audio samples to use during training')

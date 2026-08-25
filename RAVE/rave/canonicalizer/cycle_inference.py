@@ -117,6 +117,49 @@ def transfer_y_to_x(
     return x[..., : y.shape[-1]]
 
 
+@torch.no_grad()
+def transfer_waveform_blocked(
+    transfer_fn,
+    x: torch.Tensor,
+    *,
+    block_size: int = 512,
+    left_context: int = 32768,
+) -> torch.Tensor:
+    """Chunked causal transfer approximating Max/nn~ ``forward block_size``.
+
+    Training backbones are usually built *without* ``cached_conv`` streaming
+    rings. Feeding each block with a long left context and keeping only the
+    tail of the output approximates stateful streaming (same idea as overlap
+    context for causal nets), so W&B ``val/audio_x_to_y_nn512`` tracks what
+    listeners hear at small nn~ buffers.
+
+    ``transfer_fn`` maps ``(B, C, T) -> (B, C, T)`` (e.g. ``G_xy`` waveform).
+    ``x`` is ``(C, T)`` or ``(B, C, T)``.
+    """
+    if x.dim() == 2:
+        x = x.unsqueeze(0)
+    if x.dim() != 3:
+        raise ValueError(f"expected (B, C, T) or (C, T), got {tuple(x.shape)}")
+    if block_size < 1:
+        raise ValueError(f"block_size must be positive, got {block_size}")
+    left_context = max(int(left_context), 0)
+
+    outputs = []
+    n = x.shape[-1]
+    for start in range(0, n, block_size):
+        end = min(start + block_size, n)
+        valid = end - start
+        ctx0 = max(0, start - left_context)
+        window = x[..., ctx0:end]
+        y_win = transfer_fn(window)
+        # Align to window length (decoder may differ by a few samples).
+        t = min(y_win.shape[-1], window.shape[-1])
+        y_win = y_win[..., :t]
+        take = min(valid, y_win.shape[-1])
+        outputs.append(y_win[..., -take:])
+    return torch.cat(outputs, dim=-1)
+
+
 def load_cyclegan_warps_from_checkpoint(
     ckpt_path: str,
     *,

@@ -64,92 +64,72 @@ def _hint(boxes: List[Dict], next_id: Callable[[], str], y: float, text: str) ->
     boxes.append(_box(next_id(), "comment", [_COL_X, y, 520.0, 28.0], text=text))
 
 
-def _live_slider(
+def _gain_flonum(
     obj_id: str,
     rect: List[float],
     *,
-    longname: str,
-    shortname: str,
     lo: float,
     hi: float,
     default: float,
 ) -> Dict[str, Any]:
+    """Plain Max number box — reliable in Max 9 (unlike live.slider)."""
     return _box(
         obj_id,
-        "live.slider",
+        "flonum",
         rect,
         numinlets=1,
         numoutlets=2,
-        outlettype=["", "float"],
-        parameter_enable=1,
+        outlettype=["", "bang"],
+        parameter_enable=0,
+        minimum=float(lo),
+        maximum=float(hi),
+        # Saved display value; loadbang also writes into *~ and this box.
         saved_attribute_attributes={
             "valueof": {
-                "parameter_longname": longname,
-                "parameter_shortname": shortname,
-                "parameter_type": 0,
-                "parameter_mmin": float(lo),
-                "parameter_mmax": float(hi),
                 "parameter_initial": [float(default)],
             }
         },
     )
 
 
-def _live_menu(
+def _umenu(
     obj_id: str,
     rect: List[float],
     *,
-    longname: str,
-    shortname: str,
     items: List[str],
     default_index: int = 0,
 ) -> Dict[str, Any]:
+    """Plain Max umenu — reliable outside Ableton (unlike live.menu)."""
     return _box(
         obj_id,
-        "live.menu",
+        "umenu",
         rect,
         numinlets=1,
         numoutlets=3,
-        outlettype=["int", "", "float"],
-        parameter_enable=1,
-        saved_attribute_attributes={
-            "valueof": {
-                "parameter_longname": longname,
-                "parameter_shortname": shortname,
-                "parameter_type": 2,
-                "parameter_enum": items,
-                "parameter_initial": [int(default_index)],
-            }
-        },
+        outlettype=["int", "", ""],
+        parameter_enable=0,
+        items=list(items),
+        # 0-based selection
+        value=int(default_index),
     )
 
 
-def _live_toggle(
+def _toggle(
     obj_id: str,
     rect: List[float],
     *,
-    longname: str,
-    shortname: str,
-    labels: tuple[str, str] = ("off", "on"),
     default: int = 0,
 ) -> Dict[str, Any]:
+    """Plain Max toggle — reliable outside Ableton (unlike live.toggle)."""
     return _box(
         obj_id,
-        "live.toggle",
+        "toggle",
         rect,
         numinlets=1,
         numoutlets=1,
-        outlettype=[""],
-        parameter_enable=1,
-        saved_attribute_attributes={
-            "valueof": {
-                "parameter_longname": longname,
-                "parameter_shortname": shortname,
-                "parameter_type": 2,
-                "parameter_enum": list(labels),
-                "parameter_initial": [int(default)],
-            }
-        },
+        outlettype=["int"],
+        parameter_enable=0,
+        value=int(default),
     )
 
 
@@ -197,6 +177,7 @@ def _build_play_patch(
     title: str,
     ts_name: str,
     extract_only: bool = False,
+    default_source_file: bool = False,
 ) -> None:
     """Single-column patch: source → level → nn~ → model gain → output."""
 
@@ -208,7 +189,7 @@ def _build_play_patch(
     hint = (
         "44100 Hz · extract-only · ~3 s warmup · timbral attrs use neutral defaults · click ezdac~"
         if extract_only
-        else "44100 Hz · click ezdac~ for audio on"
+        else "44100 Hz · flonum gains 0–2 · click ezdac~ for audio on"
     )
     _hint(boxes, next_id, y, hint)
     y += 40.0
@@ -228,14 +209,20 @@ def _build_play_patch(
     drop_id = next_id()
     drop_trig = next_id()
     play_toggle = next_id()
+    src_default = 1 if default_source_file else 0
     boxes.extend([
-        _live_menu(
+        _box(
+            next_id(),
+            "comment",
+            [_COL_X + 150.0, y, 200.0, 18.0],
+            text="source: live in | file",
+            fontsize=10.0,
+        ),
+        _umenu(
             src_menu,
             [_COL_X, y, 140.0, 22.0],
-            longname="audio_source",
-            shortname="source",
             items=["live in", "file"],
-            default_index=0,
+            default_index=src_default,
         ),
         _box(adc_id, "newobj", [_COL_X, y + 35.0, 57.0, 22.0], text="adc~ 1"),
         _box(in_meter_id, "meter~", [_CTRL_X, y + 35.0, 80.0, 22.0]),
@@ -252,12 +239,16 @@ def _build_play_patch(
         _box(open_play, "message", [_COL_X + 300.0, y + 95.0, 30.0, 22.0], text="1"),
         _box(drop_id, "dropfile", [_COL_X, y + 100.0, 120.0, 22.0]),
         _box(drop_trig, "newobj", [_COL_X + 140.0, y + 100.0, 40.0, 22.0], text="t b l"),
-        _live_toggle(
+        _box(
+            next_id(),
+            "comment",
+            [_COL_X + 240.0, y + 52.0, 40.0, 16.0],
+            text="play",
+            fontsize=10.0,
+        ),
+        _toggle(
             play_toggle,
-            [_COL_X + 240.0, y + 70.0, 50.0, 22.0],
-            longname="file_play",
-            shortname="play",
-            labels=("off", "on"),
+            [_COL_X + 240.0, y + 70.0, 24.0, 24.0],
             default=1,
         ),
         _box(sfplay_id, "newobj", [_COL_X + 210.0, y + 100.0, 95.0, 22.0], text="sfplay~ 1 @loop 1"),
@@ -269,22 +260,28 @@ def _build_play_patch(
     y += 30.0
     sel_id = next_id()
     pre_meter_id = next_id()
-    in_gain_slider = next_id()
+    in_gain_label = next_id()
+    in_gain_num = next_id()
     in_gain_id = next_id()
     src_idx = next_id()
     boxes.extend([
         _box(sel_id, "newobj", [_COL_X, y, 65.0, 22.0], text="selector~ 2"),
         _box(pre_meter_id, "meter~", [_CTRL_X, y, 80.0, 22.0]),
-        _live_slider(
-            in_gain_slider,
-            [_CTRL_X + 100.0, y - 2.0, 120.0, 22.0],
-            longname="input_gain",
-            shortname="in gain",
+        _box(
+            in_gain_label,
+            "comment",
+            [_CTRL_X + 100.0, y - 18.0, 70.0, 18.0],
+            text="in gain",
+            fontsize=10.0,
+        ),
+        _gain_flonum(
+            in_gain_num,
+            [_CTRL_X + 100.0, y, 60.0, 22.0],
             lo=0.0,
             hi=2.0,
             default=1.0,
         ),
-        _box(in_gain_id, "newobj", [_COL_X, y + 40.0, 45.0, 22.0], text="*~ 1"),
+        _box(in_gain_id, "newobj", [_COL_X, y + 40.0, 45.0, 22.0], text="*~ 1."),
         _box(src_idx, "newobj", [_COL_X + 80.0, y + 40.0, 30.0, 22.0], text="+ 1"),
     ])
     y += 80.0
@@ -294,21 +291,27 @@ def _build_play_patch(
     y += 30.0
     nn_id = next_id()
     model_meter_id = next_id()
-    model_gain_slider = next_id()
+    model_gain_label = next_id()
+    model_gain_num = next_id()
     model_gain_id = next_id()
     boxes.extend([
         _nn_tilde_box(nn_id, [_COL_X, y, 200.0, 22.0], ts_name),
         _box(model_meter_id, "meter~", [_CTRL_X, y, 80.0, 22.0]),
-        _live_slider(
-            model_gain_slider,
-            [_CTRL_X + 100.0, y - 2.0, 120.0, 22.0],
-            longname="model_gain",
-            shortname="model gain",
-            lo=0.0,
-            hi=8.0,
-            default=3.0,
+        _box(
+            model_gain_label,
+            "comment",
+            [_CTRL_X + 100.0, y - 18.0, 90.0, 18.0],
+            text="model gain",
+            fontsize=10.0,
         ),
-        _box(model_gain_id, "newobj", [_COL_X, y + 40.0, 45.0, 22.0], text="*~ 1"),
+        _gain_flonum(
+            model_gain_num,
+            [_CTRL_X + 100.0, y, 60.0, 22.0],
+            lo=0.0,
+            hi=2.0,
+            default=1.0,
+        ),
+        _box(model_gain_id, "newobj", [_COL_X, y + 40.0, 45.0, 22.0], text="*~ 1."),
     ])
     if extract_only:
         _wire_extract_only(boxes, lines, next_id, nn_id, y=y + 40.0)
@@ -323,20 +326,27 @@ def _build_play_patch(
     dac_id = next_id()
     out_meter_id = next_id()
     boxes.extend([
-        _live_toggle(
+        _box(
+            next_id(),
+            "comment",
+            [_COL_X + 50.0, y - 2.0, 200.0, 18.0],
+            text="path: off=direct in · on=nn~ model",
+            fontsize=10.0,
+        ),
+        _toggle(
             path_toggle,
-            [_COL_X, y, 160.0, 22.0],
-            longname="output_path",
-            shortname="path",
-            labels=("direct in", "nn~ model"),
+            [_COL_X, y, 24.0, 24.0],
             default=1,
         ),
-        _box(path_idx, "newobj", [_COL_X + 180.0, y, 30.0, 22.0], text="+ 1"),
+        _box(path_idx, "newobj", [_COL_X + 40.0, y + 2.0, 30.0, 22.0], text="+ 1"),
         _box(path_sel, "newobj", [_COL_X, y + 40.0, 65.0, 22.0], text="selector~ 2"),
         _box(dac_id, "ezdac~", [_COL_X, y + 90.0, 45.0, 45.0]),
         _box(out_meter_id, "meter~", [_CTRL_X, y + 98.0, 80.0, 22.0]),
     ])
     y += 150.0
+
+    # selector~ inlet: 1 = adc, 2 = sfplay
+    src_sel_msg = "2" if default_source_file else "1"
 
     # --- startup (one loadbang) ---
     lb = next_id()
@@ -346,28 +356,40 @@ def _build_play_patch(
     m_model_gain = next_id()
     m_path = next_id()
     m_file_sel = next_id()
+    m_src_menu = next_id()
+    m_file_umenu = next_id()
     boxes.extend([
         _box(lb, "newobj", [_CTRL_X + 180.0, 20.0, 60.0, 22.0], text="loadbang"),
-        _box(t, "newobj", [_CTRL_X + 250.0, 20.0, 30.0, 22.0], text="t b b b b"),
-        _box(m_src, "message", [_CTRL_X + 300.0, 20.0, 30.0, 22.0], text="1"),
+        _box(t, "newobj", [_CTRL_X + 250.0, 20.0, 40.0, 22.0], text="t b b b b b"),
+        _box(m_src, "message", [_CTRL_X + 300.0, 20.0, 30.0, 22.0], text=src_sel_msg),
         _box(m_in_gain, "message", [_CTRL_X + 300.0, 45.0, 30.0, 22.0], text="1."),
-        _box(m_model_gain, "message", [_CTRL_X + 300.0, 70.0, 30.0, 22.0], text="3."),
+        _box(m_model_gain, "message", [_CTRL_X + 300.0, 70.0, 30.0, 22.0], text="1."),
         _box(m_path, "message", [_CTRL_X + 300.0, 95.0, 30.0, 22.0], text="2"),
         _box(m_file_sel, "message", [_CTRL_X + 340.0, 70.0, 30.0, 22.0], text="2"),
+        # Sync umenu display with selector (0=live, 1=file)
+        _box(
+            m_src_menu,
+            "message",
+            [_CTRL_X + 340.0, 20.0, 30.0, 22.0],
+            text=str(1 if default_source_file else 0),
+        ),
+        _box(m_file_umenu, "message", [_CTRL_X + 340.0, 95.0, 30.0, 22.0], text="1"),
     ])
 
     # --- signal routing (vertical, minimal crossings) ---
     lines.extend([
+        # Always meter the mic so live input is visible even when source=file
+        _line(adc_id, 0, in_meter_id, 0),
         _line(adc_id, 0, sel_id, 1),
         _line(sfplay_id, 0, sel_id, 2),
         _line(src_menu, 0, src_idx, 0),
         _line(src_idx, 0, sel_id, 0),
         _line(sel_id, 0, pre_meter_id, 0),
         _line(sel_id, 0, in_gain_id, 0),
-        _line(in_gain_slider, 1, in_gain_id, 1),
+        _line(in_gain_num, 0, in_gain_id, 1),
         _line(in_gain_id, 0, nn_id, _NN_INLET),
         _line(nn_id, 0, model_gain_id, 0),
-        _line(model_gain_slider, 1, model_gain_id, 1),
+        _line(model_gain_num, 0, model_gain_id, 1),
         _line(model_gain_id, 0, model_meter_id, 0),
         _line(in_gain_id, 0, path_sel, 1),
         _line(model_gain_id, 0, path_sel, 2),
@@ -384,22 +406,29 @@ def _build_play_patch(
         _line(open_trig, 0, open_play, 0),
         _line(open_play, 0, sfplay_id, 0),
         _line(open_trig, 0, m_file_sel, 0),
+        _line(open_trig, 0, m_file_umenu, 0),
         _line(drop_id, 0, drop_trig, 0),
         _line(drop_trig, 1, open_path, 0),
         _line(drop_trig, 0, open_play, 0),
         _line(drop_trig, 0, m_file_sel, 0),
+        _line(drop_trig, 0, m_file_umenu, 0),
         _line(play_toggle, 0, sfplay_id, 0),
-        # startup
+        _line(m_file_sel, 0, sel_id, 0),
+        _line(m_file_umenu, 0, src_menu, 0),
+        # startup — set *~, sync flonums, sync umenu
         _line(lb, 0, t, 0),
         _line(t, 0, m_src, 0),
         _line(m_src, 0, sel_id, 0),
+        _line(t, 0, m_src_menu, 0),
+        _line(m_src_menu, 0, src_menu, 0),
         _line(t, 0, m_in_gain, 0),
         _line(m_in_gain, 0, in_gain_id, 1),
+        _line(m_in_gain, 0, in_gain_num, 0),
         _line(t, 0, m_model_gain, 0),
         _line(m_model_gain, 0, model_gain_id, 1),
+        _line(m_model_gain, 0, model_gain_num, 0),
         _line(t, 0, m_path, 0),
         _line(m_path, 0, path_sel, 0),
-        _line(m_file_sel, 0, sel_id, 0),
     ])
 
 
@@ -407,6 +436,8 @@ def write_vanilla_play_patch(
     output_path: Union[str, Path],
     ts_name: str = "model.ts",
     title: str = "BRAVE nn~ — set Max Audio to 44100 Hz",
+    *,
+    default_source_file: bool = False,
 ) -> Path:
     output_path = Path(output_path)
     boxes: List[Dict] = []
@@ -426,6 +457,7 @@ def write_vanilla_play_patch(
         title=title,
         ts_name=ts_name,
         extract_only=False,
+        default_source_file=default_source_file,
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w") as f:

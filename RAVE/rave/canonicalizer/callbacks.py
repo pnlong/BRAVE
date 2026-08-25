@@ -260,6 +260,7 @@ class CycleGANRampCallback(pl.Callback):
     Cycle-only warmup (no adversarial / no D steps), then linear GAN ramp.
 
     During warmup ``gan_factor=0``; latent spread ramps with GAN when active.
+    Track A: ``audio_polish_factor`` ramps after ``audio_polish_start_step``.
     """
 
     def on_train_batch_start(
@@ -281,6 +282,17 @@ class CycleGANRampCallback(pl.Callback):
             pl_module.spread_factor = factor
         else:
             pl_module.spread_factor = 0.0
+
+        polish_start = getattr(pl_module, "audio_polish_start_step", None)
+        if polish_start is None:
+            pl_module.audio_polish_factor = 0.0
+        else:
+            pl_module.audio_polish_factor = compute_gan_ramp_factor(
+                trainer.global_step,
+                delay=int(polish_start),
+                ramp_duration=int(
+                    getattr(pl_module, "audio_polish_ramp_duration", 5000)),
+            )
 
 
 class CycleGANExportCallback(pl.Callback):
@@ -310,7 +322,8 @@ class CycleGANValVizCallback(pl.Callback):
     Validation monitoring for CycleGAN:
 
     - ``val/audio_x`` / ``val/audio_y``: ``input | transfer | cycle``
-    - ``val/audio_x_to_y`` / ``val/audio_y_to_x``: transfer only
+    - ``val/audio_x_to_y`` / ``val/audio_y_to_x``: transfer only (full-clip)
+    - ``val/audio_x_to_y_nn512``: X→Y transfer in nn~-sized blocks (Max-like)
     - ``val/latent_x_pca``: Enc_X(x) vs G_yx latent, colored by domain x/y
     - ``val/latent_y_pca``: Enc_Y(y) vs G_xy latent, colored by domain x/y
     """
@@ -321,12 +334,16 @@ class CycleGANValVizCallback(pl.Callback):
         num_audio_samples: int = 8,
         max_points_per_domain: int = 512,
         also_tsne: bool = False,
+        nn_block_size: int = 512,
+        nn_left_context: int = 32768,
     ) -> None:
         super().__init__()
         self.out_dir = Path(out_dir) if out_dir is not None else None
         self.num_audio_samples = num_audio_samples
         self.max_points_per_domain = max_points_per_domain
         self.also_tsne = also_tsne
+        self.nn_block_size = int(nn_block_size)
+        self.nn_left_context = int(nn_left_context)
         self._x_audio: List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = []
         self._y_audio: List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = []
         # X-space: real Enc_X(x) vs transferred z_yx (from y)
@@ -449,6 +466,42 @@ class CycleGANValVizCallback(pl.Callback):
         if logged:
             self._write_wav(file_stem, wav, sr, step)
 
+    def _log_x_to_y_nn_blocks(self, pl_module, *, step: int) -> None:
+        """X→Y transfer in nn~-sized blocks (Max-like); only this direction."""
+        if not self._x_audio or self.nn_block_size <= 0:
+            return
+        from .cycle_inference import transfer_waveform_blocked
+        from .viz import mono_waveform
+
+        device = pl_module.device
+        sr = pl_module.backbone_y.sr
+        was_training = pl_module.training
+        pl_module.eval()
+
+        def _g_xy(wave: torch.Tensor) -> torch.Tensor:
+            y, _, _ = pl_module._forward_g_xy(wave)
+            return y
+
+        chunks: List[np.ndarray] = []
+        with torch.no_grad():
+            for x_in, _xfer, _cyc in self._x_audio[: self.num_audio_samples]:
+                x_b = x_in.unsqueeze(0).to(device)
+                y_b = transfer_waveform_blocked(
+                    _g_xy,
+                    x_b,
+                    block_size=self.nn_block_size,
+                    left_context=self.nn_left_context,
+                )
+                chunks.append(mono_waveform(y_b.squeeze(0).cpu()))
+        if was_training:
+            pl_module.train()
+
+        wav = np.concatenate(chunks) if chunks else np.array([], dtype=np.float32)
+        key = f"val/audio_x_to_y_nn{self.nn_block_size}"
+        logged = log_wandb_audio(pl_module, key, wav, sr)
+        if logged:
+            self._write_wav(f"x_to_y_nn{self.nn_block_size}", wav, sr, step)
+
     def _log_latent_space(
         self,
         pl_module,
@@ -514,6 +567,7 @@ class CycleGANValVizCallback(pl.Callback):
                 samples=self._x_audio,
                 step=step,
             )
+            self._log_x_to_y_nn_blocks(pl_module, step=step)
             self._log_transfers(
                 pl_module,
                 key="val/audio_y_to_x",

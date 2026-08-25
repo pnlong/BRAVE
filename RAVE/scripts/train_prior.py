@@ -48,7 +48,7 @@ flags.DEFINE_integer('workers',
 flags.DEFINE_integer('val_every', 10000, help='Run validation every n steps')
 flags.DEFINE_integer('save_every',
                      None,
-                     help='save every n steps (default: just last)')
+                     help='Write epoch_{global_step}.ckpt every n steps and at train end')
 flags.DEFINE_integer('max_steps', default=1000000, help="max training steps")
 flags.DEFINE_multi_string('override', default=[], help='Override gin binding')
 

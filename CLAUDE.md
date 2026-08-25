@@ -144,9 +144,14 @@ python RAVE/scripts/train_cyclegan.py \
 
 `cycle_domain` couples cycle + D: `"waveform"` (default, STFT+RMS + audio D) or `"latent"` (z L1 + latent D). Latent cycle modes: `ae_aware` (Dec+re-Enc, 50k warmup) or `direct` (compose-L1, no warmup / no decode in train).
 
+**Track B hybrid** (waveform + latent D): `CycleGANTrainer.lambda_latent_gan=1.0` — audio D and latent D share `gan_factor`.  
+**Track A polish** (latent + phase-2 STFT): `cycle_domain="latent"` and `audio_polish_start_step=100000` — latent D stays on.
+
 ```bash
 OVERRIDE='CycleGANTrainer.cycle_domain="latent"'
 OVERRIDE='CycleGANTrainer.cycle_domain="latent" CycleGANTrainer.latent_cycle_mode="direct"'
+OVERRIDE='CycleGANTrainer.lambda_latent_gan=1.0'
+OVERRIDE='CycleGANTrainer.cycle_domain="latent" CycleGANTrainer.audio_polish_start_step=100000'
 ```
 
 Writes `cyclegan_latent.ckpt` with a dual-backbone manifest (`cycle_domain`, `init_mode`, …). See gin `CYCLE_WARMUP_DURATION` / `CYCLE_MAX_STEPS`.

@@ -221,12 +221,35 @@ def main():
             break
         except ValueError:
             continue
+
+    def _query_float(keys, default: float) -> float:
+        for key in keys:
+            try:
+                return float(gin.query_parameter(key))
+            except ValueError:
+                continue
+        return default
+
+    lambda_latent_gan = _query_float(
+        (
+            "CycleGANTrainer.lambda_latent_gan",
+            "rave.canonicalizer.cycle_trainer.CycleGANTrainer.lambda_latent_gan",
+        ),
+        0.0,
+    )
+
+    disc_latent_x = None
+    disc_latent_y = None
     if cycle_domain == "latent":
         disc_x = build_latent_discriminator(backbone_x.latent_size)
         disc_y = build_latent_discriminator(backbone_y.latent_size)
     else:
         disc_x = build_in_domain_discriminator(n_channels)
         disc_y = build_in_domain_discriminator(n_channels)
+        # Track B: waveform cycle + audio D + hybrid latent D
+        if lambda_latent_gan > 0.0 and args.canonicalizer_type == "latent":
+            disc_latent_x = build_latent_discriminator(backbone_x.latent_size)
+            disc_latent_y = build_latent_discriminator(backbone_y.latent_size)
 
     trainer_module = CycleGANTrainer(
         backbone_x=backbone_x,
@@ -236,6 +259,8 @@ def main():
         canonicalizer_type=args.canonicalizer_type,
         disc_x=disc_x,
         disc_y=disc_y,
+        disc_latent_x=disc_latent_x,
+        disc_latent_y=disc_latent_y,
     )
 
     gin_snapshot = gin.config_str()
@@ -276,6 +301,8 @@ def main():
         f"latent_cycle_mode={trainer_module.latent_cycle_mode}, "
         f"ae_aware={trainer_module.use_ae_aware_cycle}, "
         f"direct={trainer_module.use_latent_cycle}, "
+        f"hybrid_latent_gan={trainer_module.hybrid_latent_gan}, "
+        f"audio_polish_start={trainer_module.audio_polish_start_step}, "
         f"warp_init={warp_init_mode}",
     )
 

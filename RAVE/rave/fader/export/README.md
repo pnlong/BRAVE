@@ -40,11 +40,11 @@ exports/<run_name>/
 
 The patch is laid out in **numbered steps** on the right:
 
-1. **INPUT SOURCE** — `live in` vs `file`
-2. **LIVE INPUT** — `adc~` + **meter~** (confirms mic is working)
+1. **INPUT SOURCE** — `umenu`: **live in** vs **file**
+2. **LIVE INPUT** — `adc~` + **meter~** (always wired — confirms mic even when source=file)
 3. **FILE INPUT** — **Choose audio file…** button (reliable), drag-and-drop zone, **play** toggle; drops auto-play
-4. **LEVEL & MODEL** — **input gain** slider → `nn~`
-5. **OUTPUT** — **ezdac~** speaker (this is Max’s “audio on” — there is no separate mic button)
+4. **LEVEL & MODEL** — **in gain** / **model gain** `flonum` boxes (0–2, default 1) → `nn~`
+5. **OUTPUT** — **ezdac~** speaker (this is Max’s “audio on” — there is no separate mic button). Path toggle: off=direct in, on=nn~ model.
 
 Model attributes go to nn~ **right inlet**; audio to **left**.
 

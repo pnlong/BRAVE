@@ -126,6 +126,9 @@ def export_fader_nn(
 
     x = torch.zeros(1, model.n_channels, 2**14)
     scripted(x)
+    # Clear causal pad/cache left by the warmup so nn~ does not buzz on silence.
+    from rave.model import _zero_cached_conv_state
+    _zero_cached_conv_state(scripted)
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)

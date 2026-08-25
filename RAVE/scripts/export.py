@@ -591,6 +591,10 @@ def main(argv):
     z = scripted_rave.encode(x)
     x = scripted_rave.decode(z)
 
+    # Clear causal pad/cache left by the warmup so nn~ does not buzz on silence.
+    from rave.model import _zero_cached_conv_state
+    _zero_cached_conv_state(scripted_rave)
+
     logging.info("save model")
     output = FLAGS.output or os.path.dirname(FLAGS.run)
     model_name = FLAGS.name or FLAGS.run.split(os.sep)[-4]

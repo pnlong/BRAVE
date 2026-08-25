@@ -24,6 +24,30 @@ from ..gin_setup import configure_backbone_gin
 _log = logging.getLogger(__name__)
 
 
+def _ensure_cached_streaming_buffers(root: nn.Module) -> None:
+    """Create cached_conv pad/cache buffers before ``torch.jit.script``.
+
+    Those buffers are allocated lazily in ``@torch.jit.unused init_cache``.
+    Any submodule that missed the warmup pass then fails scripting with
+    ``CachedPadding1d has no attribute 'pad'``.
+    """
+    from cached_conv.convs import CachedConv1d, CachedConvTranspose1d, CachedPadding1d
+
+    for m in root.modules():
+        if isinstance(m, CachedConv1d):
+            dummy = torch.zeros(1, m.in_channels, 32)
+            if not getattr(m.cache, "initialized", 0):
+                m.cache.init_cache(dummy)
+            delay = getattr(m, "downsampling_delay", None)
+            if delay is not None and not getattr(delay, "initialized", 0):
+                delay.init_cache(dummy)
+        elif isinstance(m, CachedConvTranspose1d):
+            if not getattr(m, "initialized", 0):
+                m.init_cache(torch.zeros(1, m.out_channels, 32))
+        elif isinstance(m, CachedPadding1d) and not getattr(m, "initialized", 0):
+            m.init_cache(torch.zeros(1, 1, max(int(m.padding), 1)))
+
+
 def _load_backbone(config_path: str, ckpt_path: str, n_channels: int):
     configure_backbone_gin(config_path, n_channels)
     model = rave.RAVE(n_channels=n_channels)
@@ -195,6 +219,12 @@ def export_cyclegan_nn(
     y = scripted(x)
     if y.shape[-1] == 0:
         raise RuntimeError("CycleGAN export warmup produced empty audio")
+    _ensure_cached_streaming_buffers(scripted)
+    # Warmup fills causal pad/cache rings with non-zero state (biases).
+    # Serializing that into the .ts makes Max buzz on load / on silence.
+    from rave.model import _zero_cached_conv_state
+
+    _zero_cached_conv_state(scripted)
 
     scripted.export_to_ts(str(output_ts))
     sidecar = ckpt_path.with_suffix(".manifest.json")

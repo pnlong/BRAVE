@@ -178,6 +178,7 @@ tap_samples
 scratchpaper/
 artifacts/
 logs/
+exports/
 
 yt_playlists/
 yt_playlists

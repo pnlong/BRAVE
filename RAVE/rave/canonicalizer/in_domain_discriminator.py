@@ -199,12 +199,21 @@ def build_in_domain_discriminator(
 def build_latent_discriminator(
     latent_size: int,
     *,
-    hidden_size: int = 256,
-    n_layers: int = 3,
+    hidden_size: Optional[int] = None,
+    n_layers: Optional[int] = None,
+    kernel_size: Optional[int] = None,
 ) -> InDomainLatentDiscriminator:
-    """Construct a latent real/fake D (gin-configurable class)."""
-    return InDomainLatentDiscriminator(
-        latent_size=latent_size,
-        hidden_size=hidden_size,
-        n_layers=n_layers,
-    )
+    """Construct a latent real/fake D.
+
+    Only ``latent_size`` is passed through by default so gin bindings for
+    ``hidden_size``, ``n_layers``, and ``kernel_size`` take effect. Explicit
+    kwargs still override gin (for tests / non-gin callers).
+    """
+    kwargs = {"latent_size": int(latent_size)}
+    if hidden_size is not None:
+        kwargs["hidden_size"] = hidden_size
+    if n_layers is not None:
+        kwargs["n_layers"] = n_layers
+    if kernel_size is not None:
+        kwargs["kernel_size"] = kernel_size
+    return InDomainLatentDiscriminator(**kwargs)

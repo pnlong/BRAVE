@@ -16,6 +16,12 @@
 # Latent cycle + latent D (AE-aware):
 #   --override 'CycleGANTrainer.cycle_domain="latent"'
 #
+# Track A — latent + phase-2 audio polish:
+#   --override 'CycleGANTrainer.cycle_domain="latent" CycleGANTrainer.audio_polish_start_step=100000'
+#
+# Track B — waveform + hybrid latent D:
+#   --override 'CycleGANTrainer.lambda_latent_gan=1.0'
+#
 # Latent cycle + latent D (direct compose, no warmup / no decode in train):
 #   --override 'CycleGANTrainer.cycle_domain="latent" CycleGANTrainer.latent_cycle_mode="direct"'
 
@@ -89,6 +95,10 @@ rave.canonicalizer.in_domain_discriminator.InDomainLatentDiscriminator:
     hidden_size = 256
     n_layers = 3
     kernel_size = 7
+    # OVERRIDE examples (take effect via build_latent_discriminator):
+    #   InDomainLatentDiscriminator.n_layers=1
+    #   InDomainLatentDiscriminator.hidden_size=64
+    #   InDomainLatentDiscriminator.kernel_size=1
 
 discriminator.ConvNet:
     in_size = 1
@@ -138,17 +148,27 @@ rave.canonicalizer.cycle_trainer.CycleGANTrainer:
     disc_lr = 2e-5
     cycle_warmup_duration = %CYCLE_WARMUP_DURATION
     gan_ramp_duration = %CYCLE_GAN_RAMP_DURATION
+    audio_polish_start_step = None
+    audio_polish_ramp_duration = 5000
+    lambda_audio_polish = 10.0
     update_discriminator_every = 2
     num_skipped_features = 1
     encode_use_mean = True
     lambda_latent_spread = 0.25
     latent_spread_mode = "var_match"
     latent_spread_scale = 1.0
+    lambda_latent_gan = 0.0
+    lambda_latent_feature_matching = 0.5
     # Keep Enc/Dec frozen by default. For ablations:
     #   CycleGANTrainer.unfreeze_decoders = True
     #   CycleGANTrainer.unfreeze_encoders = True
     #   CycleGANTrainer.backbone_lr = 1e-5
     # Prefer identity loss when unfreezing (e.g. lambda_identity = 1.0).
+    # Track B hybrid (waveform + latent D):
+    #   CycleGANTrainer.lambda_latent_gan = 1.0
+    # Track A phase-2 polish (latent domain):
+    #   CycleGANTrainer.cycle_domain = "latent"
+    #   CycleGANTrainer.audio_polish_start_step = 100000
     unfreeze_encoders = False
     unfreeze_decoders = False
     backbone_lr = 1e-5
@@ -164,3 +184,5 @@ rave.canonicalizer.dataset.build_canonicalizer_dataset:
 
 rave.canonicalizer.callbacks.CycleGANValVizCallback:
     num_audio_samples = 8
+    nn_block_size = 512
+    nn_left_context = 32768

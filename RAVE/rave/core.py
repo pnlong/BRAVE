@@ -617,17 +617,45 @@ class LoggerCallback(pl.Callback):
 
 
 class ModelCheckpoint(pl.callbacks.ModelCheckpoint):
+    """Step dumps named ``epoch_{global_step}.ckpt`` (e.g. ``epoch_1500000.ckpt``).
+
+    Uses Lightning ``trainer.global_step`` so SLURM resumes still hit 500k / 1M /
+    1.5M. A local batch counter reset to 0 on every job and never wrote the
+    eval checkpoint after resume. Also dumps the final step on ``on_train_end``
+    when ``max_steps`` is not a multiple of ``step_period``.
+    """
+
     def __init__(self, step_period: int = None, **kwargs):
         super().__init__(**kwargs)
-        self.step_period = step_period 
-        self.__counter = 0
+        self.step_period = step_period
+        self._last_step_dump = 0
+
+    def _dump_step_checkpoint(self, trainer, *, force: bool = False) -> None:
+        if not self.step_period:
+            return
+        if getattr(trainer, "sanity_checking", False):
+            return
+        step = int(getattr(trainer, "global_step", 0) or 0)
+        if step <= 0 or step == self._last_step_dump:
+            return
+        if not force and step % int(self.step_period) != 0:
+            return
+        filename = os.path.join(
+            self.dirpath, f"epoch_{step}{self.FILE_EXTENSION}")
+        if os.path.isfile(filename):
+            self._last_step_dump = step
+            return
+        self._save_checkpoint(trainer, filename)
+        self._last_step_dump = step
 
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
-        self.__counter += 1
-        if self.step_period:
-            if self.__counter % self.step_period == 0:
-                filename = os.path.join(self.dirpath, f"epoch_{self.__counter}{self.FILE_EXTENSION}")
-                self._save_checkpoint(trainer, filename)
+        super().on_train_batch_end(trainer, pl_module, outputs, batch, batch_idx)
+        self._dump_step_checkpoint(trainer)
+
+    def on_train_end(self, trainer, pl_module):
+        self._dump_step_checkpoint(trainer, force=True)
+        if hasattr(super(), "on_train_end"):
+            super().on_train_end(trainer, pl_module)
 
 
 def get_valid_extensions():

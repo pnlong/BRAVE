@@ -16,6 +16,8 @@ set -euo pipefail
 # Dual frozen BRAVE CycleGAN (latent warps; waveform warps shelved).
 # Domain X = source (e.g. tap), domain Y = target (e.g. birdsong / water).
 # CYCLE_DOMAIN=waveform|latent (optional gin override). LATENT_CYCLE_MODE=ae_aware|direct.
+# Track B hybrid: LAMBDA_LATENT_GAN=1.0 (waveform + latent D, same gan_factor ramp).
+# Track A polish: CYCLE_DOMAIN=latent AUDIO_POLISH_START=100000
 # Resumable: last.ckpt is written every SAVE_EVERY steps. Resubmit the same
 # command to continue; FRESH=1 starts over in the same hashed run dir.
 : "${CKPT_X:?Set CKPT_X to domain-X checkpoint or run directory}"
@@ -67,6 +69,8 @@ echo "DB_PATH_Y=${DB_PATH_Y}"
 echo "CANONICALIZER_TYPE=${CANONICALIZER_TYPE}"
 echo "CYCLE_DOMAIN=${CYCLE_DOMAIN:-}"
 echo "LATENT_CYCLE_MODE=${LATENT_CYCLE_MODE:-}"
+echo "LAMBDA_LATENT_GAN=${LAMBDA_LATENT_GAN:-}"
+echo "AUDIO_POLISH_START=${AUDIO_POLISH_START:-}"
 echo "RUN_NAME=${RUN_NAME}"
 echo "OUT_PATH=${OUT_PATH}"
 if [[ -n "${OVERRIDE:-}" ]]; then
@@ -127,6 +131,15 @@ if [[ -n "${CYCLE_DOMAIN:-}" ]]; then
 fi
 if [[ -n "${LATENT_CYCLE_MODE:-}" ]]; then
   CYCLE_ARGS+=(--override="CycleGANTrainer.latent_cycle_mode=\"${LATENT_CYCLE_MODE}\"")
+fi
+if [[ -n "${LAMBDA_LATENT_GAN:-}" ]]; then
+  CYCLE_ARGS+=(--override="CycleGANTrainer.lambda_latent_gan=${LAMBDA_LATENT_GAN}")
+fi
+if [[ -n "${AUDIO_POLISH_START:-}" ]]; then
+  CYCLE_ARGS+=(--override="CycleGANTrainer.audio_polish_start_step=${AUDIO_POLISH_START}")
+fi
+if [[ -n "${AUDIO_POLISH_RAMP:-}" ]]; then
+  CYCLE_ARGS+=(--override="CycleGANTrainer.audio_polish_ramp_duration=${AUDIO_POLISH_RAMP}")
 fi
 
 if [[ -n "${RESUME:-}" ]]; then

@@ -23,6 +23,7 @@ def test_vanilla_play_patch_json(tmp_path):
     data = json.loads(out.read_text())
     assert "patcher" in data
     boxes = data["patcher"]["boxes"]
+    lines = data["patcher"]["lines"]
     texts = [b["box"].get("text", "") for b in boxes if b["box"].get("maxclass") == "newobj"]
     assert any("nn~ model.ts forward 512" in t for t in texts)
     assert any(t == "selector~ 2" for t in texts)
@@ -30,8 +31,48 @@ def test_vanilla_play_patch_json(tmp_path):
     assert sum(1 for b in boxes if b["box"].get("maxclass") == "meter~") >= 3
     classes = {b["box"]["maxclass"] for b in boxes}
     assert "textbutton" in classes
+    assert "flonum" in classes
+    assert "umenu" in classes
+    assert "toggle" in classes
+    assert "live.slider" not in classes
+    assert "live.menu" not in classes
+    assert "live.toggle" not in classes
     assert any(t == "adc~ 1" for t in texts)
     assert not any("prepend set attr_mode" in t for t in texts)
+    msgs = [b["box"].get("text", "") for b in boxes if b["box"].get("maxclass") == "message"]
+    assert "3." not in msgs
+    assert msgs.count("1.") >= 2
+    # Mic meter must be wired directly from adc~ (not only via selector)
+    adc_boxes = [
+        b["box"] for b in boxes
+        if b["box"].get("maxclass") == "newobj" and b["box"].get("text") == "adc~ 1"
+    ]
+    assert adc_boxes
+    adc_id = adc_boxes[0]["id"]
+    meter_ids = {
+        b["box"]["id"] for b in boxes if b["box"].get("maxclass") == "meter~"
+    }
+    assert any(
+        ln["patchline"]["source"][0] == adc_id
+        and ln["patchline"]["destination"][0] in meter_ids
+        for ln in lines
+    )
+
+
+def test_vanilla_play_patch_default_file_source(tmp_path):
+    max_patch = _load_max_patch_module()
+    out = max_patch.write_vanilla_play_patch(
+        tmp_path / "play.maxpat",
+        default_source_file=True,
+    )
+    data = json.loads(out.read_text())
+    boxes = data["patcher"]["boxes"]
+    menus = [b["box"] for b in boxes if b["box"].get("maxclass") == "umenu"]
+    assert menus
+    assert menus[0].get("value") == 1
+    msgs = [b["box"].get("text", "") for b in boxes if b["box"].get("maxclass") == "message"]
+    # loadbang selects selector~ inlet 2 (sfplay)
+    assert "2" in msgs
 
 
 def test_fader_play_patch_json(tmp_path):
@@ -61,8 +102,9 @@ def test_fader_play_patch_json(tmp_path):
     assert any("prepend set attr_mode" in t for t in texts)
     assert not any("prepend set rms" in t for t in texts)
     classes = {b["box"]["maxclass"] for b in boxes}
-    assert "live.slider" in classes
-    assert "live.menu" in classes  # source menu only
+    assert "flonum" in classes
+    assert "live.slider" not in classes
+    assert "umenu" in classes
     assert "dropfile" in classes
     nn_boxes = [
         b["box"] for b in boxes

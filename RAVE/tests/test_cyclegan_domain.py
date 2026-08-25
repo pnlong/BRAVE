@@ -2,12 +2,16 @@
 
 from types import SimpleNamespace
 
+import gin
 import torch
 import torch.nn as nn
 
 from rave.canonicalizer.cycle_trainer import CycleGANTrainer
 from rave.canonicalizer.gan_utils import audio_gan_d, audio_gan_g, feature_matching_loss
-from rave.canonicalizer.in_domain_discriminator import InDomainLatentDiscriminator
+from rave.canonicalizer.in_domain_discriminator import (
+    InDomainLatentDiscriminator,
+    build_latent_discriminator,
+)
 from rave.canonicalizer.latent_canonicalizer import LatentCanonicalizer
 from rave.core import hinge_gan
 
@@ -53,6 +57,24 @@ def _tiny_trainer(**kwargs):
     )
     defaults.update(kwargs)
     return CycleGANTrainer(**defaults)
+
+
+def test_build_latent_discriminator_honors_gin_architecture():
+    gin.clear_config()
+    gin.parse_config("""
+        InDomainLatentDiscriminator.hidden_size = 64
+        InDomainLatentDiscriminator.n_layers = 1
+        InDomainLatentDiscriminator.kernel_size = 1
+    """)
+    try:
+        disc = build_latent_discriminator(8)
+        assert len(disc.blocks) == 1
+        conv = disc.blocks[0][0]
+        assert conv.in_channels == 8
+        assert conv.out_channels == 64
+        assert conv.kernel_size == (1,)
+    finally:
+        gin.clear_config()
 
 
 def test_latent_discriminator_shapes_and_gan_utils():
@@ -141,6 +163,80 @@ def test_gan_pairs_use_latents_in_latent_domain():
     with torch.no_grad():
         fwd = t._forward_batch(x, x_mask, y_mask, decode=False)
         feat_real_y, feat_fake_y, feat_real_x, feat_fake_x = t._gan_pairs(
+            fwd, detach=True)
+    assert feat_real_y[0][-1].shape[0] == 2
+    assert feat_fake_y[0][-1].shape[0] == 2
+    assert feat_real_x[0][-1].shape[0] == 2
+    assert feat_fake_x[0][-1].shape[0] == 2
+
+
+def test_hybrid_latent_gan_requires_discs():
+    try:
+        _tiny_trainer(
+            cycle_domain="waveform",
+            disc_x=SimpleNamespace(),
+            disc_y=SimpleNamespace(),
+            lambda_latent_gan=1.0,
+            disc_latent_x=None,
+            disc_latent_y=None,
+        )
+        assert False, "expected ValueError"
+    except ValueError as exc:
+        assert "disc_latent" in str(exc)
+
+
+def test_hybrid_latent_gan_active_on_waveform():
+    lat_x = InDomainLatentDiscriminator(latent_size=8, hidden_size=16, n_layers=2)
+    lat_y = InDomainLatentDiscriminator(latent_size=8, hidden_size=16, n_layers=2)
+    t = _tiny_trainer(
+        cycle_domain="waveform",
+        disc_x=SimpleNamespace(),
+        disc_y=SimpleNamespace(),
+        disc_latent_x=lat_x,
+        disc_latent_y=lat_y,
+        lambda_latent_gan=1.0,
+    )
+    assert t.hybrid_latent_gan is True
+    assert t.gan_domain == "audio"
+    assert t._waveform_cycle_weight() == t.lambda_cycle
+
+
+def test_audio_polish_weight_ramps_on_latent():
+    t = _tiny_trainer(
+        cycle_domain="latent",
+        latent_cycle_mode="ae_aware",
+        audio_polish_start_step=100,
+        audio_polish_ramp_duration=10,
+        lambda_audio_polish=10.0,
+    )
+    assert t.audio_polish_active is True
+    assert t.use_waveform_cycle is False
+    t.audio_polish_factor = 0.0
+    assert t._waveform_cycle_weight() == 0.0
+    t.audio_polish_factor = 0.5
+    assert abs(t._waveform_cycle_weight() - 5.0) < 1e-6
+    assert t._needs_train_decode() is True
+    assert t._needs_waveform_roundtrip() is True
+
+
+def test_latent_gan_pairs_hybrid():
+    lat_x = InDomainLatentDiscriminator(latent_size=8, hidden_size=16, n_layers=2)
+    lat_y = InDomainLatentDiscriminator(latent_size=8, hidden_size=16, n_layers=2)
+    t = _tiny_trainer(
+        cycle_domain="waveform",
+        disc_x=InDomainLatentDiscriminator(latent_size=8, hidden_size=16, n_layers=2),
+        disc_y=InDomainLatentDiscriminator(latent_size=8, hidden_size=16, n_layers=2),
+        disc_latent_x=lat_x,
+        disc_latent_y=lat_y,
+        lambda_latent_gan=1.0,
+    )
+    t.eval()
+    x = torch.randn(4, 1, 64)
+    x_mask = torch.tensor([True, True, False, False])
+    y_mask = ~x_mask
+    with torch.no_grad():
+        fwd = t._forward_batch(x, x_mask, y_mask, decode=True)
+        feat_real_y, feat_fake_y, feat_real_x, feat_fake_x = t._latent_gan_pairs(
             fwd, detach=True)
     assert feat_real_y[0][-1].shape[0] == 2
     assert feat_fake_y[0][-1].shape[0] == 2

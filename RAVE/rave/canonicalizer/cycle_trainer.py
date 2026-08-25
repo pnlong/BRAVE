@@ -33,11 +33,13 @@ class CycleGANTrainer(pl.LightningModule):
     Latent warps are cross-space: Enc_src → W → Dec_tgt. Waveform warps are
     shelved for new runs.
 
-    ``cycle_domain`` (preferred) couples cycle loss and discriminator:
-    - ``"waveform"``: STFT+RMS cycle + audio D
+    ``cycle_domain`` (preferred) couples cycle loss and primary discriminator:
+    - ``"waveform"``: STFT+RMS cycle + audio D; set ``lambda_latent_gan>0`` for
+      hybrid latent D (Track B, same ``gan_factor`` ramp)
     - ``"latent"``: z L1 cycle + latent D; ``latent_cycle_mode`` is
       ``"ae_aware"`` (Dec+re-Enc in the cycle) or ``"direct"`` (compose warps
-      only, no decode in train, warmup forced to 0)
+      only, no decode in train, warmup forced to 0). Optional phase-2 audio
+      polish via ``audio_polish_start_step`` (Track A).
 
     Legacy ``use_waveform_cycle`` / ``use_latent_cycle`` still apply when
     ``cycle_domain`` is unset (audio D always).
@@ -54,16 +56,23 @@ class CycleGANTrainer(pl.LightningModule):
         canonicalizer_type: str,
         disc_x: Optional[InDomainAudioDiscriminator] = None,
         disc_y: Optional[InDomainAudioDiscriminator] = None,
+        disc_latent_x: Optional[nn.Module] = None,
+        disc_latent_y: Optional[nn.Module] = None,
         lambda_cycle: float = 10.0,
         lambda_gan: float = 1.0,
         lambda_feature_matching: float = 0.5,
+        lambda_latent_gan: float = 0.0,
+        lambda_latent_feature_matching: float = 0.5,
         lambda_identity: float = 0.0,
+        lambda_audio_polish: float = 10.0,
         cycle_stft_weight: float = 0.9,
         cycle_rms_weight: float = 0.1,
         stft_loss_scale: float = 45.0,
         rms_loss_scale: float = 0.3,
         gan_loss_scale: float = 0.5,
         fm_loss_scale: float = 0.25,
+        latent_gan_loss_scale: float = 0.5,
+        latent_fm_loss_scale: float = 0.25,
         calibrate_loss_scales: bool = True,
         calibration_batches: int = 16,
         loss_scale_min: float = 1e-3,
@@ -79,6 +88,8 @@ class CycleGANTrainer(pl.LightningModule):
         disc_lr: float = 2e-5,
         cycle_warmup_duration: int = 50000,
         gan_ramp_duration: int = 5000,
+        audio_polish_start_step: Optional[int] = None,
+        audio_polish_ramp_duration: int = 5000,
         update_discriminator_every: int = 2,
         num_skipped_features: int = 1,
         encode_use_mean: bool = True,
@@ -150,16 +161,29 @@ class CycleGANTrainer(pl.LightningModule):
                     disc = disc(n_channels=backbone_x.n_channels)
             setattr(self, name, disc)
 
+        for disc, name, size_bb in (
+            (disc_latent_x, "disc_latent_x", backbone_x),
+            (disc_latent_y, "disc_latent_y", backbone_y),
+        ):
+            if disc is not None and isinstance(disc, type):
+                disc = disc(latent_size=size_bb.latent_size)
+            setattr(self, name, disc)
+
         self.lambda_cycle = lambda_cycle
         self.lambda_gan = lambda_gan
         self.lambda_feature_matching = lambda_feature_matching
+        self.lambda_latent_gan = float(lambda_latent_gan)
+        self.lambda_latent_feature_matching = float(lambda_latent_feature_matching)
         self.lambda_identity = lambda_identity
+        self.lambda_audio_polish = float(lambda_audio_polish)
         self.cycle_stft_weight = cycle_stft_weight
         self.cycle_rms_weight = cycle_rms_weight
         self.stft_loss_scale = stft_loss_scale
         self.rms_loss_scale = rms_loss_scale
         self.gan_loss_scale = gan_loss_scale
         self.fm_loss_scale = fm_loss_scale
+        self.latent_gan_loss_scale = latent_gan_loss_scale
+        self.latent_fm_loss_scale = latent_fm_loss_scale
         self.calibrate_loss_scales = calibrate_loss_scales
         self.calibration_batches = calibration_batches
         self.loss_scale_min = loss_scale_min
@@ -175,6 +199,13 @@ class CycleGANTrainer(pl.LightningModule):
         self.gan_ramp_duration = gan_ramp_duration
         self.gan_factor = 0.0
         self.cycle_warmed_up = False
+        if audio_polish_start_step is not None and int(audio_polish_start_step) < 0:
+            audio_polish_start_step = None
+        self.audio_polish_start_step = (
+            None if audio_polish_start_step is None else int(audio_polish_start_step)
+        )
+        self.audio_polish_ramp_duration = int(audio_polish_ramp_duration)
+        self.audio_polish_factor = 0.0
         self.update_discriminator_every = update_discriminator_every
         self.num_skipped_features = num_skipped_features
         self.encode_use_mean = encode_use_mean
@@ -191,6 +222,24 @@ class CycleGANTrainer(pl.LightningModule):
         self.spread_active = (
             canonicalizer_type == "latent" and self.lambda_latent_spread > 0.0
         )
+        # Hybrid latent D only on waveform/audio primary GAN (Track B).
+        self.hybrid_latent_gan = (
+            self.gan_domain == "audio"
+            and self.lambda_latent_gan > 0.0
+            and canonicalizer_type == "latent"
+            and self.disc_latent_x is not None
+            and self.disc_latent_y is not None
+        )
+        if (
+            self.lambda_latent_gan > 0.0
+            and self.gan_domain == "audio"
+            and canonicalizer_type == "latent"
+            and not self.hybrid_latent_gan
+        ):
+            raise ValueError(
+                "lambda_latent_gan>0 requires disc_latent_x and disc_latent_y "
+                "(waveform hybrid Track B)"
+            )
         self.unfreeze_encoders = unfreeze_encoders
         self.unfreeze_decoders = unfreeze_decoders
 
@@ -203,6 +252,10 @@ class CycleGANTrainer(pl.LightningModule):
             if self.unfreeze_decoders:
                 for p in backbone.decoder.parameters():
                     p.requires_grad = True
+
+    @property
+    def audio_polish_active(self) -> bool:
+        return self.audio_polish_start_step is not None
 
     @property
     def warmup(self) -> int:
@@ -229,10 +282,14 @@ class CycleGANTrainer(pl.LightningModule):
 
         warp_opt = torch.optim.Adam(warp_groups, betas=(0.5, 0.9))
         disc_params = []
-        if self.disc_x is not None:
-            disc_params.extend(self.disc_x.parameters())
-        if self.disc_y is not None:
-            disc_params.extend(self.disc_y.parameters())
+        for disc in (
+            self.disc_x,
+            self.disc_y,
+            self.disc_latent_x,
+            self.disc_latent_y,
+        ):
+            if disc is not None:
+                disc_params.extend(disc.parameters())
         if not disc_params:
             return warp_opt
         disc_opt = torch.optim.Adam(disc_params, lr=self.disc_lr, betas=(0.5, 0.9))
@@ -243,6 +300,8 @@ class CycleGANTrainer(pl.LightningModule):
         "rms_loss_scale",
         "gan_loss_scale",
         "fm_loss_scale",
+        "latent_gan_loss_scale",
+        "latent_fm_loss_scale",
         "latent_spread_scale",
         "latent_cycle_loss_scale",
     )
@@ -284,7 +343,11 @@ class CycleGANTrainer(pl.LightningModule):
 
     def _optimizers(self) -> Tuple[torch.optim.Optimizer, Optional[torch.optim.Optimizer]]:
         opts = self.optimizers()
-        if self.disc_x is None and self.disc_y is None:
+        has_disc = any(
+            d is not None
+            for d in (self.disc_x, self.disc_y, self.disc_latent_x, self.disc_latent_y)
+        )
+        if not has_disc:
             return opts, None
         warp_opt, disc_opt = opts
         return warp_opt, disc_opt
@@ -296,10 +359,14 @@ class CycleGANTrainer(pl.LightningModule):
                 backbone.encoder.train()
             if self.unfreeze_decoders:
                 backbone.decoder.train()
-        if self.disc_x is not None:
-            self.disc_x.train()
-        if self.disc_y is not None:
-            self.disc_y.train()
+        for disc in (
+            self.disc_x,
+            self.disc_y,
+            self.disc_latent_x,
+            self.disc_latent_y,
+        ):
+            if disc is not None:
+                disc.train()
 
     def _encode_latent(
         self,
@@ -350,7 +417,18 @@ class CycleGANTrainer(pl.LightningModule):
             return True
         if self.gan_domain == "audio":
             return True
+        # Track A phase-2 polish needs decoded cycles for STFT/RMS.
+        if self.audio_polish_factor > 0.0:
+            return True
         return False
+
+    def _needs_waveform_roundtrip(self) -> bool:
+        """Full G_yx(G_xy(·)) path (vs latent-only compose) for cycle/polish."""
+        return (
+            self.use_ae_aware_cycle
+            or self.use_waveform_cycle
+            or self.audio_polish_factor > 0.0
+        )
 
     def _forward_g_xy(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """G_{X→Y}(x) → waveform, multiband, latent (post-warp)."""
@@ -488,7 +566,7 @@ class CycleGANTrainer(pl.LightningModule):
                 x_cycle, x_cycle_mb = empty, empty
             else:
                 y_fake, y_fake_mb, z_xy = self._forward_g_xy(x_samples)
-                if self.use_ae_aware_cycle or self.use_waveform_cycle:
+                if self._needs_waveform_roundtrip():
                     x_cycle, x_cycle_mb, z_x_cycle_ae = self._forward_g_yx(
                         y_fake)
                 else:
@@ -552,7 +630,7 @@ class CycleGANTrainer(pl.LightningModule):
                 y_cycle, y_cycle_mb = empty, empty
             else:
                 x_fake, x_fake_mb, z_yx = self._forward_g_yx(y_samples)
-                if self.use_ae_aware_cycle or self.use_waveform_cycle:
+                if self._needs_waveform_roundtrip():
                     y_cycle, y_cycle_mb, z_y_cycle_ae = self._forward_g_xy(
                         x_fake)
                 else:
@@ -615,12 +693,25 @@ class CycleGANTrainer(pl.LightningModule):
         target_mb: torch.Tensor,
         recon_mb: torch.Tensor,
         n_frames: int,
+        *,
+        enabled: Optional[bool] = None,
     ) -> torch.Tensor:
-        if not self.use_waveform_cycle:
+        if enabled is None:
+            enabled = self.use_waveform_cycle or self.audio_polish_factor > 0.0
+        if not enabled:
             return torch.tensor(0.0, device=self.device)
         stft, rms = self._cycle_loss(
             backbone, target_raw, recon_raw, target_mb, recon_mb, n_frames)
         return self._weighted_cycle(stft, rms)
+
+    def _waveform_cycle_weight(self) -> float:
+        """Effective λ for waveform STFT+RMS (waveform domain and/or polish)."""
+        weight = 0.0
+        if self.use_waveform_cycle:
+            weight += self.lambda_cycle
+        if self.audio_polish_factor > 0.0:
+            weight += self.audio_polish_factor * self.lambda_audio_polish
+        return weight
 
     def _identity_losses(
         self,
@@ -692,6 +783,24 @@ class CycleGANTrainer(pl.LightningModule):
                 self.disc_x, fwd["x"], fwd["x_fake"], detach=detach)
         return feat_real_y, feat_fake_y, feat_real_x, feat_fake_x
 
+    def _latent_gan_pairs(
+        self,
+        fwd: Dict[str, torch.Tensor],
+        *,
+        detach: bool,
+    ) -> Tuple[
+        List[List[torch.Tensor]],
+        List[List[torch.Tensor]],
+        List[List[torch.Tensor]],
+        List[List[torch.Tensor]],
+    ]:
+        """Hybrid Track B: latent D on post-warp z vs in-domain Enc(z)."""
+        feat_real_y, feat_fake_y = self._disc_features(
+            self.disc_latent_y, fwd["z_y"], fwd["z_xy"], detach=detach)
+        feat_real_x, feat_fake_x = self._disc_features(
+            self.disc_latent_x, fwd["z_x"], fwd["z_yx"], detach=detach)
+        return feat_real_y, feat_fake_y, feat_real_x, feat_fake_x
+
     def _update_latent_var_refs(
         self,
         x_raw: torch.Tensor,
@@ -751,11 +860,16 @@ class CycleGANTrainer(pl.LightningModule):
             "gan_x": None,
             "fm_y": None,
             "fm_x": None,
+            "latent_gan_y": None,
+            "latent_gan_x": None,
+            "latent_fm_y": None,
+            "latent_fm_x": None,
             "spread": None,
         }
 
+        wave_for_cal = self.use_waveform_cycle or self.audio_polish_active
         if x_mask.any():
-            if self.use_waveform_cycle:
+            if wave_for_cal and fwd["x_cycle"].numel():
                 stft, rms = self._cycle_loss(
                     self.backbone_x,
                     fwd["x"],
@@ -770,7 +884,7 @@ class CycleGANTrainer(pl.LightningModule):
                     self._latent_cycle_loss(fwd["z_x"], fwd["z_x_cycle"]).detach().cpu())
 
         if y_mask.any():
-            if self.use_waveform_cycle:
+            if wave_for_cal and fwd["y_cycle"].numel():
                 stft, rms = self._cycle_loss(
                     self.backbone_y,
                     fwd["y"],
@@ -794,6 +908,24 @@ class CycleGANTrainer(pl.LightningModule):
                 num_skipped_features=self.num_skipped_features).detach().cpu())
             out["fm_x"] = float(feature_matching_loss(
                 feat_real_x, feat_fake_x,
+                num_skipped_features=self.num_skipped_features).detach().cpu())
+
+        if (
+            include_adversarial
+            and self.hybrid_latent_gan
+            and x_mask.any()
+            and y_mask.any()
+        ):
+            lr_y, lf_y, lr_x, lf_x = self._latent_gan_pairs(fwd, detach=True)
+            out["latent_gan_y"] = float(
+                audio_gan_g(lf_y, self.gan_loss_fn).detach().cpu())
+            out["latent_gan_x"] = float(
+                audio_gan_g(lf_x, self.gan_loss_fn).detach().cpu())
+            out["latent_fm_y"] = float(feature_matching_loss(
+                lr_y, lf_y,
+                num_skipped_features=self.num_skipped_features).detach().cpu())
+            out["latent_fm_x"] = float(feature_matching_loss(
+                lr_x, lf_x,
                 num_skipped_features=self.num_skipped_features).detach().cpu())
 
         if self.spread_active and fwd["z_xy"].numel() and self.latent_var_ref_y is not None:
@@ -821,6 +953,10 @@ class CycleGANTrainer(pl.LightningModule):
             "gan_x": [],
             "fm_y": [],
             "fm_x": [],
+            "latent_gan_y": [],
+            "latent_gan_x": [],
+            "latent_fm_y": [],
+            "latent_fm_x": [],
             "spread": [],
         }
         for batch_idx, batch in enumerate(dataloader):
@@ -828,7 +964,7 @@ class CycleGANTrainer(pl.LightningModule):
                 break
             raw = self._batch_raw_losses(batch, include_adversarial=True)
             for key, value in raw.items():
-                if value is not None:
+                if value is not None and key in buckets:
                     buckets[key].append(value)
 
         scales: Dict[str, float] = {
@@ -836,6 +972,8 @@ class CycleGANTrainer(pl.LightningModule):
             "rms_loss_scale": self.rms_loss_scale,
             "gan_loss_scale": self.gan_loss_scale,
             "fm_loss_scale": self.fm_loss_scale,
+            "latent_gan_loss_scale": self.latent_gan_loss_scale,
+            "latent_fm_loss_scale": self.latent_fm_loss_scale,
             "latent_spread_scale": self.latent_spread_scale,
             "latent_cycle_loss_scale": self.latent_cycle_loss_scale,
         }
@@ -864,6 +1002,18 @@ class CycleGANTrainer(pl.LightningModule):
                 fm_vals, self.fm_loss_scale, self.loss_scale_min)
             self.fm_loss_scale = scales["fm_loss_scale"]
 
+        lat_gan_vals = buckets["latent_gan_y"] + buckets["latent_gan_x"]
+        if lat_gan_vals:
+            scales["latent_gan_loss_scale"] = empirical_adversarial_loss_scale(
+                lat_gan_vals, self.latent_gan_loss_scale, self.loss_scale_min)
+            self.latent_gan_loss_scale = scales["latent_gan_loss_scale"]
+
+        lat_fm_vals = buckets["latent_fm_y"] + buckets["latent_fm_x"]
+        if lat_fm_vals:
+            scales["latent_fm_loss_scale"] = empirical_adversarial_loss_scale(
+                lat_fm_vals, self.latent_fm_loss_scale, self.loss_scale_min)
+            self.latent_fm_loss_scale = scales["latent_fm_loss_scale"]
+
         if buckets["spread"]:
             scales["latent_spread_scale"] = empirical_loss_scale(
                 buckets["spread"], self.loss_scale_min)
@@ -882,6 +1032,8 @@ class CycleGANTrainer(pl.LightningModule):
         loss_latent_cycle: torch.Tensor,
         loss_adv: torch.Tensor,
         loss_fm: torch.Tensor,
+        loss_latent_adv: torch.Tensor,
+        loss_latent_fm: torch.Tensor,
         loss_d: torch.Tensor,
         loss_spread: torch.Tensor,
         batch_size: int,
@@ -892,12 +1044,20 @@ class CycleGANTrainer(pl.LightningModule):
         self.log("cycle/cycle_x_norm", loss_cycle_x, batch_size=batch_size)
         self.log("cycle/cycle_y_norm", loss_cycle_y, batch_size=batch_size)
         self.log("cycle/gan_factor", float(self.gan_factor), batch_size=batch_size)
+        self.log(
+            "cycle/audio_polish_factor",
+            float(self.audio_polish_factor),
+            batch_size=batch_size,
+        )
         self.log("cycle/cycle_warmed_up", float(self.cycle_warmed_up), batch_size=batch_size)
         if self._latent_cycle_active:
             self.log("cycle/latent_cycle_norm", loss_latent_cycle, batch_size=batch_size)
         if self.gan_factor > 0.0:
             self.log("cycle/adv_norm", loss_adv, batch_size=batch_size)
             self.log("cycle/fm_norm", loss_fm, batch_size=batch_size)
+            if self.hybrid_latent_gan:
+                self.log("cycle/latent_adv_norm", loss_latent_adv, batch_size=batch_size)
+                self.log("cycle/latent_fm_norm", loss_latent_fm, batch_size=batch_size)
         if log_disc:
             self.log("cycle/disc_loss", loss_d, batch_size=batch_size)
         if self.spread_active and loss_spread.requires_grad:
@@ -920,6 +1080,7 @@ class CycleGANTrainer(pl.LightningModule):
         loss_cycle_x = zero
         loss_cycle_y = zero
         loss_latent_cycle = zero
+        wave_enabled = self._waveform_cycle_weight() > 0.0
 
         if x_mask.any():
             loss_cycle_x = self._waveform_cycle_bundle(
@@ -929,6 +1090,7 @@ class CycleGANTrainer(pl.LightningModule):
                 fwd["x_mb"],
                 fwd["x_cycle_mb"],
                 fwd["z_xy"].shape[-1],
+                enabled=wave_enabled,
             )
             if self._latent_cycle_active:
                 loss_latent_cycle = loss_latent_cycle + normalize_loss(
@@ -944,6 +1106,7 @@ class CycleGANTrainer(pl.LightningModule):
                 fwd["y_mb"],
                 fwd["y_cycle_mb"],
                 fwd["z_yx"].shape[-1],
+                enabled=wave_enabled,
             )
             if self._latent_cycle_active:
                 loss_latent_cycle = loss_latent_cycle + normalize_loss(
@@ -954,11 +1117,14 @@ class CycleGANTrainer(pl.LightningModule):
         loss_cycle = loss_cycle_x + loss_cycle_y
         loss_adv = zero
         loss_fm = zero
+        loss_latent_adv = zero
+        loss_latent_fm = zero
         loss_d = zero
         loss_spread = zero
 
         has_both = x_mask.any() and y_mask.any()
         gan_active = self.gan_factor > 0.0 and has_both
+        hybrid_active = gan_active and self.hybrid_latent_gan
         is_disc_step = (
             gan_active
             and disc_opt is not None
@@ -968,9 +1134,16 @@ class CycleGANTrainer(pl.LightningModule):
         if is_disc_step:
             feat_real_y, feat_fake_y, feat_real_x, feat_fake_x = self._gan_pairs(
                 fwd, detach=True)
-            loss_d_y = audio_gan_d(feat_real_y, feat_fake_y, self.gan_loss_fn)
-            loss_d_x = audio_gan_d(feat_real_x, feat_fake_x, self.gan_loss_fn)
-            loss_d = loss_d_y + loss_d_x
+            loss_d = (
+                audio_gan_d(feat_real_y, feat_fake_y, self.gan_loss_fn)
+                + audio_gan_d(feat_real_x, feat_fake_x, self.gan_loss_fn)
+            )
+            if hybrid_active:
+                lr_y, lf_y, lr_x, lf_x = self._latent_gan_pairs(fwd, detach=True)
+                loss_d = loss_d + (
+                    audio_gan_d(lr_y, lf_y, self.gan_loss_fn)
+                    + audio_gan_d(lr_x, lf_x, self.gan_loss_fn)
+                )
             disc_opt.zero_grad()
             self.manual_backward(loss_d)
             disc_opt.step()
@@ -982,6 +1155,8 @@ class CycleGANTrainer(pl.LightningModule):
                 loss_latent_cycle=loss_latent_cycle,
                 loss_adv=loss_adv,
                 loss_fm=loss_fm,
+                loss_latent_adv=loss_latent_adv,
+                loss_latent_fm=loss_latent_fm,
                 loss_d=loss_d,
                 loss_spread=loss_spread,
                 batch_size=batch_size,
@@ -1004,17 +1179,35 @@ class CycleGANTrainer(pl.LightningModule):
                 loss_gan_y + loss_gan_x, self.gan_loss_scale)
             loss_fm = normalize_loss(loss_fm_y + loss_fm_x, self.fm_loss_scale)
 
+        if hybrid_active:
+            lr_y, lf_y, lr_x, lf_x = self._latent_gan_pairs(fwd, detach=False)
+            loss_latent_adv = normalize_loss(
+                audio_gan_g(lf_y, self.gan_loss_fn)
+                + audio_gan_g(lf_x, self.gan_loss_fn),
+                self.latent_gan_loss_scale,
+            )
+            loss_latent_fm = normalize_loss(
+                feature_matching_loss(
+                    lr_y, lf_y, num_skipped_features=self.num_skipped_features)
+                + feature_matching_loss(
+                    lr_x, lf_x, num_skipped_features=self.num_skipped_features),
+                self.latent_fm_loss_scale,
+            )
+
         if self.spread_active and self.spread_factor > 0.0:
             loss_spread_raw = self._latent_spread_loss(fwd)
             loss_spread = normalize_loss(loss_spread_raw, self.latent_spread_scale)
 
         loss_identity = self._identity_losses(fwd, x_mask, y_mask)
+        wave_lambda = self._waveform_cycle_weight()
 
         loss = (
-            self.lambda_cycle * loss_cycle
+            wave_lambda * loss_cycle
             + self.lambda_latent_cycle * loss_latent_cycle
             + self.gan_factor * self.lambda_gan * loss_adv
             + self.gan_factor * self.lambda_feature_matching * loss_fm
+            + self.gan_factor * self.lambda_latent_gan * loss_latent_adv
+            + self.gan_factor * self.lambda_latent_feature_matching * loss_latent_fm
             + self.lambda_identity * loss_identity
             + self.spread_factor * self.lambda_latent_spread * loss_spread
         )
@@ -1032,6 +1225,8 @@ class CycleGANTrainer(pl.LightningModule):
             loss_latent_cycle=loss_latent_cycle,
             loss_adv=loss_adv,
             loss_fm=loss_fm,
+            loss_latent_adv=loss_latent_adv,
+            loss_latent_fm=loss_latent_fm,
             loss_d=loss_d,
             loss_spread=loss_spread,
             batch_size=batch_size,
@@ -1050,7 +1245,9 @@ class CycleGANTrainer(pl.LightningModule):
             fwd = self._forward_batch(x_raw, x_mask, y_mask, decode=True)
 
             if x_mask.any():
-                if self.use_waveform_cycle:
+                if (self.use_waveform_cycle or self.audio_polish_active) and fwd[
+                    "x_cycle"
+                ].numel():
                     self.log(
                         "val/cycle_x",
                         self._waveform_cycle_bundle(
@@ -1060,6 +1257,7 @@ class CycleGANTrainer(pl.LightningModule):
                             fwd["x_mb"],
                             fwd["x_cycle_mb"],
                             fwd["z_xy"].shape[-1],
+                            enabled=True,
                         ),
                         on_step=False,
                         on_epoch=True,
@@ -1094,9 +1292,24 @@ class CycleGANTrainer(pl.LightningModule):
                         sync_dist=True,
                         batch_size=batch_size,
                     )
+                if (
+                    self.hybrid_latent_gan
+                    and self.disc_latent_y is not None
+                    and fwd["z_xy"].shape[0] > 0
+                ):
+                    self.log(
+                        "val/disc_latent_y_fake",
+                        mean_fake_logit(self.disc_latent_y(fwd["z_xy"])),
+                        on_step=False,
+                        on_epoch=True,
+                        sync_dist=True,
+                        batch_size=batch_size,
+                    )
 
             if y_mask.any():
-                if self.use_waveform_cycle:
+                if (self.use_waveform_cycle or self.audio_polish_active) and fwd[
+                    "y_cycle"
+                ].numel():
                     self.log(
                         "val/cycle_y",
                         self._waveform_cycle_bundle(
@@ -1106,6 +1319,7 @@ class CycleGANTrainer(pl.LightningModule):
                             fwd["y_mb"],
                             fwd["y_cycle_mb"],
                             fwd["z_yx"].shape[-1],
+                            enabled=True,
                         ),
                         on_step=False,
                         on_epoch=True,
@@ -1135,6 +1349,19 @@ class CycleGANTrainer(pl.LightningModule):
                     self.log(
                         "val/disc_x_fake",
                         mean_fake_logit(feat_fake),
+                        on_step=False,
+                        on_epoch=True,
+                        sync_dist=True,
+                        batch_size=batch_size,
+                    )
+                if (
+                    self.hybrid_latent_gan
+                    and self.disc_latent_x is not None
+                    and fwd["z_yx"].shape[0] > 0
+                ):
+                    self.log(
+                        "val/disc_latent_x_fake",
+                        mean_fake_logit(self.disc_latent_x(fwd["z_yx"])),
                         on_step=False,
                         on_epoch=True,
                         sync_dist=True,

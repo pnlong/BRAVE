@@ -147,6 +147,7 @@ def main(argv):
                 output_dir / "play.maxpat",
                 ts_name="model.ts",
                 title="CycleGAN X→Y — set Max Audio to 44100 Hz",
+                default_source_file=True,
             )
             print_max_copy_instructions(output_dir)
         logging.info("done: %s", output_dir)
