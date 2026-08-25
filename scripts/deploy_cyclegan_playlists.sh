@@ -3,10 +3,10 @@
 # yt_playlist backbone.
 #
 # 1) Resume tap (needs the global_step checkpoint fix in rave.core.ModelCheckpoint):
-#    CKPT=/data/scratch-fast/p1long/BRAVE/tap_samples/runs/tap_uncond_run_8e1e614287 \
-#    DB_PATH=/data/scratch-fast/p1long/BRAVE/tap_samples/preprocessed_normalized_clean \
+#    CKPT=$BRAVE_STORAGE/tap_samples/runs/tap_uncond_run_8e1e614287 \
+#    DB_PATH=$BRAVE_STORAGE/tap_samples/preprocessed_normalized_clean \
 #    RUN_NAME=tap_uncond_run CONFIG=configs/brave.gin \
-#    OUT_PATH=/data/scratch-fast/p1long/BRAVE/tap_samples/runs \
+#    OUT_PATH=$BRAVE_STORAGE/tap_samples/runs \
 #    WANDB_RUN_ID=zx8uo6l3 MAX_STEPS=1500000 \
 #    sbatch --chdir=/data/hai-res/p1long/BRAVE --job-name=tap-uncond-brave \
 #      --output=/data/hai-res/p1long/BRAVE/logs/train-%j.log \
@@ -23,13 +23,16 @@
 set -euo pipefail
 
 BRAVE_ROOT="${BRAVE_ROOT:-/data/hai-res/p1long/BRAVE}"
-SCRATCH="${SCRATCH:-/data/scratch-fast/p1long/BRAVE}"
+# shellcheck disable=SC1091
+source "${BRAVE_ROOT}/scripts/load_env.sh"
+# shellcheck disable=SC1091
+source "${BRAVE_ROOT}/scripts/env.sh"
 cd "${BRAVE_ROOT}"
 
-TAP_RUN="${TAP_RUN:-${SCRATCH}/tap_samples/runs/tap_uncond_run_8e1e614287}"
+TAP_RUN="${TAP_RUN:-${BRAVE_STORAGE}/tap_samples/runs/tap_uncond_run_8e1e614287}"
 CKPT_X="${CKPT_X:-${TAP_RUN}/epoch_1500000.ckpt}"
-DB_PATH_X="${DB_PATH_X:-${SCRATCH}/tap_samples/preprocessed_normalized_clean}"
-PLAYLISTS_ROOT="${PLAYLISTS_ROOT:-${SCRATCH}/yt_playlists}"
+DB_PATH_X="${DB_PATH_X:-${BRAVE_STORAGE}/tap_samples/preprocessed_normalized_clean}"
+PLAYLISTS_ROOT="${PLAYLISTS_ROOT:-${BRAVE_STORAGE}/yt_playlists}"
 
 WAIT_SECS="${WAIT_SECS:-21600}"   # 6h
 POLL_SECS="${POLL_SECS:-60}"

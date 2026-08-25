@@ -17,14 +17,13 @@
 #
 # Optional env overrides:
 #   DOMAINS="rain_sounds waves_crashing"
-#   OUT_DIR=/data/scratch-fast/p1long/BRAVE/presentation_demos
+#   OUT_DIR=$BRAVE_STORAGE/presentation_demos
 #   MAX_SEC=15 SEGMENT_SEC=3
 #   CYCLEGAN_HASH=48072c314a
 
 set -euo pipefail
 
 BRAVE_ROOT="${BRAVE_ROOT:-/data/hai-res/p1long/BRAVE}"
-SCRATCH="${SCRATCH:-/data/scratch-fast/p1long/BRAVE}"
 
 # shellcheck disable=SC1091
 source "${BRAVE_ROOT}/scripts/load_env.sh"
@@ -34,14 +33,14 @@ source "${BRAVE_ROOT}/scripts/slurm_env.sh"
 cd "${BRAVE_ROOT}"
 mkdir -p logs
 
-OUT_DIR="${OUT_DIR:-${SCRATCH}/presentation_demos}"
-TAP_DIR="${TAP_DIR:-${SCRATCH}/tap_samples/audio_subset}"
-PLAYLISTS_ROOT="${PLAYLISTS_ROOT:-${SCRATCH}/yt_playlists}"
-TAP_BACKBONE="${TAP_BACKBONE:-${SCRATCH}/tap_samples/runs/tap_uncond_run_8e1e614287/epoch_1500000.ckpt}"
+OUT_DIR="${OUT_DIR:-${BRAVE_STORAGE}/presentation_demos}"
+TAP_DIR="${TAP_DIR:-${BRAVE_STORAGE}/tap_samples/audio_subset}"
+PLAYLISTS_ROOT="${PLAYLISTS_ROOT:-${BRAVE_STORAGE}/yt_playlists}"
+TAP_BACKBONE="${TAP_BACKBONE:-${BRAVE_STORAGE}/tap_samples/runs/tap_uncond_run_8e1e614287/epoch_1500000.ckpt}"
 CYCLEGAN_HASH="${CYCLEGAN_HASH:-48072c314a}"
 MAX_SEC="${MAX_SEC:-15}"
 SEGMENT_SEC="${SEGMENT_SEC:-3}"
-SILENCE_SEC="${SILENCE_SEC:-0.25}"
+SILENCE_SEC="${SILENCE_SEC:-0}"
 
 DOMAIN_ARGS=()
 if [[ -n "${DOMAINS:-}" ]]; then

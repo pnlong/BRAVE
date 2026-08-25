@@ -12,7 +12,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 # Writable project data — override machine root via ``BRAVE_STORAGE``.
-STORAGE_DIR = Path(os.environ.get("BRAVE_STORAGE", "/deepfreeze/pnlong/hai_lab/BRAVE"))
+STORAGE_DIR = Path(
+    os.environ.get("BRAVE_STORAGE", f"/data/hai-res/{os.environ.get('USER', 'p1long')}/BRAVE-data")
+)
 
 # Official dataset root containing ``FSD50K.dev_audio``, ``FSD50K.ground_truth``, etc.
 FSD50K_ROOT = STORAGE_DIR / "FSD50K"

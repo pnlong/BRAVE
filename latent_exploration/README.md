@@ -26,9 +26,9 @@ On hai-res login nodes where AFS home is unreadable, set `HOME=/data/hai-res/$US
 
 ```bash
 python latent_exploration/mask_reconstruct.py \
-  --model /data/scratch-fast/p1long/BRAVE/yt_birdsong/runs/yt_birdsong_run_d8e2ae9d65/best.ckpt \
-  --input /data/scratch-fast/p1long/BRAVE/tap_samples/audio_subset/0.wav \
-  --output-dir /data/scratch-fast/p1long/BRAVE/yt_birdsong/recon_test_tap0 \
+  --model $BRAVE_STORAGE/yt_birdsong/runs/yt_birdsong_run_d8e2ae9d65/best.ckpt \
+  --input $BRAVE_STORAGE/tap_samples/audio_subset/0.wav \
+  --output-dir $BRAVE_STORAGE/yt_birdsong/recon_test_tap0 \
   --mask-style none \
   --latent-mode mean \
   --gpu

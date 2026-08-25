@@ -9,7 +9,9 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-STORAGE_DIR = Path(os.environ.get("BRAVE_STORAGE", "/deepfreeze/pnlong/hai_lab/BRAVE"))
+STORAGE_DIR = Path(
+    os.environ.get("BRAVE_STORAGE", f"/data/hai-res/{os.environ.get('USER', 'p1long')}/BRAVE-data")
+)
 
 DATA_ROOT = STORAGE_DIR / "tabla_ismir21"
 RAW_DIR = DATA_ROOT / "raw"
