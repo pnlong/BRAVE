@@ -4,10 +4,17 @@
 # Do not peak-norm the LMDB: leave recorded levels intact and randomize
 # gain per crop at train time (RandomGain). Do not pass --normalize.
 #
-# Preprocess (no NORMALIZE, 44.1 kHz, mono):
-#   INPUT_PATH=$BRAVE_STORAGE/tap_samples/audio_subset_shotgun \
-#   OUTPUT_PATH=$BRAVE_STORAGE/tap_samples/preprocessed_shotgun \
+# Preprocess train LMDB from the holdout-aware shotgun dir (no NORMALIZE):
+#   python scripts/stage_tap_mic_subset.py \\
+#     --audio-dir $BRAVE_STORAGE/tap_samples/audio_subset \\
+#     --stage-mic shotgun --holdout-eval
+#   # last 20 s of one take per style → eval; prefix stays in train
+#   INPUT_PATH=$BRAVE_STORAGE/tap_samples/audio_subset_shotgun \\
+#   OUTPUT_PATH=$BRAVE_STORAGE/tap_samples/preprocessed_shotgun \\
 #   sbatch --chdir=/data/hai-res/p1long/BRAVE scripts/preprocess.sbatch
+#
+# Eval WAVs: $BRAVE_STORAGE/tap_samples/audio_subset_shotgun_eval
+# (not the Lightning val split; that is still ~2% of LMDB chunks)
 #
 # Train (inline env, after preprocess finishes):
 #   DB_PATH=$BRAVE_STORAGE/tap_samples/preprocessed_shotgun \
