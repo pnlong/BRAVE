@@ -19,6 +19,21 @@ BRAVE_ROOT="${BRAVE_ROOT:-/data/hai-res/p1long/BRAVE}"
 
 # shellcheck disable=SC1091
 source "${BRAVE_ROOT}/scripts/load_env.sh"
+# shellcheck disable=SC1091
+source "${BRAVE_ROOT}/scripts/env.sh"
+
+# Login-node `$BRAVE_STORAGE` empty → `/tap_samples/...`. Re-prefix after env.sh.
+_fix_empty_storage_path() {
+  local p="$1"
+  if [[ "${p}" == /tap_samples/* ]]; then
+    echo "${BRAVE_STORAGE}${p}"
+  else
+    echo "${p}"
+  fi
+}
+INPUT_PATH="$(_fix_empty_storage_path "${INPUT_PATH}")"
+OUTPUT_PATH="$(_fix_empty_storage_path "${OUTPUT_PATH}")"
+unset -f _fix_empty_storage_path
 
 CHANNELS="${CHANNELS:-1}"
 SAMPLING_RATE="${SAMPLING_RATE:-44100}"
