@@ -75,6 +75,21 @@ def test_vanilla_play_patch_default_file_source(tmp_path):
     assert "2" in msgs
 
 
+def test_cyclegan_play_patch_sidechain_toggle(tmp_path):
+    max_patch = _load_max_patch_module()
+    out = max_patch.write_vanilla_play_patch(
+        tmp_path / "play.maxpat",
+        sidechain_toggle=True,
+    )
+    data = json.loads(out.read_text())
+    texts = [
+        b["box"].get("text", "")
+        for b in data["patcher"]["boxes"]
+        if b["box"].get("maxclass") == "newobj"
+    ]
+    assert any("prepend set sidechain" in t for t in texts)
+
+
 def test_fader_play_patch_json(tmp_path):
     max_patch = _load_max_patch_module()
     host = {

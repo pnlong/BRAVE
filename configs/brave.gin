@@ -35,9 +35,11 @@ core.MultiScaleSTFT:
 
 dataset.split_dataset.max_residual = 1000
 
-# Training data quality gate (RMS dBFS on cropped window)
-# Reject near-silent crops that inflate relative STFT recon loss.
-dataset.maybe_reject_silent.enabled = True
+# Train on quiet crops so Enc(silence) can map to a decode-quiet code.
+# (Rejecting < −40 dBFS left CycleGAN / AE ringing on mic gaps.)
+# Restore the old gate: --reject_silent or
+#   dataset.maybe_reject_silent.enabled = True
+dataset.maybe_reject_silent.enabled = False
 dataset.maybe_reject_silent.rms_db_threshold = -40.0
 dataset.maybe_reject_silent.max_tries = 16
 

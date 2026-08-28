@@ -164,11 +164,11 @@ def parse_args() -> argparse.Namespace:
 
 def discover_tap_files(tap_dir: Path) -> List[Path]:
     files: List[Path] = []
-    for name in ("0.wav", "1.wav"):
+    for name in ("sm57-0.wav", "sm57-1.wav", "0.wav", "1.wav"):
         p = tap_dir / name
         if p.is_file():
             files.append(p)
-    for p in sorted(tap_dir.glob("*-Contact Mic L.unnormalized.wav")):
+    for p in sorted(tap_dir.glob("Contact Mic L-*.unnormalized.wav")):
         files.append(p)
     if not files:
         raise FileNotFoundError(f"no tap clips found under {tap_dir}")

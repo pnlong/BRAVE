@@ -20,6 +20,7 @@ import rave.core
 from ..config import load_cyclegan_checkpoint
 from ..cycle_inference import build_cyclegan_warps
 from ..gin_setup import configure_backbone_gin
+from ..silence_gate import CausalLoudnessSidechain
 
 _log = logging.getLogger(__name__)
 
@@ -127,6 +128,9 @@ class ScriptedCycleGANXY(nn_tilde.Module):
             self.pqmf_y(torch.zeros(1, 1, x_len))
         z = self.encode(x)
         ratio_encode = x_len // z.shape[-1]
+        self.encode_hop = ratio_encode
+        self.loudness_sidechain = CausalLoudnessSidechain(hop=ratio_encode)
+        self.register_attribute("sidechain", True)
 
         self.register_method(
             "encode",
@@ -173,6 +177,15 @@ class ScriptedCycleGANXY(nn_tilde.Module):
         )
 
     @torch.jit.export
+    def get_sidechain(self) -> bool:
+        return self.sidechain[0]
+
+    @torch.jit.export
+    def set_sidechain(self, sidechain: bool) -> int:
+        self.sidechain = (sidechain,)
+        return 0
+
+    @torch.jit.export
     def encode(self, x: torch.Tensor) -> torch.Tensor:
         if self.input_mode == "pqmf":
             batch_size = x.shape[:-2]
@@ -197,6 +210,9 @@ class ScriptedCycleGANXY(nn_tilde.Module):
         y = self.decode(self.encode(x))
         if y.shape[-1] > x.shape[-1]:
             y = y[..., : x.shape[-1]]
+        y_sc = self.loudness_sidechain(x, y)
+        if self.sidechain[0]:
+            return y_sc
         return y
 
 

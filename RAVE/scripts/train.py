@@ -101,7 +101,7 @@ flags.DEFINE_integer(
 flags.DEFINE_bool(
     'reject_silent',
     default=None,
-    help='Enable RMS gate on train loader (default: gin maybe_reject_silent.enabled)',
+    help='Enable RMS gate on train loader (gin default is off)',
 )
 flags.DEFINE_bool(
     'noreject_silent',
@@ -185,9 +185,10 @@ def main(argv):
     n_channels = rave.dataset.get_training_channels(FLAGS.db_path, FLAGS.channels)
     gin.bind_parameter('RAVE.n_channels', n_channels)
 
-    # parse augmentations
+    # parse CLI --augment files (skipped when empty so gin can bind RandomGain)
     augmentations = parse_augmentations(map(add_gin_extension, FLAGS.augment))
-    gin.bind_parameter('dataset.get_dataset.augmentations', augmentations)
+    if FLAGS.augment:
+        gin.bind_parameter('dataset.get_dataset.augmentations', augmentations)
 
     # parse configuration
     if FLAGS.ckpt:

@@ -383,7 +383,11 @@ def rms_dbfs(x: np.ndarray) -> float:
 
 
 class RejectSilentDataset(data.Dataset):
-    """Resample dataset indices when the cropped training window is too quiet."""
+    """Resample dataset indices when the cropped training window is too quiet.
+
+    Off by default (see ``maybe_reject_silent`` / ``brave.gin``) so silence
+    stays in the train mix. Enable only if near-silent STFT recon dominates.
+    """
 
     def __init__(
         self,

@@ -124,12 +124,10 @@ def _load_audio_lmdb_pair(
     n_channels: int,
     is_fader: bool,
     split_percent: int = 98,
-    reject_silent_train: bool = True,
 ) -> tuple:
     ds = rave.dataset.get_dataset(db_path, sr, n_signal, n_channels=n_channels)
     train_base, val_base = rave.dataset.split_dataset(ds, split_percent)
-    if reject_silent_train:
-        train_base = rave.dataset.maybe_reject_silent(train_base)
+    train_base = rave.dataset.maybe_reject_silent(train_base)
 
     if is_fader:
         train_wrapped, val_wrapped = rave.training.wrap_training_datasets(

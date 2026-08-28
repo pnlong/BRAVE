@@ -1,0 +1,31 @@
+# Unconditional BRAVE on tap (128-D, no Fader). Shotgun-mic subset by default.
+#
+# Quiet crops are kept (maybe_reject_silent.enabled = False).
+# Do not peak-norm the LMDB: leave recorded levels intact and randomize
+# gain per crop at train time (RandomGain). Do not pass --normalize.
+#
+# Preprocess (no NORMALIZE, 44.1 kHz, mono):
+#   INPUT_PATH=$BRAVE_STORAGE/tap_samples/audio_subset_shotgun \
+#   OUTPUT_PATH=$BRAVE_STORAGE/tap_samples/preprocessed_shotgun \
+#   sbatch --chdir=/data/hai-res/p1long/BRAVE scripts/preprocess.sbatch
+#
+# Train (inline env, after preprocess finishes):
+#   DB_PATH=$BRAVE_STORAGE/tap_samples/preprocessed_shotgun \
+#   RUN_NAME=tap_shotgun_uncond_run \
+#   CONFIG=configs/brave_tap.gin \
+#   OUT_PATH=$BRAVE_STORAGE/tap_samples/runs \
+#   sbatch --chdir=/data/hai-res/p1long/BRAVE scripts/train.sbatch
+#
+# Eval ckpt: epoch_1500000.ckpt (1.5M steps).
+
+include "brave.gin"
+
+from rave import transforms
+
+dataset.maybe_reject_silent.enabled = False
+
+transforms.RandomGain.gain_range = (-12, 6)
+transforms.RandomGain.prob = 1.0
+transforms.RandomGain.limit = True
+
+dataset.get_dataset.augmentations = [@transforms.RandomGain()]

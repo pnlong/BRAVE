@@ -27,7 +27,7 @@ On hai-res login nodes where AFS home is unreadable, set `HOME=/data/hai-res/$US
 ```bash
 python latent_exploration/mask_reconstruct.py \
   --model $BRAVE_STORAGE/yt_birdsong/runs/yt_birdsong_run_d8e2ae9d65/best.ckpt \
-  --input $BRAVE_STORAGE/tap_samples/audio_subset/0.wav \
+  --input $BRAVE_STORAGE/tap_samples/audio_subset/sm57-0.wav \
   --output-dir $BRAVE_STORAGE/yt_birdsong/recon_test_tap0 \
   --mask-style none \
   --latent-mode mean \
@@ -148,7 +148,7 @@ Thin wrapper for **reconstruction test** (`--mask-style none`); same as `mask_re
 ```bash
 python latent_exploration/visualize_latents.py \
   --model /path/to/run_or_ckpt \
-  --input tap_samples/0.wav \
+  --input tap_samples/sm57-0.wav \
   --latent-mode mean \
   --pca-fidelity 0.95 \
   --gpu
@@ -167,7 +167,7 @@ python latent_exploration/mask_reconstruct.py \
 ```bash
 python latent_exploration/mask_reconstruct.py \
   --model /path/to/run_or_ckpt \
-  --input tap_samples/0.wav \
+  --input tap_samples/sm57-0.wav \
   --mask-style temporal \
   --mask-start 20 --mask-width 30 \
   --latent-mode mean \
@@ -195,7 +195,7 @@ Example — zero PCA components 80–99, then reconstruct:
 ```bash
 python latent_exploration/mask_reconstruct.py \
   --model /path/to/checkpoint \
-  --input tap_samples/0.wav \
+  --input tap_samples/sm57-0.wav \
   --mask-space pca \
   --mask-style latent \
   --mask-start 80 --mask-width 20 \
@@ -229,7 +229,7 @@ When the checkpoint was trained with `configs/brave_fader.gin`, use `load_model(
 ```bash
 python latent_exploration/mask_reconstruct.py \
   --model runs/brave_fader_run \
-  --input tap_samples/0.wav \
+  --input tap_samples/sm57-0.wav \
   --db-path /path/to/lmdb \
   --attr-mode extract \
   --gpu

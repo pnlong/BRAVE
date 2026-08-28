@@ -178,6 +178,7 @@ def _build_play_patch(
     ts_name: str,
     extract_only: bool = False,
     default_source_file: bool = False,
+    sidechain_toggle: bool = False,
 ) -> None:
     """Single-column patch: source → level → nn~ → model gain → output."""
 
@@ -313,6 +314,35 @@ def _build_play_patch(
         ),
         _box(model_gain_id, "newobj", [_COL_X, y + 40.0, 45.0, 22.0], text="*~ 1."),
     ])
+    if sidechain_toggle:
+        sc_tog = next_id()
+        sc_prep = next_id()
+        sc_lb = next_id()
+        sc_msg = next_id()
+        boxes.extend([
+            _box(
+                next_id(),
+                "comment",
+                [_CTRL_X + 100.0, y + 36.0, 140.0, 18.0],
+                text="sidechain (in loudness)",
+                fontsize=10.0,
+            ),
+            _toggle(sc_tog, [_CTRL_X + 100.0, y + 56.0, 24.0, 24.0], default=1),
+            _box(
+                sc_prep,
+                "newobj",
+                [_CTRL_X + 130.0, y + 58.0, 130.0, 22.0],
+                text="prepend set sidechain",
+            ),
+            _box(sc_lb, "newobj", [_CTRL_X + 180.0, y + 86.0, 60.0, 22.0], text="loadbang"),
+            _box(sc_msg, "message", [_CTRL_X + 250.0, y + 86.0, 24.0, 22.0], text="1"),
+        ])
+        lines.extend([
+            _line(sc_tog, 0, sc_prep, 0),
+            _line(sc_prep, 0, nn_id, _NN_INLET),
+            _line(sc_lb, 0, sc_msg, 0),
+            _line(sc_msg, 0, sc_prep, 0),
+        ])
     if extract_only:
         _wire_extract_only(boxes, lines, next_id, nn_id, y=y + 40.0)
     y += 90.0
@@ -438,6 +468,7 @@ def write_vanilla_play_patch(
     title: str = "BRAVE nn~ — set Max Audio to 44100 Hz",
     *,
     default_source_file: bool = False,
+    sidechain_toggle: bool = False,
 ) -> Path:
     output_path = Path(output_path)
     boxes: List[Dict] = []
@@ -458,6 +489,7 @@ def write_vanilla_play_patch(
         ts_name=ts_name,
         extract_only=False,
         default_source_file=default_source_file,
+        sidechain_toggle=sidechain_toggle,
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w") as f:

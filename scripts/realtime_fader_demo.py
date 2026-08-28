@@ -5,7 +5,7 @@ Usage (BRAVE root):
   export PYTHONPATH="${PWD}/RAVE:${PYTHONPATH}"
   python scripts/realtime_fader_demo.py \\
     --ts exports/fader.ts \\
-    --input tap_samples/0.wav \\
+    --input tap_samples/sm57-0.wav \\
     --output out.wav \\
     --modulate-attr rms --modulate-scale 0.5 \\
     --attr-scales rms=1.2,centroid=0.9

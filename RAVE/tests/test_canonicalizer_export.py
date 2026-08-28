@@ -99,3 +99,9 @@ def test_scripted_cyclegan_xy_forward():
     assert y.shape[1] == 1
     z = mod.encode(x)
     assert z.shape[1] == 1
+    mod.set_sidechain(False)
+    y_off = mod(x)
+    mod.set_sidechain(True)
+    y_on = mod(torch.zeros_like(x))
+    # Zeros in + sidechain on should duck vs loud input with sidechain off
+    assert y_on.abs().mean() <= y_off.abs().mean() + 1e-4

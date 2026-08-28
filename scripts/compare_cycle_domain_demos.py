@@ -56,7 +56,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--tap",
         type=Path,
-        default=BRAVE_STORAGE / "tap_samples/audio_subset/0.wav",
+        default=BRAVE_STORAGE / "tap_samples/audio_subset/sm57-0.wav",
     )
     p.add_argument(
         "--db-path-y",

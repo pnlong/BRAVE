@@ -223,6 +223,31 @@ y = transfer_x_to_y(x_tap, backbone_x, backbone_y, warp_xy, mode="latent")
 
 Always `Enc_src → warp → Dec_tgt`.
 
+## Silence / ringing diagnosis
+
+Older runs rejected train crops quieter than **−40 dBFS**, so warps never saw `Enc(silence)`. Live tap is sparse. Current `brave.gin` **keeps** quiet crops by default (`maybe_reject_silent.enabled = False`); re-enable with `--reject_silent`. Offline (Python, not Max) you can test whether `Enc_X(0) → W_xy → Dec_Y` rings:
+
+```bash
+export PYTHONPATH="${PWD}/RAVE:${PWD}/latent_exploration:${PYTHONPATH}"
+python scripts/diagnose_cyclegan_silence.py \
+  --tap-backbone /path/to/tap/epoch_1500000.ckpt \
+  --y-backbone /path/to/y/epoch_1500000.ckpt \
+  --cyclegan runs/tap_<domain>_.../cyclegan_latent.ckpt \
+  --output-dir /tmp/cyclegan_silence_diag \
+  --input /path/to/tap.wav \
+  --y-db-path /path/to/y/preprocessed
+```
+
+Do **not** peak-normalize this path. Each probe writes `probe_in.wav`, `transfer.wav`, `control_y_ae.wav`, `gated_mute.wav`, `gated_zy0.wav`, `gated_sidechain.wav`, `rms.png`. `metrics.json` includes `verdict`:
+
+| Flag | Meaning |
+|------|---------|
+| `hypothesis_supported` | Silent tap codes leak energy; Y-AE / `Dec_Y(0)` are quieter; a loudness gate kills **late** gaps without flattening onsets |
+| `likely_pad_cache_not_silent_latent` | Full-context zeros stay quiet but 512-block transfer is louder → Max/`cached_conv` pads, not silent latents |
+| `loud_regions_also_ring` | Gap energy is almost as loud as onsets → off-manifold / Track A ringing, not silence-only |
+
+Gated stems are a **test intervention**, not a production gate. `gated_sidechain` scales decode by a smoothed input RMS envelope (`rms / (rms + knee)` at −40 dBFS) instead of hard mute.
+
 ## Export for Max / nn~
 
 X→Y timbre transfer only (`Enc_X → W_xy → Dec_Y`). Uses `cyclegan_latent.ckpt`, **not** Lightning `last.ckpt`.
@@ -245,7 +270,11 @@ exports/tap_rain_sounds_cyc/
 
 Copy the folder to `~/Documents/Max 9/Packages/nn_tilde/models/`, open `play.maxpat`, set Max audio to **44100 Hz**. Same nn~ setup as [Fader Max bundles](../../RAVE/rave/fader/export/README.md#max-9--nn-bundles).
 
-`forward` is live tap (or file) in → Y-domain audio out. Do not pass `--canonicalizer`; Stage-1 attach is a different graph (same encoder and decoder).
+`forward` is live tap (or file) in → Y-domain audio out. **Loudness sidechain is on by default** (`set sidechain 1`): hop RMS of the input ducks the output with `g = rms / (rms + knee)` at −40 dBFS, causal across 512-sample nn~ blocks. Toggle in `play.maxpat`, or `set sidechain 0` on the nn~ inlet. Re-export after pulling this so the `.ts` includes the attribute.
+
+Offline listen: `scripts/diagnose_cyclegan_silence.py` still writes `gated_sidechain.wav` for qualitative A/B.
+
+Do not pass `--canonicalizer`; Stage-1 attach is a different graph (same encoder and decoder).
 
 Export zeros causal `cached_conv` pad/cache buffers after the warmup pass before writing `model.ts`. If those rings are left dirty, Max buzzes on load and on silence even when offline block recon of real audio sounds fine. Re-export after pulling that fix.
 

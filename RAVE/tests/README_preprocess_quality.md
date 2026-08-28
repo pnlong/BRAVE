@@ -56,11 +56,11 @@ Set `--denoise_noise_sec=0.5` to estimate the noise floor from clip starts only.
 
 ## Training RMS gate
 
-With a preprocessed dataset and gin config enabling `dataset.maybe_reject_silent`, training uses the gate on the **train** split only. Override from CLI:
+Quiet crops are **kept** by default (`dataset.maybe_reject_silent.enabled = False` in `configs/brave.gin`) so the AE sees mic gaps / near-silence. The optional RMS gate still applies to the **train** split only. Enable it from CLI if relative STFT on near-silent windows is a problem:
 
 ```bash
 python scripts/train.py --config=../../configs/brave.gin ... --noreject_silent
 python scripts/train.py ... --reject_silent --reject_silent_rms_db=-35
 ```
 
-`configs/brave.gin` sets `enabled = True`, `rms_db_threshold = -40.0`, and `max_tries = 16` by default.
+`configs/brave.gin` keeps `rms_db_threshold = -40.0` and `max_tries = 16` for when the gate is on.
