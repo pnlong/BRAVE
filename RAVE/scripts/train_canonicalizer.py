@@ -125,8 +125,13 @@ def _load_audio_lmdb_pair(
     is_fader: bool,
     split_percent: int = 98,
 ) -> tuple:
-    ds = rave.dataset.get_dataset(db_path, sr, n_signal, n_channels=n_channels)
-    train_base, val_base = rave.dataset.split_dataset(ds, split_percent)
+    train_base, val_base = rave.dataset.split_train_val(
+        db_path,
+        sr,
+        n_signal,
+        percent=split_percent,
+        n_channels=n_channels,
+    )
     train_base = rave.dataset.maybe_reject_silent(train_base)
 
     if is_fader:
@@ -172,8 +177,13 @@ def _load_ood_pair(
             OodFaderDataset(val_wrapped._fader),
         )
 
-    ds = rave.dataset.get_dataset(db_path, sr, n_signal, n_channels=n_channels)
-    train_base, val_base = rave.dataset.split_dataset(ds, split_percent)
+    train_base, val_base = rave.dataset.split_train_val(
+        db_path,
+        sr,
+        n_signal,
+        percent=split_percent,
+        n_channels=n_channels,
+    )
     train_base = rave.dataset.maybe_reject_silent(train_base)
     return (
         OodAudioDataset(train_base),

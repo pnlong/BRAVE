@@ -158,9 +158,8 @@ def main(argv):
         raise FileNotFoundError(f"No attribute_stats.yaml in {FLAGS.db_path}")
     model.load_attribute_stats_from_file(stats_path)
 
-    dataset = rave.dataset.get_dataset(
-        FLAGS.db_path, model.sr, FLAGS.n_signal, n_channels=model.n_channels)
-    _, val = rave.dataset.split_dataset(dataset, 98)
+    _, val = rave.dataset.split_train_val(
+        FLAGS.db_path, model.sr, FLAGS.n_signal, percent=98, n_channels=model.n_channels)
     val = wrap_fader_dataset(
         val,
         sampling_rate=model.sr,

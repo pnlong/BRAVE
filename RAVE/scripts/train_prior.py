@@ -148,15 +148,16 @@ def main(argv):
     else:
         raise NotImplementedError("prior not implemented for encoder of type %s"%(type(pretrained.encoder)))
 
-    dataset = rave.dataset.get_dataset(FLAGS.db_path,
-                                       pretrained.sr,
-                                       max(FLAGS.n_signal, prior.min_receptive_field),
-                                       derivative=FLAGS.derivative,
-                                       normalize=FLAGS.normalize,
-                                       rand_pitch=FLAGS.rand_pitch,
-                                       n_channels=pretrained.n_channels)
-
-    train, val = rave.dataset.split_dataset(dataset, 98)
+    train, val = rave.dataset.split_train_val(
+        FLAGS.db_path,
+        pretrained.sr,
+        max(FLAGS.n_signal, prior.min_receptive_field),
+        percent=98,
+        derivative=FLAGS.derivative,
+        normalize=FLAGS.normalize,
+        rand_pitch=FLAGS.rand_pitch,
+        n_channels=pretrained.n_channels,
+    )
 
     # get data-loader
     num_workers = FLAGS.workers

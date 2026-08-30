@@ -221,14 +221,16 @@ def main(argv):
         model.integrator = rave.dataset.get_derivator_integrator(model.sr)[1]
 
     # parse datasset
-    dataset = rave.dataset.get_dataset(FLAGS.db_path,
-                                       model.sr,
-                                       FLAGS.n_signal,
-                                       derivative=FLAGS.derivative,
-                                       normalize=FLAGS.normalize,
-                                       rand_pitch=FLAGS.rand_pitch,
-                                       n_channels=n_channels)
-    train, val = rave.dataset.split_dataset(dataset, 98)
+    train, val = rave.dataset.split_train_val(
+        FLAGS.db_path,
+        model.sr,
+        FLAGS.n_signal,
+        percent=98,
+        derivative=FLAGS.derivative,
+        normalize=FLAGS.normalize,
+        rand_pitch=FLAGS.rand_pitch,
+        n_channels=n_channels,
+    )
 
     reject_kwargs = {}
     if FLAGS.noreject_silent:

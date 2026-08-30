@@ -246,7 +246,9 @@ def get_dataset(db_path,
                 normalize: bool = False,
                 rand_pitch: bool = False,
                 augmentations: Union[None, Iterable[Callable]] = None, 
-                n_channels: int = 1):
+                n_channels: int = 1,
+                stochastic: bool = True,
+                show_progress: bool = True):
     if db_path[:4] == "http":
         return HTTPAudioDataset(db_path=db_path)
     with open(os.path.join(db_path, 'metadata.yaml'), 'r') as metadata:
@@ -255,20 +257,64 @@ def get_dataset(db_path,
     sr_dataset = metadata.get('sr', 44100)
     lazy = metadata['lazy']
 
+    transform_list = build_audio_transforms(
+        n_signal,
+        sr_dataset=sr_dataset,
+        sr=sr,
+        derivative=derivative,
+        normalize=normalize,
+        rand_pitch=rand_pitch,
+        augmentations=augmentations,
+        stochastic=stochastic,
+    )
+
+    if lazy:
+        return LazyAudioDataset(
+            db_path,
+            n_signal,
+            sr_dataset,
+            transform_list,
+            n_channels,
+            show_progress=show_progress,
+        )
+    else:
+        return AudioDataset(
+            db_path,
+            transforms=transform_list,
+            n_channels=n_channels,
+            show_progress=show_progress,
+        )
+
+
+def build_audio_transforms(
+    n_signal,
+    *,
+    sr_dataset: int,
+    sr: int,
+    derivative: bool = False,
+    normalize: bool = False,
+    rand_pitch: bool = False,
+    augmentations: Union[None, Iterable[Callable]] = None,
+    stochastic: bool = True,
+):
+    """Train: random crop + phase mangle + gin augs. Val: prefix crop, no augs."""
+    crop = transforms.RandomCrop(n_signal) if stochastic else transforms.StartCrop(n_signal)
     transform_list = [
         lambda x: x.astype(np.float32),
-        transforms.RandomCrop(n_signal),
-        transforms.RandomApply(
-            lambda x: random_phase_mangle(x, 20, 2000, .99, sr_dataset),
-            p=.8,
-        ),
-        transforms.Dequantize(16),
     ]
-
-    if rand_pitch:
+    if stochastic and rand_pitch:
         rand_pitch = list(map(float, rand_pitch))
         assert len(rand_pitch) == 2, "rand_pitch must be given two floats"
-        transform_list.insert(1, transforms.RandomPitch(n_signal, rand_pitch))
+        transform_list.append(transforms.RandomPitch(n_signal, rand_pitch))
+    transform_list.append(crop)
+    if stochastic:
+        transform_list.append(
+            transforms.RandomApply(
+                lambda x: random_phase_mangle(x, 20, 2000, .99, sr_dataset),
+                p=.8,
+            ),
+        )
+    transform_list.append(transforms.Dequantize(16))
 
     if sr_dataset != sr:
         transform_list.append(transforms.Resample(sr_dataset, sr))
@@ -279,21 +325,11 @@ def get_dataset(db_path,
     if derivative:
         transform_list.append(get_derivator_integrator(sr)[0])
 
-    if augmentations:
+    if stochastic and augmentations:
         transform_list.extend(augmentations)
 
     transform_list.append(lambda x: x.astype(np.float32))
-
-    transform_list = transforms.Compose(transform_list)
-
-    if lazy:
-        return LazyAudioDataset(db_path, n_signal, sr_dataset, transform_list, n_channels)
-    else:
-        return AudioDataset(
-            db_path,
-            transforms=transform_list,
-            n_channels=n_channels
-        )
+    return transforms.Compose(transform_list)
 
 
 @gin.configurable
@@ -311,6 +347,35 @@ def split_dataset(dataset, percent, max_residual: Optional[int] = None):
         generator=torch.Generator().manual_seed(42),
     )
     return split1, split2
+
+
+def split_train_val(
+    db_path: str,
+    sr: int,
+    n_signal: int,
+    percent: int = 98,
+    **get_dataset_kwargs,
+):
+    """Same LMDB indices as ``split_dataset``; val skips phase mangle and gin augs."""
+    train_ds = get_dataset(
+        db_path,
+        sr,
+        n_signal,
+        stochastic=True,
+        **get_dataset_kwargs,
+    )
+    val_kwargs = dict(get_dataset_kwargs)
+    val_kwargs["show_progress"] = False
+    val_ds = get_dataset(
+        db_path,
+        sr,
+        n_signal,
+        stochastic=False,
+        **val_kwargs,
+    )
+    train, val_on_train = split_dataset(train_ds, percent)
+    val = data.Subset(val_ds, list(val_on_train.indices))
+    return train, val
 
 
 def random_angle(min_f=20, max_f=8000, sr=24000):

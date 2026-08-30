@@ -4,7 +4,7 @@
 
 RAVE’s `get_dataset` applies `random_phase_mangle` with probability 0.8 on each crop: a random all-pass-style IIR that warps **phase** in a mid-band range (~20–2000 Hz) while leaving the magnitude spectrum mostly intact. It is **data augmentation for training/val dataloaders**, not something Max/nn~/export applies at inference.
 
-You do **not** need to “turn it off in production” at runtime — it is already off for live / TorchScript / demo encode–decode. For **production training**, keep or drop it as an ablation: keeping it can reduce phase overfitting; dropping it makes train crops closer to raw recordings (and to our presentation demos). Do not confuse “turn off for production” with inference.
+You do **not** need to “turn it off in production” at runtime — it is already off for live / TorchScript / demo encode–decode. Val loaders skip it (prefix crop, no gin augs). For **production training**, keep or drop it as an ablation: keeping it can reduce phase overfitting; dropping it makes train crops closer to raw recordings (and to our presentation demos). Do not confuse “turn off for production” with inference.
 
 ## Gain robustness (preferred over hard peak-norm)
 

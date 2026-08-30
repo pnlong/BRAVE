@@ -102,6 +102,16 @@ class RandomCrop(Transform):
         return x
 
 
+class StartCrop(Transform):
+    """Take the first n_signal samples (deterministic val crop)."""
+
+    def __init__(self, n_signal):
+        self.n_signal = n_signal
+
+    def __call__(self, x: np.ndarray):
+        return x[..., : self.n_signal]
+
+
 class Dequantize(Transform):
     def __init__(self, bit_depth):
         self.bit_depth = bit_depth

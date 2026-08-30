@@ -492,13 +492,13 @@ def _iter_samples(model, device: torch.device) -> List[EvalSample]:
     from rave.fader.dataset import wrap_fader_dataset
     from torch.utils.data import DataLoader
 
-    dataset = rave.dataset.get_dataset(
+    _, val = rave.dataset.split_train_val(
         FLAGS.db_path,
         model.sr,
         FLAGS.n_signal,
+        percent=98,
         n_channels=model.n_channels,
     )
-    _, val = rave.dataset.split_dataset(dataset, 98)
     val = wrap_fader_dataset(
         val,
         sampling_rate=model.sr,

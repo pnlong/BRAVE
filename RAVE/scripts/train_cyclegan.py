@@ -146,8 +146,13 @@ def _load_plain_lmdb_pair(
     domain: str,
     split_percent: int = 98,
 ):
-    ds = rave.dataset.get_dataset(db_path, sr, n_signal, n_channels=n_channels)
-    train_base, val_base = rave.dataset.split_dataset(ds, split_percent)
+    train_base, val_base = rave.dataset.split_train_val(
+        db_path,
+        sr,
+        n_signal,
+        percent=split_percent,
+        n_channels=n_channels,
+    )
     train_base = rave.dataset.maybe_reject_silent(train_base)
     return (
         TaggedAudioDataset(train_base, domain=domain),
