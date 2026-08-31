@@ -149,7 +149,8 @@ python RAVE/scripts/train_cyclegan.py \
   --canonicalizer_type latent \
   --name tap_water_wf_cycle
 
-# Joint (Approach 3) — after training one BRAVE on mixed X∪Y LMDB
+# Joint (Approach 3) — after stratified dual-LMDB BRAVE on both domains:
+#   bash scripts/submit_joint_train.sh
 python RAVE/scripts/train_cyclegan.py \
   --config configs/brave_cyclegan_joint.gin \
   --backbone_x_config configs/brave.gin \

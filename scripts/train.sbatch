@@ -32,6 +32,10 @@ MAX_STEPS="${MAX_STEPS:-1500000}"
 WANDB_PROJECT="${WANDB_PROJECT:-brave}"
 WANDB_RUN_ID="${WANDB_RUN_ID:-}"
 CKPT="${CKPT:-}"
+# Optional second domain for stratified joint AE (50/50 by default):
+#   DB_PATH_Y=... DOMAIN_X_FRACTION=0.5
+DB_PATH_Y="${DB_PATH_Y:-}"
+DOMAIN_X_FRACTION="${DOMAIN_X_FRACTION:-0.5}"
 
 # Multi-GPU: request more GPUs when submitting, e.g.
 #   sbatch --gres=gpu:4 --cpus-per-task=32 scripts/train.sbatch
@@ -48,6 +52,10 @@ slurm_build_gpu_train_args GPU_TRAIN_ARGS
 cd "${BRAVE_ROOT}"
 
 echo "DB_PATH=${DB_PATH}"
+if [[ -n "${DB_PATH_Y}" ]]; then
+  echo "DB_PATH_Y=${DB_PATH_Y}"
+  echo "DOMAIN_X_FRACTION=${DOMAIN_X_FRACTION}"
+fi
 echo "RUN_NAME=${RUN_NAME}"
 echo "CONFIG=${CONFIG}"
 echo "OUT_PATH=${OUT_PATH}"
@@ -59,6 +67,9 @@ if [[ -n "${WANDB_RUN_ID}" ]]; then
   echo "WANDB_RUN_ID=${WANDB_RUN_ID}"
 fi
 python scripts/lmdb_duration.py "${DB_PATH}"
+if [[ -n "${DB_PATH_Y}" ]]; then
+  python scripts/lmdb_duration.py "${DB_PATH_Y}"
+fi
 
 TRAIN_ARGS=(
   --config="${CONFIG}"
@@ -72,6 +83,9 @@ TRAIN_ARGS=(
   --wandb_project="${WANDB_PROJECT}"
   "${GPU_TRAIN_ARGS[@]}"
 )
+if [[ -n "${DB_PATH_Y}" ]]; then
+  TRAIN_ARGS+=(--db_path_y="${DB_PATH_Y}" --domain_x_fraction="${DOMAIN_X_FRACTION}")
+fi
 if [[ -n "${WANDB_RUN_ID}" ]]; then
   TRAIN_ARGS+=(--wandb_run_id="${WANDB_RUN_ID}")
 fi

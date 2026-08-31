@@ -44,7 +44,7 @@ Train **two** plain BRAVE codecs (domain X and domain Y). Learn warps that trans
 
 ## 4. Joint embedding (within-space)
 
-Train **one** BRAVE on \(X \cup Y\) so both domains share a latent \(Z\). Then CycleGAN warps are **within-space** remaps on that shared codec:
+Train **one** BRAVE on both domains (stratified dual-LMDB: `--db_path` + `--db_path_y`, 50/50 batches) so they share a latent \(Z\). Then CycleGAN warps are **within-space** remaps on that shared codec:
 
 | Intent | Path |
 |--------|------|
@@ -56,7 +56,7 @@ Config: [`configs/brave_cyclegan_joint.gin`](../configs/brave_cyclegan_joint.gin
 - Strength: simpler geometry; closer to Stage-1 attach; apples-to-apples vs Approach 2 on the same domains.
 - Failure mode: joint AE may be domain-imbalanced; AE-aware cycle no longer acts as a *foreign* codec critic — domain signal shifts to D / identity.
 
-Joint LMDB preprocess: [`scripts/submit_joint_preprocess.sh`](../scripts/submit_joint_preprocess.sh) / [`scripts/preprocess_joint.sbatch`](../scripts/preprocess_joint.sbatch).
+Balanced joint AE train: [`scripts/submit_joint_train.sh`](../scripts/submit_joint_train.sh) (`DB_PATH` + `DB_PATH_Y`).
 
 ---
 

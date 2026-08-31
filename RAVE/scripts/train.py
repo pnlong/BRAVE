@@ -31,8 +31,20 @@ flags.DEFINE_multi_string('augment',
                             help = 'augmentation configurations to use')
 flags.DEFINE_string('db_path',
                     None,
-                    help='Preprocessed dataset path',
+                    help='Preprocessed dataset path (domain X when --db_path_y is set)',
                     required=True)
+flags.DEFINE_string(
+    'db_path_y',
+    None,
+    help='Optional second LMDB (domain Y). When set, train with stratified '
+    'X/Y batches (joint embedding) using separate domain LMDBs.',
+)
+flags.DEFINE_float(
+    'domain_x_fraction',
+    0.5,
+    help='Fraction of each batch from --db_path when --db_path_y is set '
+    '(default 0.5 = balanced). Requires --batch >= 2.',
+)
 flags.DEFINE_string('out_path',
                     default="runs/",
                     help='Output folder')
@@ -232,6 +244,26 @@ def main(argv):
         n_channels=n_channels,
     )
 
+    train_y = val_y = None
+    if FLAGS.db_path_y:
+        n_channels_y = rave.dataset.get_training_channels(
+            FLAGS.db_path_y, FLAGS.channels)
+        if n_channels_y != n_channels:
+            raise ValueError(
+                f"--db_path channels={n_channels} != "
+                f"--db_path_y channels={n_channels_y}")
+        train_y, val_y = rave.dataset.split_train_val(
+            FLAGS.db_path_y,
+            model.sr,
+            FLAGS.n_signal,
+            percent=98,
+            derivative=FLAGS.derivative,
+            normalize=FLAGS.normalize,
+            rand_pitch=FLAGS.rand_pitch,
+            n_channels=n_channels,
+            show_progress=False,
+        )
+
     reject_kwargs = {}
     if FLAGS.noreject_silent:
         reject_kwargs['enabled'] = False
@@ -242,6 +274,8 @@ def main(argv):
     if FLAGS.reject_silent_max_tries is not None:
         reject_kwargs['max_tries'] = FLAGS.reject_silent_max_tries
     train = rave.dataset.maybe_reject_silent(train, **reject_kwargs)
+    if train_y is not None:
+        train_y = rave.dataset.maybe_reject_silent(train_y, **reject_kwargs)
 
     train, val = rave.training.wrap_training_datasets(
         train,
@@ -250,6 +284,14 @@ def main(argv):
         n_signal=FLAGS.n_signal,
         db_path=FLAGS.db_path,
     )
+    if train_y is not None:
+        train_y, val_y = rave.training.wrap_training_datasets(
+            train_y,
+            val_y,
+            sampling_rate=model.sr,
+            n_signal=FLAGS.n_signal,
+            db_path=FLAGS.db_path_y,
+        )
     rave.training.finalize_training_model(
         model,
         db_path=FLAGS.db_path,
@@ -262,12 +304,42 @@ def main(argv):
     num_workers = FLAGS.workers
     if os.name == "nt" or sys.platform == "darwin":
         num_workers = 0
-    train = DataLoader(train,
-                       FLAGS.batch,
-                       True,
-                       drop_last=True,
-                       num_workers=num_workers)
-    val = DataLoader(val, FLAGS.batch, False, num_workers=num_workers)
+    if train_y is not None:
+        if FLAGS.batch < 2:
+            raise ValueError(
+                "stratified dual-domain training requires --batch >= 2")
+        print(
+            f"Stratified dual-domain: "
+            f"X={FLAGS.db_path} ({len(train)} train) "
+            f"Y={FLAGS.db_path_y} ({len(train_y)} train) "
+            f"domain_x_fraction={FLAGS.domain_x_fraction}",
+            flush=True,
+        )
+        train = rave.dataset.build_stratified_dual_dataloader(
+            train,
+            train_y,
+            FLAGS.batch,
+            domain_x_fraction=FLAGS.domain_x_fraction,
+            shuffle=True,
+            drop_last=True,
+            num_workers=num_workers,
+        )
+        val = rave.dataset.build_stratified_dual_dataloader(
+            val,
+            val_y,
+            FLAGS.batch,
+            domain_x_fraction=FLAGS.domain_x_fraction,
+            shuffle=False,
+            drop_last=False,
+            num_workers=num_workers,
+        )
+    else:
+        train = DataLoader(train,
+                           FLAGS.batch,
+                           True,
+                           drop_last=True,
+                           num_workers=num_workers)
+        val = DataLoader(val, FLAGS.batch, False, num_workers=num_workers)
 
     steps_per_epoch = len(train)
     if FLAGS.log_every_n_steps is not None:
@@ -381,6 +453,8 @@ def main(argv):
         offline=FLAGS.wandb_offline,
         config={
             'db_path': FLAGS.db_path,
+            'db_path_y': FLAGS.db_path_y,
+            'domain_x_fraction': FLAGS.domain_x_fraction if FLAGS.db_path_y else None,
             'batch': FLAGS.batch,
             'n_signal': FLAGS.n_signal,
             'max_steps': FLAGS.max_steps,

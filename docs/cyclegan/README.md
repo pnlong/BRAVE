@@ -25,7 +25,7 @@ Warps are **cross-space**. Inference (and the main train path) encode a clip wit
 
 ## Geometry (Approach 3 — joint)
 
-Train **one** plain BRAVE on \(X \cup Y\) (mixed LMDB), freeze it, then CycleGAN with **within-space** warps (`CycleGANTrainer.shared_backbone=True`):
+Train **one** plain BRAVE on both domains (stratified dual-LMDB: `--db_path` + `--db_path_y`), freeze it, then CycleGAN with **within-space** warps (`CycleGANTrainer.shared_backbone=True`):
 
 | Intent | Path |
 |--------|------|

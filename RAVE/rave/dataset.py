@@ -400,6 +400,143 @@ def split_train_val(
     return train, val
 
 
+def _dual_domain_counts(
+    batch_size: int,
+    domain_x_fraction: float,
+) -> Tuple[int, int]:
+    """Return (n_x, n_y) per batch with both counts >= 1."""
+    if batch_size < 2:
+        raise ValueError(
+            f"stratified dual-domain batching requires batch_size >= 2, "
+            f"got {batch_size}")
+    n_x = int(round(batch_size * domain_x_fraction))
+    n_x = max(1, min(batch_size - 1, n_x))
+    n_y = batch_size - n_x
+    return n_x, n_y
+
+
+def _iter_dual_batch_indices(
+    len_x: int,
+    len_y: int,
+    n_x: int,
+    n_y: int,
+    num_batches: int,
+    *,
+    shuffle: bool,
+    generator: Optional[torch.Generator] = None,
+):
+    if num_batches == 0:
+        return
+    if shuffle:
+        x_perm = torch.randperm(len_x, generator=generator).tolist()
+        y_perm = torch.randperm(len_y, generator=generator).tolist()
+    else:
+        x_perm = list(range(len_x))
+        y_perm = list(range(len_y))
+    x_ptr = 0
+    y_ptr = 0
+    for _ in range(num_batches):
+        batch: List[int] = []
+        for offset in range(n_x):
+            batch.append(x_perm[(x_ptr + offset) % len(x_perm)])
+        x_ptr += n_x
+        for offset in range(n_y):
+            batch.append(len_x + y_perm[(y_ptr + offset) % len(y_perm)])
+        y_ptr += n_y
+        yield batch
+
+
+class StratifiedDualAudioIterableDataset(data.IterableDataset):
+    """Yield audio batches with a fixed X/Y count per batch (joint AE training).
+
+    Indices ``0..len_x-1`` come from ``dataset_x``; the rest from ``dataset_y``.
+    Each yielded item is a float tensor ``(B, C, T)`` — same contract as a plain
+    RAVE ``DataLoader`` batch.
+    """
+
+    def __init__(
+        self,
+        dataset_x: data.Dataset,
+        dataset_y: data.Dataset,
+        batch_size: int,
+        domain_x_fraction: float = 0.5,
+        *,
+        drop_last: bool = True,
+        shuffle: bool = True,
+        generator: Optional[torch.Generator] = None,
+    ) -> None:
+        self._x = dataset_x
+        self._y = dataset_y
+        self._len_x = len(dataset_x)
+        self._len_y = len(dataset_y)
+        self.n_x, self.n_y = _dual_domain_counts(batch_size, domain_x_fraction)
+        self.batch_size = batch_size
+        self.drop_last = drop_last
+        self.shuffle = shuffle
+        self.generator = generator
+        n_batches = min(self._len_x // self.n_x, self._len_y // self.n_y)
+        if drop_last:
+            self._num_batches = n_batches
+        else:
+            self._num_batches = max(
+                (self._len_x + self.n_x - 1) // self.n_x,
+                (self._len_y + self.n_y - 1) // self.n_y,
+            )
+
+    def _getitem(self, index: int):
+        if index < self._len_x:
+            return self._x[index]
+        return self._y[index - self._len_x]
+
+    def __len__(self) -> int:
+        return self._num_batches
+
+    def __iter__(self):
+        for batch_indices in _iter_dual_batch_indices(
+            self._len_x,
+            self._len_y,
+            self.n_x,
+            self.n_y,
+            self._num_batches,
+            shuffle=self.shuffle,
+            generator=self.generator,
+        ):
+            items = [self._getitem(i) for i in batch_indices]
+            tensors = []
+            for item in items:
+                if isinstance(item, torch.Tensor):
+                    tensors.append(item)
+                else:
+                    tensors.append(torch.as_tensor(item))
+            yield torch.stack(tensors, dim=0)
+
+
+def build_stratified_dual_dataloader(
+    dataset_x: data.Dataset,
+    dataset_y: data.Dataset,
+    batch_size: int,
+    *,
+    domain_x_fraction: float = 0.5,
+    shuffle: bool = True,
+    drop_last: bool = True,
+    num_workers: int = 0,
+) -> data.DataLoader:
+    """DataLoader with fixed per-batch counts from two domain datasets."""
+    iterable = StratifiedDualAudioIterableDataset(
+        dataset_x,
+        dataset_y,
+        batch_size,
+        domain_x_fraction=domain_x_fraction,
+        drop_last=drop_last,
+        shuffle=shuffle,
+    )
+    return data.DataLoader(
+        iterable,
+        batch_size=None,
+        num_workers=num_workers,
+    )
+
+
 def random_angle(min_f=20, max_f=8000, sr=24000):
     min_f = np.log(min_f)
     max_f = np.log(max_f)

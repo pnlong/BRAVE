@@ -2,7 +2,8 @@
 # Within-space warps: Enc → W → Dec on one backbone. Identity residual init.
 # Still uses two unpaired LMDBs (db_path_x / db_path_y) for cycle batches.
 #
-# Phase 0: train one plain BRAVE on a mixed X+Y LMDB, then:
+# Phase 0: train one plain BRAVE with stratified dual LMDB
+#   (bash scripts/submit_joint_train.sh), then:
 #
 #   python RAVE/scripts/train_cyclegan.py \
 #     --config configs/brave_cyclegan_joint.gin \
