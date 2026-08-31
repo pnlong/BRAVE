@@ -1,13 +1,18 @@
 # CycleGAN: Tap ↔ Water / Birdsong
 
-Bidirectional CycleGAN between two **frozen** plain BRAVE backbones (X = tap, Y = water or birdsong).
+Bidirectional CycleGAN for unpaired domain transfer (X = tap, Y = water or birdsong).
 
 Implementation: [`RAVE/rave/canonicalizer/cycle_trainer.py`](../../RAVE/rave/canonicalizer/cycle_trainer.py).  
-Config: [`configs/brave_cyclegan.gin`](../../configs/brave_cyclegan.gin).  
-Warp module: [`LatentCanonicalizer`](../canonicalizer/latent.md).  
-One-way Stage-1 (not CycleGAN): [`docs/canonicalizer/README.md`](../canonicalizer/README.md).
+Configs:
+- Approach 2 (separate codecs): [`configs/brave_cyclegan_separate.gin`](../../configs/brave_cyclegan_separate.gin) — [`brave_cyclegan.gin`](../../configs/brave_cyclegan.gin) is a back-compat include
+- Approach 3 (joint embedding): [`configs/brave_cyclegan_joint.gin`](../../configs/brave_cyclegan_joint.gin)
 
-## Geometry (Approach 2)
+Warp module: [`LatentCanonicalizer`](../canonicalizer/latent.md).  
+One-way Stage-1 (not CycleGAN): [`docs/canonicalizer/README.md`](../canonicalizer/README.md).  
+Design notes: [`scratchpaper/joint_embedding_cyclegan.md`](../../scratchpaper/joint_embedding_cyclegan.md).  
+Project arc (zero-shot → manual → learned → joint): [`docs/domain_adaptation_arc.md`](../domain_adaptation_arc.md).
+
+## Geometry (Approach 2 — separate)
 
 Warps are **cross-space**. Inference (and the main train path) encode a clip with **its** domain encoder; warp only when transferring:
 
@@ -17,6 +22,31 @@ Warps are **cross-space**. Inference (and the main train path) encode a clip wit
 | Stay birdsong | `Enc_Y → Dec_Y` (no warp) |
 | Tap → birdsong | `Enc_X(x) → W_xy → Dec_Y` |
 | Birdsong → tap | `Enc_Y(y) → W_yx → Dec_X` |
+
+## Geometry (Approach 3 — joint)
+
+Train **one** plain BRAVE on \(X \cup Y\) (mixed LMDB), freeze it, then CycleGAN with **within-space** warps (`CycleGANTrainer.shared_backbone=True`):
+
+| Intent | Path |
+|--------|------|
+| Stay X / stay Y | `Enc → Dec` (no warp) |
+| X → Y | `Enc(x) → W_xy → Dec` |
+| Y → X | `Enc(y) → W_yx → Dec` |
+
+Still uses **two** unpaired LMDBs for cycle batches. Warp init is **identity** residual (Stage-1 prior); identity loss λ is on by default in the joint gin. Latent AE-aware cycle still runs Enc∘Dec, but that is the shared AE manifold (not a foreign codec) — domain signal comes mainly from latent/audio D.
+
+```bash
+python RAVE/scripts/train_cyclegan.py \
+  --config configs/brave_cyclegan_joint.gin \
+  --backbone_x_config configs/brave.gin \
+  --ckpt_x /path/to/joint_run.ckpt \
+  --db_path_x /path/to/tap_lmdb \
+  --db_path_y /path/to/water_lmdb \
+  --canonicalizer_type latent \
+  --name tap_water_joint_wf
+```
+
+`--ckpt_y` / `--backbone_y_config` are optional under joint (default to X).
 
 Waveform **warps** (EQ/reverb before a single backbone) are **shelved**. Always pass `--canonicalizer_type latent`.
 
@@ -133,12 +163,12 @@ Same module (`LatentCanonicalizer`); `init_mode` changes **init and forward**.
 
 | `init_mode` | Who uses it | Forward | Init |
 |-------------|-------------|---------|------|
-| `"identity"` | **Stage-1** one-way canonicalizer | residual \(L(z)=z+\sigma(\alpha)(f(z)-z)\) | \(L(z)=z\) exactly (1×1 = I, or last conv zero) |
-| `"random"` | **All CycleGAN** latent warps | \(L(z)=f(z)\) (no residual gate) | Orthogonal 1×1 or Kaiming MLP; output \(z\) ~unit variance |
+| `"identity"` | **Stage-1** and **Approach 3 joint** CycleGAN | residual \(L(z)=z+\sigma(\alpha)(f(z)-z)\) | \(L(z)=z\) exactly (1×1 = I, or last conv zero) |
+| `"random"` | **Approach 2 separate** CycleGAN latent warps | \(L(z)=f(z)\) (no residual gate) | Orthogonal 1×1 or Kaiming MLP; output \(z\) ~unit variance |
 
-Identity is the right prior for **within-space** Stage-1 (nudge OOD codes inside Y). Cross-space CycleGAN (\(Z_X \not\approx Z_Y\) as coordinates) uses random; `train_cyclegan.py` always constructs warps with `init_mode="random"` regardless of gin `LatentCanonicalizer.init_mode` (gin default stays `"identity"` for Stage-1).
+Identity is the right prior for **within-space** maps (Stage-1; joint CycleGAN). Cross-space separate CycleGAN (\(Z_X \not\approx Z_Y\) as coordinates) uses random; `train_cyclegan.py` forces `init_mode="random"` when `shared_backbone=False`, and honors gin `LatentCanonicalizer.init_mode` (default `"identity"`) when joint.
 
-Manifest field `init_mode` is required at load so inference uses the same forward (residual vs not).
+Manifest field `init_mode` is required at load so inference uses the same forward (residual vs not). Manifest also stores `geometry` (`separate`|`joint`) and `shared_backbone`.
 
 ---
 
@@ -149,9 +179,9 @@ From BRAVE repo root:
 ```bash
 export PYTHONPATH="${PWD}/RAVE:${PYTHONPATH}"
 
-# A — waveform cycle + audio D
+# A — waveform cycle + audio D (Approach 2 separate)
 python RAVE/scripts/train_cyclegan.py \
-  --config configs/brave_cyclegan.gin \
+  --config configs/brave_cyclegan_separate.gin \
   --backbone_x_config configs/brave.gin \
   --ckpt_x /path/to/tap_run.ckpt --db_path_x /path/to/tap_lmdb \
   --backbone_y_config configs/brave.gin \
@@ -250,13 +280,18 @@ Gated stems are a **test intervention**, not a production gate. `gated_sidechain
 
 ## Export for Max / nn~
 
-X→Y timbre transfer only (`Enc_X → W_xy → Dec_Y`). Uses `cyclegan_latent.ckpt`, **not** Lightning `last.ckpt`.
+X→Y timbre transfer only (`Enc_X → W_xy → Dec_Y`, or shared Enc/Dec when joint). Uses `cyclegan_latent.ckpt`, **not** Lightning `last.ckpt`.
 
 ```bash
 export PYTHONPATH="${PWD}/RAVE:${PYTHONPATH}"
 python scripts/export_model.py \
   --model runs/tap_rain_sounds_wf_cyc_mlp2_<hash> \
   --output_dir exports/tap_rain_sounds_cyc
+
+# Joint (Approach 3) — same command; manifest geometry=joint loads the AE once
+python scripts/export_model.py \
+  --model runs/tap_water_joint_wf_<hash> \
+  --output_dir exports/tap_water_joint_wf
 ```
 
 Writes:

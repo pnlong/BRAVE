@@ -1,0 +1,27 @@
+# Approach 3 — joint-embedding CycleGAN (shared frozen BRAVE on X∪Y).
+# Within-space warps: Enc → W → Dec on one backbone. Identity residual init.
+# Still uses two unpaired LMDBs (db_path_x / db_path_y) for cycle batches.
+#
+# Phase 0: train one plain BRAVE on a mixed X+Y LMDB, then:
+#
+#   python RAVE/scripts/train_cyclegan.py \
+#     --config configs/brave_cyclegan_joint.gin \
+#     --backbone_x_config configs/brave.gin \
+#     --ckpt_x /path/to/joint_run.ckpt \
+#     --db_path_x /path/to/tap_lmdb \
+#     --db_path_y /path/to/water_lmdb \
+#     --canonicalizer_type latent \
+#     --name tap_water_joint_wf
+#
+# ckpt_y / backbone_y_config optional (default to X). Export:
+#   python scripts/export_model.py --model runs/<joint_run> --output_dir exports/<name>
+
+include "brave_cyclegan_separate.gin"
+
+rave.canonicalizer.latent_canonicalizer.LatentCanonicalizer:
+    init_mode = "identity"
+
+rave.canonicalizer.cycle_trainer.CycleGANTrainer:
+    shared_backbone = True
+    # Real identity prior in shared Z: W(Enc(y)) ≈ Enc(y)
+    lambda_identity = 0.5

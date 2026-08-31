@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Train bidirectional CycleGAN (latent or waveform) on dual frozen BRAVE backbones."""
+"""Train bidirectional CycleGAN on frozen BRAVE backbones.
+
+Separate (Approach 2): two codecs, cross-space warps, random init.
+Joint (Approach 3): one shared codec (``CycleGANTrainer.shared_backbone``),
+within-space warps, identity init. See configs/brave_cyclegan_{separate,joint}.gin.
+"""
 
 from __future__ import annotations
 
@@ -47,6 +52,7 @@ from rave.canonicalizer.gin_setup import (
     build_latent_discriminator,
     configure_backbone_gin,
     configure_cyclegan_gin,
+    parse_gin_file,
     resolve_cycle_max_steps,
 )
 from rave.canonicalizer.latent_canonicalizer import LatentCanonicalizer
@@ -66,16 +72,21 @@ def parse_args():
     p.add_argument(
         "--backbone_x_config",
         required=True,
-        help="Frozen domain-X (tap) gin, e.g. configs/brave.gin",
+        help="Frozen domain-X gin, e.g. configs/brave.gin "
+        "(joint: shared AE config)",
     )
-    p.add_argument("--ckpt_x", required=True)
+    p.add_argument("--ckpt_x", required=True, help="Domain-X ckpt (joint: shared AE)")
     p.add_argument("--db_path_x", required=True, help="Domain-X LMDB (tap)")
     p.add_argument(
         "--backbone_y_config",
-        required=True,
-        help="Frozen domain-Y (water) gin, e.g. configs/brave.gin",
+        default=None,
+        help="Frozen domain-Y gin (separate only; joint defaults to X)",
     )
-    p.add_argument("--ckpt_y", required=True)
+    p.add_argument(
+        "--ckpt_y",
+        default=None,
+        help="Domain-Y ckpt (separate only; joint defaults to X)",
+    )
     p.add_argument("--db_path_y", required=True, help="Domain-Y LMDB (water)")
     p.add_argument(
         "--canonicalizer_type",
@@ -137,6 +148,40 @@ def _resolve(path: str) -> str:
     return str(Path(_BRAVE_ROOT) / p)
 
 
+def _query_gin_bool(keys, default: bool = False) -> bool:
+    for key in keys:
+        try:
+            return bool(gin.query_parameter(key))
+        except ValueError:
+            continue
+    return default
+
+
+def _query_gin_str(keys, default: str) -> str:
+    for key in keys:
+        try:
+            return str(gin.query_parameter(key))
+        except ValueError:
+            continue
+    return default
+
+
+def _peek_shared_backbone(cycle_cfg: str, overrides) -> bool:
+    """Parse CycleGAN gin temporarily to read shared_backbone, then clear."""
+    gin.clear_config()
+    try:
+        parse_gin_file(cycle_cfg, overrides=overrides)
+        return _query_gin_bool(
+            (
+                "CycleGANTrainer.shared_backbone",
+                "rave.canonicalizer.cycle_trainer.CycleGANTrainer.shared_backbone",
+            ),
+            False,
+        )
+    finally:
+        gin.clear_config()
+
+
 def _load_plain_lmdb_pair(
     db_path: str,
     *,
@@ -178,15 +223,50 @@ def main():
     torch.set_float32_matmul_precision("high")
 
     backbone_x_cfg = _resolve(_add_gin_ext(args.backbone_x_config))
-    backbone_y_cfg = _resolve(_add_gin_ext(args.backbone_y_config))
     cycle_cfg = _resolve(_add_gin_ext(args.config))
+    shared_backbone = _peek_shared_backbone(cycle_cfg, args.override)
+
+    if shared_backbone:
+        backbone_y_cfg = (
+            _resolve(_add_gin_ext(args.backbone_y_config))
+            if args.backbone_y_config
+            else backbone_x_cfg
+        )
+        ckpt_y = args.ckpt_y or args.ckpt_x
+    else:
+        if not args.backbone_y_config or not args.ckpt_y:
+            raise SystemExit(
+                "Separate CycleGAN requires --backbone_y_config and --ckpt_y "
+                "(or use configs/brave_cyclegan_joint.gin for a shared backbone)."
+            )
+        backbone_y_cfg = _resolve(_add_gin_ext(args.backbone_y_config))
+        ckpt_y = args.ckpt_y
 
     n_channels = rave.dataset.get_training_channels(args.db_path_y, 0)
 
-    backbone_x = _load_frozen_backbone(backbone_x_cfg, args.ckpt_x, n_channels)
-    backbone_y = _load_frozen_backbone(backbone_y_cfg, args.ckpt_y, n_channels)
+    if shared_backbone:
+        backbone_x = _load_frozen_backbone(backbone_x_cfg, args.ckpt_x, n_channels)
+        backbone_y = backbone_x
+        print(
+            f"Joint geometry: shared backbone from {args.ckpt_x} "
+            f"(config={backbone_x_cfg})"
+        )
+    else:
+        backbone_x = _load_frozen_backbone(backbone_x_cfg, args.ckpt_x, n_channels)
+        backbone_y = _load_frozen_backbone(backbone_y_cfg, ckpt_y, n_channels)
 
     configure_cyclegan_gin(cycle_cfg, n_channels, overrides=args.override)
+    # Re-read after final parse (overrides may flip it)
+    shared_backbone = _query_gin_bool(
+        (
+            "CycleGANTrainer.shared_backbone",
+            "rave.canonicalizer.cycle_trainer.CycleGANTrainer.shared_backbone",
+        ),
+        shared_backbone,
+    )
+    if shared_backbone and backbone_y is not backbone_x:
+        # Override forced shared after dual load — keep single alias.
+        backbone_y = backbone_x
     rave.core.bind_log_audio_every_n_steps(args.log_audio_every_n_steps)
 
     max_steps = (
@@ -209,7 +289,17 @@ def main():
         ckpt_name = "cyclegan_waveform.ckpt"
         warp_init_mode = "identity"
     else:
-        warp_init_mode = "random"
+        if shared_backbone:
+            warp_init_mode = _query_gin_str(
+                (
+                    "LatentCanonicalizer.init_mode",
+                    "rave.canonicalizer.latent_canonicalizer.LatentCanonicalizer.init_mode",
+                ),
+                "identity",
+            )
+        else:
+            # Cross-space: identity would feed Enc_X coords into Dec_Y.
+            warp_init_mode = "random"
         warp_xy = LatentCanonicalizer(
             latent_size=backbone_x.latent_size, init_mode=warp_init_mode)
         warp_yx = LatentCanonicalizer(
@@ -266,6 +356,7 @@ def main():
         disc_y=disc_y,
         disc_latent_x=disc_latent_x,
         disc_latent_y=disc_latent_y,
+        shared_backbone=shared_backbone,
     )
 
     gin_snapshot = gin.config_str()
@@ -289,6 +380,7 @@ def main():
             f"No last.ckpt found for --resume={args.resume} (looked in {out_dir})"
         )
 
+    geometry = "joint" if shared_backbone else "separate"
     print(
         f"Training for {max_steps:,} steps "
         f"(cycle_warmup={trainer_module.cycle_warmup_duration:,}, "
@@ -301,6 +393,7 @@ def main():
         f"backbone_lr={trainer_module.backbone_lr}",
     )
     print(
+        f"geometry={geometry}, shared_backbone={shared_backbone}, "
         f"cycle_domain={trainer_module.cycle_domain}, "
         f"gan_domain={trainer_module.gan_domain}, "
         f"latent_cycle_mode={trainer_module.latent_cycle_mode}, "
@@ -308,7 +401,8 @@ def main():
         f"direct={trainer_module.use_latent_cycle}, "
         f"hybrid_latent_gan={trainer_module.hybrid_latent_gan}, "
         f"audio_polish_start={trainer_module.audio_polish_start_step}, "
-        f"warp_init={warp_init_mode}",
+        f"warp_init={warp_init_mode}, "
+        f"lambda_identity={trainer_module.lambda_identity}",
     )
 
     train_x, val_x = _load_plain_lmdb_pair(
@@ -376,7 +470,7 @@ def main():
         backbone_x_config=str(Path(backbone_x_cfg).resolve()),
         backbone_x_ckpt=str(Path(args.ckpt_x).resolve()),
         backbone_y_config=str(Path(backbone_y_cfg).resolve()),
-        backbone_y_ckpt=str(Path(args.ckpt_y).resolve()),
+        backbone_y_ckpt=str(Path(ckpt_y).resolve()),
         db_path_x=str(Path(args.db_path_x).resolve()),
         db_path_y=str(Path(args.db_path_y).resolve()),
         use_reverb=getattr(warp_xy, "use_reverb", False),
@@ -386,6 +480,8 @@ def main():
         cycle_domain=trainer_module.cycle_domain,
         latent_cycle_mode=trainer_module.latent_cycle_mode,
         init_mode=warp_init_mode,
+        geometry=geometry,
+        shared_backbone=shared_backbone,
     )
 
     ckpt_callback_kwargs = dict(
@@ -424,6 +520,8 @@ def main():
             "n_signal": args.n_signal,
             "max_steps": max_steps,
             "canonicalizer_type": args.canonicalizer_type,
+            "geometry": geometry,
+            "shared_backbone": shared_backbone,
             "cycle_domain": trainer_module.cycle_domain,
             "latent_cycle_mode": trainer_module.latent_cycle_mode,
             "warp_init_mode": warp_init_mode,

@@ -268,3 +268,76 @@ def test_cyclegan_checkpoint_strips_backbones_and_restores_scales():
     assert t2.calibrate_loss_scales is False
     assert torch.equal(t2.latent_var_ref_x.cpu(), torch.ones(8))
     assert any(k.startswith("backbone_x.") for k in checkpoint["state_dict"])
+
+
+def test_shared_backbone_alias_and_identity_init():
+    bb = _FakeBackbone()
+    warp_xy = LatentCanonicalizer(latent_size=8, init_mode="identity")
+    warp_yx = LatentCanonicalizer(latent_size=8, init_mode="identity")
+    assert warp_xy.init_mode == "identity"
+    assert warp_yx.init_mode == "identity"
+    t = _tiny_trainer(
+        backbone_x=bb,
+        backbone_y=bb,
+        warp_xy=warp_xy,
+        warp_yx=warp_yx,
+        shared_backbone=True,
+        cycle_domain="waveform",
+        disc_x=SimpleNamespace(),
+        disc_y=SimpleNamespace(),
+        lambda_identity=0.5,
+    )
+    assert t.shared_backbone is True
+    assert t.backbone_x is t.backbone_y
+    assert list(t._iter_backbones()) == [bb]
+    # Identity residual at init: warp ≈ identity
+    z = torch.randn(2, 8, 4)
+    assert torch.allclose(warp_xy(z), z, atol=1e-5)
+
+
+def test_joint_export_manifest_flags_shared_load(monkeypatch):
+    """load_cyclegan_xy_for_export loads one backbone when geometry=joint."""
+    from rave.canonicalizer.config import CycleGANManifest
+    from rave.canonicalizer.export import cyclegan_nn as export_mod
+
+    calls = []
+
+    def fake_load_backbone(config_path, ckpt_path, n_channels):
+        calls.append((config_path, ckpt_path, n_channels))
+        return _FakeBackbone()
+
+    monkeypatch.setattr(export_mod, "_load_backbone", fake_load_backbone)
+    monkeypatch.setattr(
+        export_mod,
+        "load_cyclegan_checkpoint",
+        lambda path: (
+            {},
+            {},
+            CycleGANManifest(
+                canonicalizer_type="latent",
+                backbone_x_config="/j.gin",
+                backbone_x_ckpt="/j.ckpt",
+                backbone_y_config="/j.gin",
+                backbone_y_ckpt="/j.ckpt",
+                db_path_x="/x",
+                db_path_y="/y",
+                init_mode="identity",
+                geometry="joint",
+                shared_backbone=True,
+            ),
+        ),
+    )
+
+    def fake_warps(manifest, backbone_x, backbone_y, warp_xy_state, warp_yx_state):
+        w = LatentCanonicalizer(latent_size=8, init_mode="identity")
+        return w, w
+
+    monkeypatch.setattr(export_mod, "build_cyclegan_warps", fake_warps)
+    monkeypatch.setattr(export_mod.cc, "use_cached_conv", lambda *_a, **_k: None)
+    monkeypatch.setattr(export_mod, "_remove_weight_norm", lambda *_a, **_k: None)
+
+    bx, by, warp, manifest = export_mod.load_cyclegan_xy_for_export("/fake.ckpt")
+    assert len(calls) == 1
+    assert bx is by
+    assert manifest.geometry == "joint"
+    assert warp.init_mode == "identity"

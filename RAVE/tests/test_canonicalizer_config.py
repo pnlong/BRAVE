@@ -60,6 +60,8 @@ def test_cyclegan_manifest_latent_layers_roundtrip():
         cycle_domain="latent",
         latent_cycle_mode="direct",
         init_mode="random",
+        geometry="separate",
+        shared_backbone=False,
     ).to_dict()
     loaded = CycleGANManifest.from_dict(data)
     assert loaded.latent_n_layers == 2
@@ -67,6 +69,8 @@ def test_cyclegan_manifest_latent_layers_roundtrip():
     assert loaded.cycle_domain == "latent"
     assert loaded.latent_cycle_mode == "direct"
     assert loaded.init_mode == "random"
+    assert loaded.geometry == "separate"
+    assert loaded.shared_backbone is False
     legacy = CycleGANManifest.from_dict({
         "canonicalizer_type": "latent",
         "backbone_x_config": "/x.gin",
@@ -81,6 +85,40 @@ def test_cyclegan_manifest_latent_layers_roundtrip():
     assert legacy.cycle_domain is None
     assert legacy.latent_cycle_mode == "ae_aware"
     assert legacy.init_mode == "identity"
+    assert legacy.geometry == "separate"
+    assert legacy.shared_backbone is False
+
+
+def test_cyclegan_manifest_joint_geometry_roundtrip():
+    data = CycleGANManifest(
+        canonicalizer_type="latent",
+        backbone_x_config="/j.gin",
+        backbone_x_ckpt="/j.ckpt",
+        backbone_y_config="/j.gin",
+        backbone_y_ckpt="/j.ckpt",
+        db_path_x="/x",
+        db_path_y="/y",
+        init_mode="identity",
+        geometry="joint",
+        shared_backbone=True,
+    ).to_dict()
+    loaded = CycleGANManifest.from_dict(data)
+    assert loaded.geometry == "joint"
+    assert loaded.shared_backbone is True
+    assert loaded.init_mode == "identity"
+    # shared_backbone alone implies joint when geometry missing
+    inferred = CycleGANManifest.from_dict({
+        "canonicalizer_type": "latent",
+        "backbone_x_config": "/j.gin",
+        "backbone_x_ckpt": "/j.ckpt",
+        "backbone_y_config": "/j.gin",
+        "backbone_y_ckpt": "/j.ckpt",
+        "db_path_x": "/x",
+        "db_path_y": "/y",
+        "shared_backbone": True,
+    })
+    assert inferred.geometry == "joint"
+    assert inferred.shared_backbone is True
 
 
 def test_validate_manifest_warns_on_mismatch():

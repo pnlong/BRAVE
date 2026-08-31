@@ -1,7 +1,8 @@
 # CycleGAN recipe matching tap_bird_wf_cyc_mlp2_ec827dcb5f:
 # latent 2-layer MLP warps, waveform cycle + audio D, 400k steps
 # (2× the original 200k: same 50k warmup + 5k GAN ramp, then 345k full GAN).
-# train_cyclegan.py still forces LatentCanonicalizer.init_mode="random".
+# train_cyclegan.py uses init_mode="random" when shared_backbone=False
+# (Approach 2). Joint geometry honors LatentCanonicalizer.init_mode.
 #
 # Usage:
 #   CYCLEGAN_CONFIG=configs/brave_cyclegan_best.gin \

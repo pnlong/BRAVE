@@ -261,6 +261,9 @@ class CycleGANManifest:
     cycle_domain: Optional[str] = None
     latent_cycle_mode: str = "ae_aware"
     init_mode: str = "identity"
+    # "separate" = Approach 2 dual codecs; "joint" = Approach 3 shared AE
+    geometry: str = "separate"
+    shared_backbone: bool = False
 
     def to_dict(self) -> dict:
         out = {
@@ -276,6 +279,8 @@ class CycleGANManifest:
             "cycle_domain": self.cycle_domain,
             "latent_cycle_mode": self.latent_cycle_mode,
             "init_mode": self.init_mode,
+            "geometry": self.geometry,
+            "shared_backbone": self.shared_backbone,
         }
         if self.canonicalizer_type == "latent":
             out["latent_n_layers"] = self.latent_n_layers
@@ -286,6 +291,10 @@ class CycleGANManifest:
     @classmethod
     def from_dict(cls, data: dict) -> "CycleGANManifest":
         hidden = data.get("latent_hidden_size")
+        shared = bool(data.get("shared_backbone", False))
+        geometry = str(data.get("geometry", "joint" if shared else "separate"))
+        if geometry not in ("separate", "joint"):
+            geometry = "joint" if shared else "separate"
         return cls(
             canonicalizer_type=data["canonicalizer_type"],
             backbone_x_config=data["backbone_x_config"],
@@ -301,6 +310,8 @@ class CycleGANManifest:
             cycle_domain=data.get("cycle_domain"),
             latent_cycle_mode=str(data.get("latent_cycle_mode", "ae_aware")),
             init_mode=str(data.get("init_mode", "identity")),
+            geometry=geometry,
+            shared_backbone=shared or geometry == "joint",
         )
 
 

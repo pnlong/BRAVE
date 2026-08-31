@@ -74,7 +74,11 @@ def load_cyclegan_xy_for_export(
     n_channels: int = 1,
     streaming: bool = True,
 ):
-    """Load Enc_X, Dec_Y, and W_xy from a ``cyclegan_latent.ckpt``."""
+    """Load Enc_X, Dec_Y, and W_xy from a ``cyclegan_latent.ckpt``.
+
+    Joint geometry (``shared_backbone`` / ``geometry=joint``) loads the AE once
+    and reuses it for Enc and Dec.
+    """
     cc.use_cached_conv(streaming)
     warp_xy_state, warp_yx_state, manifest = load_cyclegan_checkpoint(ckpt_path)
     if manifest.canonicalizer_type != "latent":
@@ -82,10 +86,20 @@ def load_cyclegan_xy_for_export(
             "CycleGAN nn~ export only supports latent warps "
             f"(got canonicalizer_type={manifest.canonicalizer_type!r})"
         )
+    shared = bool(getattr(manifest, "shared_backbone", False)) or (
+        getattr(manifest, "geometry", "separate") == "joint"
+    )
     backbone_x = _load_backbone(
         manifest.backbone_x_config, manifest.backbone_x_ckpt, n_channels)
-    backbone_y = _load_backbone(
-        manifest.backbone_y_config, manifest.backbone_y_ckpt, n_channels)
+    if shared:
+        backbone_y = backbone_x
+        _log.info(
+            "CycleGAN joint export: shared backbone %s",
+            manifest.backbone_x_ckpt,
+        )
+    else:
+        backbone_y = _load_backbone(
+            manifest.backbone_y_config, manifest.backbone_y_ckpt, n_channels)
     warp_xy, _warp_yx = build_cyclegan_warps(
         manifest,
         backbone_x=backbone_x,
@@ -97,12 +111,16 @@ def load_cyclegan_xy_for_export(
     for p in warp_xy.parameters():
         p.requires_grad = False
     _remove_weight_norm(backbone_x)
-    _remove_weight_norm(backbone_y)
+    if backbone_y is not backbone_x:
+        _remove_weight_norm(backbone_y)
     return backbone_x, backbone_y, warp_xy, manifest
 
 
 class ScriptedCycleGANXY(nn_tilde.Module):
-    """Streaming X→Y transfer: PQMF_X → Enc_X mean → W_xy → Dec_Y → iPQMF_Y."""
+    """Streaming X→Y transfer: PQMF_X → Enc_X mean → W_xy → Dec_Y → iPQMF_Y.
+
+    Joint geometry uses the same backbone for Enc and Dec (within-space warp).
+    """
 
     def __init__(self, backbone_x, backbone_y, warp_xy) -> None:
         super().__init__()
@@ -230,6 +248,12 @@ def export_cyclegan_nn(
 
     backbone_x, backbone_y, warp_xy, manifest = load_cyclegan_xy_for_export(
         ckpt_path, n_channels=n_channels, streaming=streaming)
+    geometry = getattr(manifest, "geometry", "separate")
+    _log.info(
+        "CycleGAN X→Y export geometry=%s shared_backbone=%s",
+        geometry,
+        getattr(manifest, "shared_backbone", False),
+    )
     scripted = ScriptedCycleGANXY(backbone_x, backbone_y, warp_xy)
     x = torch.zeros(1, scripted.n_channels, 2**14)
     y = scripted(x)

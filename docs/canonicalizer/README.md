@@ -2,6 +2,8 @@
 
 Stage-1 **input adapters** for frozen BRAVE / FaderRAVE backbones. A canonicalizer is a small trainable warp that runs **before** (waveform) or **after** (latent) the frozen encoder, so out-of-domain audio (e.g. body-tap recordings) reconstructs with timbre closer to the in-domain corpus the backbone was trained on — without retraining the autoencoder.
 
+Where this sits in the project story (zero-shot → manual EQ/reverb → learned cross-space → joint embedding): [`docs/domain_adaptation_arc.md`](../domain_adaptation_arc.md).
+
 Implementation lives in [`RAVE/rave/canonicalizer/`](../../RAVE/rave/canonicalizer/). Training config: [`configs/brave_canonicalizer.gin`](../../configs/brave_canonicalizer.gin).
 
 ## Which canonicalizer?

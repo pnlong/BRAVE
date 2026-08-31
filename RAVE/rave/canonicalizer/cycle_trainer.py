@@ -30,8 +30,10 @@ class CycleGANTrainer(pl.LightningModule):
     """
     Full CycleGAN between domain X (tap) and domain Y (water) on frozen BRAVE.
 
-    Latent warps are cross-space: Enc_src → W → Dec_tgt. Waveform warps are
-    shelved for new runs.
+    Latent warps are cross-space when ``shared_backbone=False`` (Approach 2:
+    Enc_src → W → Dec_tgt). With ``shared_backbone=True`` (Approach 3 joint
+    embedding), both domains share one frozen AE and warps are within-space.
+    Waveform warps are shelved for new runs.
 
     ``cycle_domain`` (preferred) couples cycle loss and primary discriminator:
     - ``"waveform"``: STFT+RMS cycle + audio D; set ``lambda_latent_gan>0`` for
@@ -101,6 +103,7 @@ class CycleGANTrainer(pl.LightningModule):
         unfreeze_encoders: bool = False,
         unfreeze_decoders: bool = False,
         backbone_lr: float = 1e-5,
+        shared_backbone: bool = False,
     ) -> None:
         super().__init__()
         if canonicalizer_type not in ("waveform", "latent"):
@@ -109,6 +112,8 @@ class CycleGANTrainer(pl.LightningModule):
             raise ValueError("cycle_mode must be stft, rms, or both")
         if latent_cycle_mode not in ("ae_aware", "direct"):
             raise ValueError("latent_cycle_mode must be ae_aware or direct")
+
+        self.shared_backbone = bool(shared_backbone)
 
         if cycle_domain is not None:
             if cycle_domain not in ("waveform", "latent"):
@@ -243,7 +248,7 @@ class CycleGANTrainer(pl.LightningModule):
         self.unfreeze_encoders = unfreeze_encoders
         self.unfreeze_decoders = unfreeze_decoders
 
-        for backbone in (self.backbone_x, self.backbone_y):
+        for backbone in self._iter_backbones():
             for p in backbone.parameters():
                 p.requires_grad = False
             if self.unfreeze_encoders:
@@ -252,6 +257,12 @@ class CycleGANTrainer(pl.LightningModule):
             if self.unfreeze_decoders:
                 for p in backbone.decoder.parameters():
                     p.requires_grad = True
+
+    def _iter_backbones(self):
+        """Unique frozen AEs (one entry when ``shared_backbone`` aliases X=Y)."""
+        if self.backbone_x is self.backbone_y:
+            return (self.backbone_x,)
+        return (self.backbone_x, self.backbone_y)
 
     @property
     def audio_polish_active(self) -> bool:
@@ -270,7 +281,7 @@ class CycleGANTrainer(pl.LightningModule):
             }
         ]
         backbone_params = []
-        for backbone in (self.backbone_x, self.backbone_y):
+        for backbone in self._iter_backbones():
             if self.unfreeze_encoders:
                 backbone_params.extend(
                     p for p in backbone.encoder.parameters() if p.requires_grad)
@@ -353,7 +364,7 @@ class CycleGANTrainer(pl.LightningModule):
         return warp_opt, disc_opt
 
     def _set_backbone_train_mode(self) -> None:
-        for backbone in (self.backbone_x, self.backbone_y):
+        for backbone in self._iter_backbones():
             backbone.eval()
             if self.unfreeze_encoders:
                 backbone.encoder.train()

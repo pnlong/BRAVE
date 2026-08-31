@@ -127,19 +127,36 @@ python RAVE/scripts/train_canonicalizer.py \
 
 Writes `waveform_canonicalizer.ckpt` or `latent_canonicalizer.ckpt`. Embed at export via `scripts/export_model.py` (`--canonicalizer auto`).
 
+## Domain adaptation arc
+
+Zero-shot Y BRAVE → manual EQ/reverb → learned cross-space warps (Stage-1 / separate CycleGAN) → joint embedding CycleGAN: [`docs/domain_adaptation_arc.md`](docs/domain_adaptation_arc.md).
+
 ## CycleGAN (Tap ↔ Water)
 
-Bidirectional CycleGAN between two frozen plain BRAVE backbones. Latent warps are **cross-space** (`Enc_src → W → Dec_tgt`, random init). Waveform warps are shelved. Docs: [`docs/cyclegan/README.md`](docs/cyclegan/README.md).
+Bidirectional CycleGAN. Two geometries:
+
+- **Separate** ([`configs/brave_cyclegan_separate.gin`](configs/brave_cyclegan_separate.gin); [`brave_cyclegan.gin`](configs/brave_cyclegan.gin) aliases it): two frozen AEs, cross-space warps, random init.
+- **Joint** ([`configs/brave_cyclegan_joint.gin`](configs/brave_cyclegan_joint.gin)): one frozen AE trained on \(X\cup Y\), within-space warps, identity init. Docs: [`docs/cyclegan/README.md`](docs/cyclegan/README.md).
 
 ```bash
+# Separate (Approach 2)
 python RAVE/scripts/train_cyclegan.py \
-  --config configs/brave_cyclegan.gin \
+  --config configs/brave_cyclegan_separate.gin \
   --backbone_x_config configs/brave.gin \
   --ckpt_x /path/to/tap_run.ckpt --db_path_x /path/to/tap_lmdb \
   --backbone_y_config configs/brave.gin \
   --ckpt_y /path/to/water_run.ckpt --db_path_y /path/to/water_lmdb \
   --canonicalizer_type latent \
   --name tap_water_wf_cycle
+
+# Joint (Approach 3) — after training one BRAVE on mixed X∪Y LMDB
+python RAVE/scripts/train_cyclegan.py \
+  --config configs/brave_cyclegan_joint.gin \
+  --backbone_x_config configs/brave.gin \
+  --ckpt_x /path/to/joint_run.ckpt \
+  --db_path_x /path/to/tap_lmdb --db_path_y /path/to/water_lmdb \
+  --canonicalizer_type latent \
+  --name tap_water_joint_wf
 ```
 
 `cycle_domain` couples cycle + D: `"waveform"` (default, STFT+RMS + audio D) or `"latent"` (z L1 + latent D). Latent cycle modes: `ae_aware` (Dec+re-Enc, 50k warmup) or `direct` (compose-L1, no warmup / no decode in train).

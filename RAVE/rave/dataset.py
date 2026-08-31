@@ -21,6 +21,22 @@ from udls import AudioExample as AudioExampleWrapper
 from udls.generated import AudioExample
 
 
+# py-lmdb allows only one Environment per realpath per process. Train/val both
+# open the same LMDB via ``split_train_val`` — share handles here.
+_LMDB_ENV_CACHE: Dict[str, "lmdb.Environment"] = {}
+
+
+def open_lmdb_env(db_path: str) -> lmdb.Environment:
+    """Open (or reuse) a read-friendly LMDB environment for ``db_path``."""
+    key = os.path.realpath(db_path)
+    env = _LMDB_ENV_CACHE.get(key)
+    if env is not None:
+        return env
+    env = lmdb.open(db_path, lock=False)
+    _LMDB_ENV_CACHE[key] = env
+    return env
+
+
 def get_derivator_integrator(sr: int):
     alpha = 1 / (1 + 1 / sr * 2 * np.pi * 10)
     derivator = ([.5, -.5], [1])
@@ -34,7 +50,7 @@ class AudioDataset(data.Dataset):
     @property
     def env(self) -> lmdb.Environment:
         if self._env is None:
-            self._env = lmdb.open(self._db_path, lock=False)
+            self._env = open_lmdb_env(self._db_path)
         return self._env
 
     @property
@@ -59,12 +75,13 @@ class AudioDataset(data.Dataset):
                  audio_key: str = 'waveform',
                  transforms: Optional[transforms.Transform] = None,
                  n_channels: int = 1,
-                 show_progress: bool = True) -> None:
+                 show_progress: bool = True,
+                 keys: Optional[Sequence[str]] = None) -> None:
         super().__init__()
         self._db_path = db_path
         self._audio_key = audio_key
         self._env = None
-        self._keys = None
+        self._keys = list(keys) if keys is not None else None
         self._transforms = transforms
         self._n_channels = n_channels
         self._show_progress = show_progress
@@ -97,7 +114,7 @@ class LazyAudioDataset(data.Dataset):
     @property
     def env(self) -> lmdb.Environment:
         if self._env is None:
-            self._env = lmdb.open(self._db_path, lock=False)
+            self._env = open_lmdb_env(self._db_path)
         return self._env
 
     @property
@@ -245,10 +262,11 @@ def get_dataset(db_path,
                 derivative: bool = False,
                 normalize: bool = False,
                 rand_pitch: bool = False,
-                augmentations: Union[None, Iterable[Callable]] = None, 
+                augmentations: Union[None, Iterable[Callable]] = None,
                 n_channels: int = 1,
                 stochastic: bool = True,
-                show_progress: bool = True):
+                show_progress: bool = True,
+                keys: Optional[Sequence[str]] = None):
     if db_path[:4] == "http":
         return HTTPAudioDataset(db_path=db_path)
     with open(os.path.join(db_path, 'metadata.yaml'), 'r') as metadata:
@@ -283,6 +301,7 @@ def get_dataset(db_path,
             transforms=transform_list,
             n_channels=n_channels,
             show_progress=show_progress,
+            keys=keys,
         )
 
 
@@ -366,6 +385,9 @@ def split_train_val(
     )
     val_kwargs = dict(get_dataset_kwargs)
     val_kwargs["show_progress"] = False
+    # Reuse train keys so we do not re-probe; env is shared via open_lmdb_env.
+    if hasattr(train_ds, "keys"):
+        val_kwargs["keys"] = train_ds.keys
     val_ds = get_dataset(
         db_path,
         sr,

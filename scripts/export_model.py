@@ -138,7 +138,8 @@ def main(argv):
         if FLAGS.host == "h5":
             logging.error("CycleGAN export is nn~/TorchScript only (--host nn or ts)")
             sys.exit(1)
-        logging.info("CycleGAN X→Y export from %s", cyclegan_ckpt)
+        logging.info(
+            "CycleGAN X→Y export from %s", cyclegan_ckpt)
         ts_path = output_dir / "model.ts"
         export_cyclegan_nn(
             cyclegan_ckpt, ts_path, streaming=FLAGS.streaming)
