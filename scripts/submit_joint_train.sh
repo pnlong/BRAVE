@@ -18,7 +18,7 @@ source "${BRAVE_ROOT}/scripts/load_env.sh"
 source "${BRAVE_ROOT}/scripts/env.sh"
 
 # Contact (normalized clean) + birdsong (PCEN+normalize — prior birdsong BRAVE LMDB).
-export DB_PATH="${DB_PATH:-${BRAVE_STORAGE}/tap_samples/preprocessed_normalized_clean}"
+export DB_PATH_X="${DB_PATH_X:-${DB_PATH:-${BRAVE_STORAGE}/tap_samples/preprocessed_normalized_clean}}"
 export DB_PATH_Y="${DB_PATH_Y:-${BRAVE_STORAGE}/yt_birdsong/preprocessed_pcen}"
 export DOMAIN_X_FRACTION="${DOMAIN_X_FRACTION:-0.5}"
 export RUN_NAME="${RUN_NAME:-joint_tap_contact_birdsong_balanced}"
@@ -27,12 +27,12 @@ export OUT_PATH="${OUT_PATH:-${BRAVE_STORAGE}/joint_tap_contact_birdsong/runs}"
 export BATCH="${BATCH:-8}"
 export WORKERS="${WORKERS:-8}"
 
-unset CKPT WANDB_RUN_ID GPUS GPU
+unset CKPT WANDB_RUN_ID GPUS GPU DB_PATH
 
 mkdir -p logs
 
 echo "Submitting stratified joint BRAVE:"
-echo "  DB_PATH=${DB_PATH}"
+echo "  DB_PATH_X=${DB_PATH_X}"
 echo "  DB_PATH_Y=${DB_PATH_Y}"
 echo "  DOMAIN_X_FRACTION=${DOMAIN_X_FRACTION}"
 echo "  RUN_NAME=${RUN_NAME}"

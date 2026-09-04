@@ -7,10 +7,9 @@ Configs:
 - Approach 2 (separate codecs): [`configs/brave_cyclegan_separate.gin`](../../configs/brave_cyclegan_separate.gin) — [`brave_cyclegan.gin`](../../configs/brave_cyclegan.gin) is a back-compat include
 - Approach 3 (joint embedding): [`configs/brave_cyclegan_joint.gin`](../../configs/brave_cyclegan_joint.gin)
 
-Warp module: [`LatentCanonicalizer`](../canonicalizer/latent.md).  
-One-way Stage-1 (not CycleGAN): [`docs/canonicalizer/README.md`](../canonicalizer/README.md).  
+Warp module: [`LatentCanonicalizer`](../canonicalizer/latent.md) (shared warp class; Stage-1 one-way training is shelved).  
 Design notes: [`scratchpaper/joint_embedding_cyclegan.md`](../../scratchpaper/joint_embedding_cyclegan.md).  
-Project arc (zero-shot → manual → learned → joint): [`docs/domain_adaptation_arc.md`](../domain_adaptation_arc.md).
+Project arc (zero-shot → manual → separate CycleGAN → joint): [`docs/domain_adaptation_arc.md`](../domain_adaptation_arc.md).
 
 ## Geometry (Approach 2 — separate)
 
@@ -25,7 +24,7 @@ Warps are **cross-space**. Inference (and the main train path) encode a clip wit
 
 ## Geometry (Approach 3 — joint)
 
-Train **one** plain BRAVE on both domains (stratified dual-LMDB: `--db_path` + `--db_path_y`), freeze it, then CycleGAN with **within-space** warps (`CycleGANTrainer.shared_backbone=True`):
+Train **one** plain BRAVE on both domains (stratified dual-LMDB: `--db_path_x` + `--db_path_y`), freeze it, then CycleGAN with **within-space** warps (`CycleGANTrainer.shared_backbone=True`):
 
 | Intent | Path |
 |--------|------|
@@ -33,7 +32,7 @@ Train **one** plain BRAVE on both domains (stratified dual-LMDB: `--db_path` + `
 | X → Y | `Enc(x) → W_xy → Dec` |
 | Y → X | `Enc(y) → W_yx → Dec` |
 
-Still uses **two** unpaired LMDBs for cycle batches. Warp init is **identity** residual (Stage-1 prior); identity loss λ is on by default in the joint gin. Latent AE-aware cycle still runs Enc∘Dec, but that is the shared AE manifold (not a foreign codec) — domain signal comes mainly from latent/audio D.
+Still uses **two** unpaired LMDBs for cycle batches. Warp init is **identity** residual (within-space prior); identity loss λ is on by default in the joint gin. Latent AE-aware cycle still runs Enc∘Dec, but that is the shared AE manifold (not a foreign codec) — domain signal comes mainly from latent/audio D.
 
 ```bash
 python RAVE/scripts/train_cyclegan.py \
@@ -163,10 +162,10 @@ Same module (`LatentCanonicalizer`); `init_mode` changes **init and forward**.
 
 | `init_mode` | Who uses it | Forward | Init |
 |-------------|-------------|---------|------|
-| `"identity"` | **Stage-1** and **Approach 3 joint** CycleGAN | residual \(L(z)=z+\sigma(\alpha)(f(z)-z)\) | \(L(z)=z\) exactly (1×1 = I, or last conv zero) |
+| `"identity"` | **Approach 3 joint** CycleGAN | residual \(L(z)=z+\sigma(\alpha)(f(z)-z)\) | \(L(z)=z\) exactly (1×1 = I, or last conv zero) |
 | `"random"` | **Approach 2 separate** CycleGAN latent warps | \(L(z)=f(z)\) (no residual gate) | Orthogonal 1×1 or Kaiming MLP; output \(z\) ~unit variance |
 
-Identity is the right prior for **within-space** maps (Stage-1; joint CycleGAN). Cross-space separate CycleGAN (\(Z_X \not\approx Z_Y\) as coordinates) uses random; `train_cyclegan.py` forces `init_mode="random"` when `shared_backbone=False`, and honors gin `LatentCanonicalizer.init_mode` (default `"identity"`) when joint.
+Identity is the right prior for **within-space** maps (joint CycleGAN). Cross-space separate CycleGAN (\(Z_X \not\approx Z_Y\) as coordinates) uses random; `train_cyclegan.py` forces `init_mode="random"` when `shared_backbone=False`, and honors gin `LatentCanonicalizer.init_mode` (default `"identity"`) when joint.
 
 Manifest field `init_mode` is required at load so inference uses the same forward (residual vs not). Manifest also stores `geometry` (`separate`|`joint`) and `shared_backbone`.
 
@@ -309,7 +308,7 @@ Copy the folder to `~/Documents/Max 9/Packages/nn_tilde/models/`, open `play.max
 
 Offline listen: `scripts/diagnose_cyclegan_silence.py` still writes `gated_sidechain.wav` for qualitative A/B.
 
-Do not pass `--canonicalizer`; Stage-1 attach is a different graph (same encoder and decoder).
+Do not pass `--canonicalizer` on CycleGAN export; that flag is for the shelved one-way attach path.
 
 Export zeros causal `cached_conv` pad/cache buffers after the warmup pass before writing `model.ts`. If those rings are left dirty, Max buzzes on load and on silence even when offline block recon of real audio sounds fine. Re-export after pulling that fix.
 

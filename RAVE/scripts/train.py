@@ -29,20 +29,26 @@ flags.DEFINE_multi_string('config',
 flags.DEFINE_multi_string('augment',
                            default = [],
                             help = 'augmentation configurations to use')
-flags.DEFINE_string('db_path',
-                    None,
-                    help='Preprocessed dataset path (domain X when --db_path_y is set)',
-                    required=True)
+flags.DEFINE_string(
+    'db_path',
+    None,
+    help='Preprocessed dataset path (single-domain). Alias for --db_path_x.',
+)
+flags.DEFINE_string(
+    'db_path_x',
+    None,
+    help='Domain-X LMDB (joint / stratified). Falls back to --db_path.',
+)
 flags.DEFINE_string(
     'db_path_y',
     None,
-    help='Optional second LMDB (domain Y). When set, train with stratified '
-    'X/Y batches (joint embedding) using separate domain LMDBs.',
+    help='Domain-Y LMDB. When set with --db_path_x (or --db_path), train with '
+    'stratified X/Y batches (joint embedding).',
 )
 flags.DEFINE_float(
     'domain_x_fraction',
     0.5,
-    help='Fraction of each batch from --db_path when --db_path_y is set '
+    help='Fraction of each batch from --db_path_x when --db_path_y is set '
     '(default 0.5 = balanced). Requires --batch >= 2.',
 )
 flags.DEFINE_string('out_path',
@@ -193,8 +199,13 @@ def main(argv):
     else:
         torch.backends.cudnn.benchmark = True
 
+    db_path_x = FLAGS.db_path_x or FLAGS.db_path
+    if not db_path_x:
+        raise ValueError("Pass --db_path or --db_path_x")
+    db_path_y = FLAGS.db_path_y
+
     # check dataset channels
-    n_channels = rave.dataset.get_training_channels(FLAGS.db_path, FLAGS.channels)
+    n_channels = rave.dataset.get_training_channels(db_path_x, FLAGS.channels)
     gin.bind_parameter('RAVE.n_channels', n_channels)
 
     # parse CLI --augment files (skipped when empty so gin can bind RandomGain)
@@ -234,7 +245,7 @@ def main(argv):
 
     # parse datasset
     train, val = rave.dataset.split_train_val(
-        FLAGS.db_path,
+        db_path_x,
         model.sr,
         FLAGS.n_signal,
         percent=98,
@@ -245,15 +256,15 @@ def main(argv):
     )
 
     train_y = val_y = None
-    if FLAGS.db_path_y:
+    if db_path_y:
         n_channels_y = rave.dataset.get_training_channels(
-            FLAGS.db_path_y, FLAGS.channels)
+            db_path_y, FLAGS.channels)
         if n_channels_y != n_channels:
             raise ValueError(
-                f"--db_path channels={n_channels} != "
+                f"--db_path_x channels={n_channels} != "
                 f"--db_path_y channels={n_channels_y}")
         train_y, val_y = rave.dataset.split_train_val(
-            FLAGS.db_path_y,
+            db_path_y,
             model.sr,
             FLAGS.n_signal,
             percent=98,
@@ -282,7 +293,7 @@ def main(argv):
         val,
         sampling_rate=model.sr,
         n_signal=FLAGS.n_signal,
-        db_path=FLAGS.db_path,
+        db_path=db_path_x,
     )
     if train_y is not None:
         train_y, val_y = rave.training.wrap_training_datasets(
@@ -290,11 +301,11 @@ def main(argv):
             val_y,
             sampling_rate=model.sr,
             n_signal=FLAGS.n_signal,
-            db_path=FLAGS.db_path_y,
+            db_path=db_path_y,
         )
     rave.training.finalize_training_model(
         model,
-        db_path=FLAGS.db_path,
+        db_path=db_path_x,
         n_signal=FLAGS.n_signal,
         smoke_test=FLAGS.smoke_test,
         rave_root=_RAVE_ROOT,
@@ -310,8 +321,8 @@ def main(argv):
                 "stratified dual-domain training requires --batch >= 2")
         print(
             f"Stratified dual-domain: "
-            f"X={FLAGS.db_path} ({len(train)} train) "
-            f"Y={FLAGS.db_path_y} ({len(train_y)} train) "
+            f"X={db_path_x} ({len(train)} train) "
+            f"Y={db_path_y} ({len(train_y)} train) "
             f"domain_x_fraction={FLAGS.domain_x_fraction}",
             flush=True,
         )
@@ -452,9 +463,10 @@ def main(argv):
         save_dir=RUN_DIR,
         offline=FLAGS.wandb_offline,
         config={
-            'db_path': FLAGS.db_path,
-            'db_path_y': FLAGS.db_path_y,
-            'domain_x_fraction': FLAGS.domain_x_fraction if FLAGS.db_path_y else None,
+            'db_path': db_path_x,
+            'db_path_x': db_path_x,
+            'db_path_y': db_path_y,
+            'domain_x_fraction': FLAGS.domain_x_fraction if db_path_y else None,
             'batch': FLAGS.batch,
             'n_signal': FLAGS.n_signal,
             'max_steps': FLAGS.max_steps,

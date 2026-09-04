@@ -1,8 +1,8 @@
-# Canonicalizer documentation
+# Canonicalizer documentation (shelved)
 
-Stage-1 **input adapters** for frozen BRAVE / FaderRAVE backbones. A canonicalizer is a small trainable warp that runs **before** (waveform) or **after** (latent) the frozen encoder, so out-of-domain audio (e.g. body-tap recordings) reconstructs with timbre closer to the in-domain corpus the backbone was trained on — without retraining the autoencoder.
+**Status:** one-way Stage-1 training is **shelved** — it did not work well enough; the active path is bidirectional CycleGAN ([`docs/cyclegan/`](../cyclegan/README.md), project arc [`docs/domain_adaptation_arc.md`](../domain_adaptation_arc.md)). These pages remain for the shared `LatentCanonicalizer` / waveform warp modules and legacy runs.
 
-Where this sits in the project story (zero-shot → manual EQ/reverb → learned cross-space → joint embedding): [`docs/domain_adaptation_arc.md`](../domain_adaptation_arc.md).
+~~Stage-1 input adapters~~ historically: a small trainable warp that runs **before** (waveform) or **after** (latent) a frozen encoder so OOD audio reconstructed closer to in-domain timbre.
 
 Implementation lives in [`RAVE/rave/canonicalizer/`](../../RAVE/rave/canonicalizer/). Training config: [`configs/brave_canonicalizer.gin`](../../configs/brave_canonicalizer.gin).
 

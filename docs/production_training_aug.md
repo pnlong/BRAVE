@@ -10,6 +10,6 @@ You do **not** need to “turn it off in production” at runtime — it is alre
 
 Today we often **peak-normalize** (LMDB `normalize: true`, and/or demo peak-norm to ~0.95). That trains models in a narrow loudness regime. Live contact-mic / host levels vary a lot, so timbre-transfer and CycleGAN can latch onto absolute gain.
 
-**Preferred production direction:** random **gain augmentation** during BRAVE / CycleGAN / canonicalizer training (e.g. uniform dB scale per crop in a sane range), so adapters see many levels of the same content. Keep a light **inference safety** (soft limiter / clip guard), and keep train and live paths consistent — do not silently peak-norm every Max input if the model was trained with random gain.
+**Preferred production direction:** random **gain augmentation** during BRAVE / CycleGAN training (e.g. uniform dB scale per crop in a sane range), so adapters see many levels of the same content. Keep a light **inference safety** (soft limiter / clip guard), and keep train and live paths consistent — do not silently peak-norm every Max input if the model was trained with random gain.
 
 Related demos: `scripts/presentation_phase_demos.py` currently peak-norms for listening fairness; that is not a claim that peak-norm is the right production train recipe.

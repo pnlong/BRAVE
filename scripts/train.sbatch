@@ -15,7 +15,6 @@ set -euo pipefail
 
 echo "========== BRAVE train.sbatch (job ${SLURM_JOB_ID:-local}) =========="
 
-: "${DB_PATH:?Set DB_PATH to preprocessed LMDB directory (see scripts/submit_yt_birdsong_train.sh)}"
 : "${RUN_NAME:?Set RUN_NAME to wandb/run folder name}"
 
 BRAVE_ROOT="${BRAVE_ROOT:-/data/hai-res/p1long/BRAVE}"
@@ -32,10 +31,12 @@ MAX_STEPS="${MAX_STEPS:-1500000}"
 WANDB_PROJECT="${WANDB_PROJECT:-brave}"
 WANDB_RUN_ID="${WANDB_RUN_ID:-}"
 CKPT="${CKPT:-}"
-# Optional second domain for stratified joint AE (50/50 by default):
-#   DB_PATH_Y=... DOMAIN_X_FRACTION=0.5
+# Single-domain: DB_PATH (or DB_PATH_X).
+# Joint stratified: DB_PATH_X + DB_PATH_Y (DB_PATH aliases DB_PATH_X).
+DB_PATH_X="${DB_PATH_X:-${DB_PATH:-}}"
 DB_PATH_Y="${DB_PATH_Y:-}"
 DOMAIN_X_FRACTION="${DOMAIN_X_FRACTION:-0.5}"
+: "${DB_PATH_X:?Set DB_PATH or DB_PATH_X to preprocessed LMDB directory}"
 
 # Multi-GPU: request more GPUs when submitting, e.g.
 #   sbatch --gres=gpu:4 --cpus-per-task=32 scripts/train.sbatch
@@ -51,7 +52,7 @@ slurm_build_gpu_train_args GPU_TRAIN_ARGS
 
 cd "${BRAVE_ROOT}"
 
-echo "DB_PATH=${DB_PATH}"
+echo "DB_PATH_X=${DB_PATH_X}"
 if [[ -n "${DB_PATH_Y}" ]]; then
   echo "DB_PATH_Y=${DB_PATH_Y}"
   echo "DOMAIN_X_FRACTION=${DOMAIN_X_FRACTION}"
@@ -66,7 +67,7 @@ fi
 if [[ -n "${WANDB_RUN_ID}" ]]; then
   echo "WANDB_RUN_ID=${WANDB_RUN_ID}"
 fi
-python scripts/lmdb_duration.py "${DB_PATH}"
+python scripts/lmdb_duration.py "${DB_PATH_X}"
 if [[ -n "${DB_PATH_Y}" ]]; then
   python scripts/lmdb_duration.py "${DB_PATH_Y}"
 fi
@@ -74,7 +75,7 @@ fi
 TRAIN_ARGS=(
   --config="${CONFIG}"
   --name="${RUN_NAME}"
-  --db_path="${DB_PATH}"
+  --db_path_x="${DB_PATH_X}"
   --out_path="${OUT_PATH}"
   --batch="${BATCH}"
   --workers="${WORKERS}"
