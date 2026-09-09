@@ -1,9 +1,10 @@
 """Hop-aligned RMS, mute / replace-z, and causal loudness sidechain.
 
 Offline diagnosis plus CycleGAN nn~ (``CausalLoudnessSidechain``).
-"""
 
-from __future__ import annotations
+Do not use ``from __future__ import annotations`` here: TorchScript cannot
+resolve deferred ``hop: int``-style annotations on ``nn.Module`` subclasses.
+"""
 
 import torch
 import torch.nn as nn
@@ -233,9 +234,6 @@ class CausalLoudnessSidechain(nn.Module):
     state across 512-sample ``forward`` calls.
     """
 
-    hop: int
-    smooth_frames: int
-
     def __init__(
         self,
         hop: int,
@@ -264,8 +262,10 @@ class CausalLoudnessSidechain(nn.Module):
         alpha = 1.0 / float(self.smooth_frames)
         knee = self.knee
         env = self.env[0]
+        # Local float — TorchScript cannot close over module-level EPS_DB.
+        eps = 1e-12
         if n_frames < 1:
-            rms = torch.sqrt(x.pow(2).mean() + EPS_DB)
+            rms = torch.sqrt(x.pow(2).mean() + eps)
             env = (1.0 - alpha) * env + alpha * rms
             self.env.fill_(env)
             return y * (env / (env + knee))

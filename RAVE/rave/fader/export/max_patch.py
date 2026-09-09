@@ -99,7 +99,17 @@ def _umenu(
     items: List[str],
     default_index: int = 0,
 ) -> Dict[str, Any]:
-    """Plain Max umenu — reliable outside Ableton (unlike live.menu)."""
+    """Plain Max umenu — reliable outside Ableton (unlike live.menu).
+
+    Max serializes ``items`` as an atom list with ``","`` separators between
+    entries. Without those commas, Max joins adjacent symbols into one menu
+    row (e.g. ``["live in", "file"]`` → a single ``live in file`` item).
+    """
+    atom_items: List[str] = []
+    for i, item in enumerate(items):
+        if i:
+            atom_items.append(",")
+        atom_items.append(str(item))
     return _box(
         obj_id,
         "umenu",
@@ -108,7 +118,7 @@ def _umenu(
         numoutlets=3,
         outlettype=["int", "", ""],
         parameter_enable=0,
-        items=list(items),
+        items=atom_items,
         # 0-based selection
         value=int(default_index),
     )
@@ -216,13 +226,13 @@ def _build_play_patch(
             next_id(),
             "comment",
             [_COL_X + 150.0, y, 200.0, 18.0],
-            text="source: live in | file",
+            text="source menu: Live / File",
             fontsize=10.0,
         ),
         _umenu(
             src_menu,
             [_COL_X, y, 140.0, 22.0],
-            items=["live in", "file"],
+            items=["Live", "File"],
             default_index=src_default,
         ),
         _box(adc_id, "newobj", [_COL_X, y + 35.0, 57.0, 22.0], text="adc~ 1"),
