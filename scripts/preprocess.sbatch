@@ -14,6 +14,8 @@ set -euo pipefail
 
 : "${INPUT_PATH:?Set INPUT_PATH to raw audio root (directory searched recursively)}"
 : "${OUTPUT_PATH:?Set OUTPUT_PATH to LMDB output directory}"
+# Optional extra roots (space-separated), each becomes another --input_path:
+#   INPUT_PATH_EXTRA="/path/a /path/b"
 
 BRAVE_ROOT="${BRAVE_ROOT:-/data/hai-res/p1long/BRAVE}"
 
@@ -33,6 +35,16 @@ _fix_empty_storage_path() {
 }
 INPUT_PATH="$(_fix_empty_storage_path "${INPUT_PATH}")"
 OUTPUT_PATH="$(_fix_empty_storage_path "${OUTPUT_PATH}")"
+# Resolve extras before unsetting the helper.
+INPUT_PATH_EXTRA_RESOLVED=()
+if [[ -n "${INPUT_PATH_EXTRA:-}" ]]; then
+  # shellcheck disable=SC2206
+  _extras=(${INPUT_PATH_EXTRA})
+  for _p in "${_extras[@]}"; do
+    INPUT_PATH_EXTRA_RESOLVED+=("$(_fix_empty_storage_path "${_p}")")
+  done
+  unset _extras _p
+fi
 unset -f _fix_empty_storage_path
 
 CHANNELS="${CHANNELS:-1}"
@@ -50,6 +62,10 @@ PREPROCESS_ARGS=(
   --subset_seed="${SUBSET_SEED}"
   --concat_seed="${CONCAT_SEED}"
 )
+for _extra in "${INPUT_PATH_EXTRA_RESOLVED[@]+"${INPUT_PATH_EXTRA_RESOLVED[@]}"}"; do
+  PREPROCESS_ARGS+=(--input_path="${_extra}")
+done
+unset _extra INPUT_PATH_EXTRA_RESOLVED
 
 if [[ -n "${MAX_STORED_SEC:-}" ]]; then
   PREPROCESS_ARGS+=(--max_stored_sec="${MAX_STORED_SEC}")
@@ -71,6 +87,9 @@ source "${BRAVE_ROOT}/scripts/slurm_env.sh"
 cd "${BRAVE_ROOT}"
 
 echo "INPUT_PATH=${INPUT_PATH}"
+if [[ -n "${INPUT_PATH_EXTRA:-}" ]]; then
+  echo "INPUT_PATH_EXTRA=${INPUT_PATH_EXTRA}"
+fi
 echo "OUTPUT_PATH=${OUTPUT_PATH}"
 if [[ -n "${MAX_STORED_SEC:-}" ]]; then
   echo "MAX_STORED_SEC=${MAX_STORED_SEC}"

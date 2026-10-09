@@ -2,6 +2,8 @@
 
 How we move from “play OOD audio into a BRAVE trained on domain Y” toward controllable tap → target timbre transfer.
 
+Per-domain Foundation Y / CycleGAN checklist: [`foundation_training_status.md`](foundation_training_status.md).
+
 ```mermaid
 flowchart LR
   zs[1_ZeroShot] --> manual[2_ManualEQReverb]

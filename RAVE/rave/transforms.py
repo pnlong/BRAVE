@@ -156,6 +156,8 @@ class RandomCompress(Transform):
 
 @gin.configurable
 class RandomGain(Transform):
+    """Multiply by a random relative dB gain (preserves dataset loudness order)."""
+
     def __init__(self, gain_range: Tuple[int, int] = [-6, 3], prob: float = 0.5, limit = True):
         assert prob >= 0. and prob <= 1., "prob must be between 0. and 1."
         self.gain_range = gain_range
@@ -173,6 +175,60 @@ class RandomGain(Transform):
             return x_amp
         else:
             return x
+
+
+@gin.configurable
+class RandomTargetLoudness(Transform):
+    """Map each crop to a random target RMS loudness (dBFS).
+
+    Unlike :class:`RandomGain`, naturally loud and quiet clips both land in the
+    same absolute level band — the applied gain is ``target_db - rms_db``.
+
+    After gain, samples are hard-clipped to ``[-1, 1]`` by default so the model
+    sees saturation the way live tap does when host input gain is too high
+    (peak-normalizing would hide that failure mode).
+    """
+
+    def __init__(
+        self,
+        loudness_range: Tuple[float, float] = (-60.0, -3.0),
+        prob: float = 1.0,
+        hard_clip: bool = True,
+        max_gain_db: float = 60.0,
+        eps: float = 1e-8,
+    ):
+        assert 0.0 <= prob <= 1.0, "prob must be between 0. and 1."
+        lo, hi = float(loudness_range[0]), float(loudness_range[1])
+        assert hi >= lo, "loudness_range must be (min_db, max_db)"
+        self.loudness_range = (lo, hi)
+        self.prob = prob
+        self.hard_clip = hard_clip
+        self.max_gain_db = float(max_gain_db)
+        self.eps = float(eps)
+
+    def __call__(self, x):
+        if not bool(torch.bernoulli(torch.full((1,), self.prob))):
+            return x
+        x_np = np.asarray(x, dtype=np.float32)
+        rms = float(np.sqrt(np.mean(np.square(x_np)) + self.eps))
+        rms_db = 20.0 * np.log10(max(rms, self.eps))
+        target_db = (
+            np.random.rand() * (self.loudness_range[1] - self.loudness_range[0])
+            + self.loudness_range[0]
+        )
+        gain_db = float(np.clip(
+            target_db - rms_db,
+            -self.max_gain_db,
+            self.max_gain_db,
+        ))
+        x_amp = x_np * np.power(10.0, gain_db / 20.0)
+        if self.hard_clip:
+            x_amp = np.clip(x_amp, -1.0, 1.0)
+        if isinstance(x, torch.Tensor):
+            return torch.from_numpy(np.ascontiguousarray(x_amp)).to(
+                dtype=x.dtype, device=x.device
+            )
+        return x_amp.astype(np.float32, copy=False)
 
 
 @gin.configurable

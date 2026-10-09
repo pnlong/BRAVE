@@ -102,6 +102,18 @@ python3 build_subset.py --whitelist artifacts/whitelists/my_whitelist.txt --part
   --method copy --overwrite
 ```
 
+**Named foundation-Y subsets** (mechanical / synth tonal tags → `$BRAVE_STORAGE/fsd50k_brave/<name>/`):
+
+```bash
+# ~2.3k clips: mechanisms, engine, tools, … + mechanical_fan
+bash stage_named_subset.sh mechanical
+# optional: SUBMIT_PREPROCESS=1 bash stage_named_subset.sh mechanical
+
+# Synth pack (FSD50K tonal tags + generated abstract) lives under synth_abstract/:
+#   bash ../../scripts/build_synth_pack.sh
+# FSD50K has no generic synthesizer class; whitelist is artifacts/whitelists/synth_tonal.txt
+```
+
 ---
 
 ## 2b. Subset durations + training chop stats

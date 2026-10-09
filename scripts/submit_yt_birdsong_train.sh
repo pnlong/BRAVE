@@ -18,9 +18,10 @@ source "${BRAVE_ROOT}/scripts/load_env.sh"
 # shellcheck disable=SC1091
 source "${BRAVE_ROOT}/scripts/env.sh"
 
-export DB_PATH="${DB_PATH:-${BRAVE_STORAGE}/yt_birdsong/preprocessed_pcen}"
-export RUN_NAME="yt_birdsong_run"
-export CONFIG="configs/brave_birdsong.gin"
+# Prefer non-peak-norm LMDB + RandomGain from brave.gin (override DB_PATH for pcen).
+export DB_PATH="${DB_PATH:-${BRAVE_STORAGE}/yt_birdsong/preprocessed}"
+export RUN_NAME="${RUN_NAME:-yt_birdsong_silence_gain_run}"
+export CONFIG="${CONFIG:-configs/brave_birdsong.gin}"
 export OUT_PATH="${OUT_PATH:-${BRAVE_STORAGE}/yt_birdsong/runs}"
 
 # Avoid accidentally resuming a different experiment left in the shell.
@@ -58,4 +59,4 @@ echo "Submitted job ${job_id}"
 echo "Log file: ${BRAVE_ROOT}/logs/train-${job_id}.log"
 echo "Watch:    tail -f ${BRAVE_ROOT}/logs/train-${job_id}.log"
 echo ""
-echo "First lines should show DB_PATH=.../yt_birdsong/preprocessed_pcen and RUN_NAME=yt_birdsong_run"
+echo "First lines should show DB_PATH=.../yt_birdsong/preprocessed and RUN_NAME=${RUN_NAME}"

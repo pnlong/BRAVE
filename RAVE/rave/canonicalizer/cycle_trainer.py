@@ -827,8 +827,11 @@ class CycleGANTrainer(pl.LightningModule):
                 if self.latent_var_ref_x is None or not self.latent_spread_use_ema_ref:
                     self.latent_var_ref_x = batch_var.detach()
                 else:
+                    # Refs are saved on CPU; Lightning may load them before the
+                    # module is moved to GPU, so align device on every update.
                     d = self.latent_spread_ema_decay
-                    self.latent_var_ref_x = d * self.latent_var_ref_x + (1 - d) * batch_var
+                    ref = self.latent_var_ref_x.to(device=batch_var.device, dtype=batch_var.dtype)
+                    self.latent_var_ref_x = d * ref + (1 - d) * batch_var
             if y_mask.any():
                 z_y, _ = self._encode_latent(self.backbone_y, x_raw[y_mask])
                 batch_var = latent_per_channel_variance(z_y)
@@ -836,7 +839,8 @@ class CycleGANTrainer(pl.LightningModule):
                     self.latent_var_ref_y = batch_var.detach()
                 else:
                     d = self.latent_spread_ema_decay
-                    self.latent_var_ref_y = d * self.latent_var_ref_y + (1 - d) * batch_var
+                    ref = self.latent_var_ref_y.to(device=batch_var.device, dtype=batch_var.dtype)
+                    self.latent_var_ref_y = d * ref + (1 - d) * batch_var
 
     def _latent_spread_loss(self, fwd: Dict[str, torch.Tensor]) -> torch.Tensor:
         zero = torch.tensor(0.0, device=self.device)
@@ -844,9 +848,13 @@ class CycleGANTrainer(pl.LightningModule):
             return zero
         loss = zero
         if fwd["z_xy"].numel() and self.latent_var_ref_y is not None:
-            loss = loss + self.latent_spread_fn(fwd["z_xy"], self.latent_var_ref_y)
+            ref_y = self.latent_var_ref_y.to(
+                device=fwd["z_xy"].device, dtype=fwd["z_xy"].dtype)
+            loss = loss + self.latent_spread_fn(fwd["z_xy"], ref_y)
         if fwd["z_yx"].numel() and self.latent_var_ref_x is not None:
-            loss = loss + self.latent_spread_fn(fwd["z_yx"], self.latent_var_ref_x)
+            ref_x = self.latent_var_ref_x.to(
+                device=fwd["z_yx"].device, dtype=fwd["z_yx"].dtype)
+            loss = loss + self.latent_spread_fn(fwd["z_yx"], ref_x)
         return loss
 
     @torch.no_grad()
@@ -940,8 +948,10 @@ class CycleGANTrainer(pl.LightningModule):
                 num_skipped_features=self.num_skipped_features).detach().cpu())
 
         if self.spread_active and fwd["z_xy"].numel() and self.latent_var_ref_y is not None:
+            ref_y = self.latent_var_ref_y.to(
+                device=fwd["z_xy"].device, dtype=fwd["z_xy"].dtype)
             out["spread"] = float(
-                self.latent_spread_fn(fwd["z_xy"], self.latent_var_ref_y).detach().cpu())
+                self.latent_spread_fn(fwd["z_xy"], ref_y).detach().cpu())
 
         return out
 

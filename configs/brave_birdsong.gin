@@ -1,25 +1,28 @@
 # Unconditional BRAVE on yt_birdsong (128-D, no Fader attributes).
 #
-# Same LMDB as the Fader birdsong run (PCEN + normalize):
+# Inherits silence-kept + RandomGain (−12…+6 dB relative) from brave.gin.
+#
+# Prefer a non-peak-norm LMDB with gain aug (matches live levels better):
+#   $BRAVE_STORAGE/yt_birdsong/preprocessed
+# Legacy Fader LMDB (PCEN + normalize) still works but fights gain robustness:
 #   $BRAVE_STORAGE/yt_birdsong/preprocessed_pcen
 #
 # Submit (recommended — avoids broken multiline sbatch --export):
 #   bash scripts/submit_yt_birdsong_train.sh
 #
-# Or export vars in your shell, then sbatch (must be ONE line for --export):
-#   export DB_PATH=$BRAVE_STORAGE/yt_birdsong/preprocessed_pcen
-#   export RUN_NAME=yt_birdsong_run
-#   export CONFIG=configs/brave_birdsong.gin
-#   export OUT_PATH=$BRAVE_STORAGE/yt_birdsong/runs
-#   unset CKPT WANDB_RUN_ID
-#   sbatch scripts/train.sbatch
+# Or inline env, then sbatch:
+#   DB_PATH=$BRAVE_STORAGE/yt_birdsong/preprocessed \
+#   RUN_NAME=yt_birdsong_silence_gain_run \
+#   CONFIG=configs/brave_birdsong.gin \
+#   OUT_PATH=$BRAVE_STORAGE/yt_birdsong/runs \
+#   sbatch --chdir=/data/hai-res/p1long/BRAVE scripts/train.sbatch
 #
 # Log: logs/train-<jobid>.log — check first lines for DB_PATH / RUN_NAME.
 #
 # After ~1.5M steps, export for Max/nn~:
 #   python scripts/export_model.py \
-#     --model $BRAVE_STORAGE/yt_birdsong/runs/yt_birdsong_run/best.ckpt \
-#     --output_dir $BRAVE_STORAGE/exports/yt_birdsong_run \
+#     --model $BRAVE_STORAGE/yt_birdsong/runs/yt_birdsong_silence_gain_run \
+#     --output_dir $BRAVE_STORAGE/exports/yt_birdsong_silence_gain_run \
 #     --host nn
 
 include "brave.gin"

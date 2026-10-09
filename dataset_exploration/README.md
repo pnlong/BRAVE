@@ -6,6 +6,7 @@ Helpers for turning external audio corpora into BRAVE / RAVE LMDB training pools
 |--------|--------|-----------------|
 | [FSD50K](https://annotator.freesound.org/fsd/release/fsd50k/) | [`fsd50k/`](fsd50k/) | MTG release (not on Zenodo) |
 | [4-way Tabla ISMIR 2021](https://zenodo.org/records/7110248) | [`tabla_ismir21/`](tabla_ismir21/) | [10.5281/zenodo.7110248](https://doi.org/10.5281/zenodo.7110248) |
+| [JSUT](https://sites.google.com/site/shinnosuketakamichi/publication/jsut) | [`jsut/`](jsut/) | shared: `/data/hai-res/shared/p1long/JSUT/jsut_ver1.1` |
 
 **Training** always uses vendored RAVE from the BRAVE root:
 

@@ -8,6 +8,7 @@ from rave import core
 from rave import blocks
 from rave import discriminator
 from rave import dataset
+from rave import transforms
 
 import cached_conv as cc
 import torch
@@ -42,6 +43,18 @@ dataset.split_dataset.max_residual = 1000
 dataset.maybe_reject_silent.enabled = False
 dataset.maybe_reject_silent.rms_db_threshold = -40.0
 dataset.maybe_reject_silent.max_tries = 16
+
+# Relative gain (train only; val skips gin augs). Matches the keep-silence
+# gain runs, e.g. tap_shotgun_uncond_run: every crop is shifted by a draw in
+# [−12, +6] dB. A quiet crop stays quieter than a loud one. The −12 dB end is
+# the extra quiet; near-silent gaps are still kept by maybe_reject_silent.
+# limit=True peak-normalizes only if the shift would exceed ±1.
+# Absolute RandomTargetLoudness (−60, −3) dBFS forced those gaps and the
+# texture crops into the same quiet band and is not used here.
+transforms.RandomGain.gain_range = (-12, 6)
+transforms.RandomGain.prob = 1.0
+transforms.RandomGain.limit = True
+dataset.get_dataset.augmentations = [@transforms.RandomGain()]
 
 # CONVOLUTION CONFIGURATION
 cc.Conv1d.bias = False
