@@ -1,0 +1,25 @@
+name: BraveRT engine smoke
+
+on:
+  push:
+    paths:
+      - "brave_rt/cpp/brave_rt/**"
+      - "brave_rt/ci/**"
+      - "brave_rt/testdata/**"
+      - ".github/workflows/brave_rt_engine.yml"
+  pull_request:
+    paths:
+      - "brave_rt/cpp/brave_rt/**"
+      - "brave_rt/ci/**"
+      - "brave_rt/testdata/**"
+      - ".github/workflows/brave_rt_engine.yml"
+
+jobs:
+  engine-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y cmake g++
+      - name: Engine smoke
+        run: bash brave_rt/ci/run_engine_smoke.sh
