@@ -216,6 +216,198 @@
           "has_sidechain": true
         }
       ]
+    },
+    {
+      "id": "asmr",
+      "label": "ASMR",
+      "clips": [
+        {
+          "id": "sm57-0",
+          "label": "SM57 (take 0)",
+          "files": {
+            "tap": "asmr/sm57-0/tap.mp3",
+            "phase1": "asmr/sm57-0/phase1.mp3",
+            "phase2": "asmr/sm57-0/phase2.mp3",
+            "phase3": "asmr/sm57-0/phase3.mp3",
+            "phase1_sc": "asmr/sm57-0/phase1_sc.mp3",
+            "phase2_sc": "asmr/sm57-0/phase2_sc.mp3",
+            "phase3_sc": "asmr/sm57-0/phase3_sc.mp3"
+          },
+          "has_sidechain": true
+        },
+        {
+          "id": "Shotgun-tapping_11",
+          "label": "Shotgun \u2014 tapping",
+          "files": {
+            "tap": "asmr/Shotgun-tapping_11/tap.mp3",
+            "phase1": "asmr/Shotgun-tapping_11/phase1.mp3",
+            "phase2": "asmr/Shotgun-tapping_11/phase2.mp3",
+            "phase3": "asmr/Shotgun-tapping_11/phase3.mp3",
+            "phase1_sc": "asmr/Shotgun-tapping_11/phase1_sc.mp3",
+            "phase2_sc": "asmr/Shotgun-tapping_11/phase2_sc.mp3",
+            "phase3_sc": "asmr/Shotgun-tapping_11/phase3_sc.mp3"
+          },
+          "has_sidechain": true
+        },
+        {
+          "id": "Contact_Mic_L-moanin",
+          "label": "Contact mic \u2014 Moanin'",
+          "files": {
+            "tap": "asmr/Contact_Mic_L-moanin/tap.mp3",
+            "phase1": "asmr/Contact_Mic_L-moanin/phase1.mp3",
+            "phase2": "asmr/Contact_Mic_L-moanin/phase2.mp3",
+            "phase3": "asmr/Contact_Mic_L-moanin/phase3.mp3",
+            "phase1_sc": "asmr/Contact_Mic_L-moanin/phase1_sc.mp3",
+            "phase2_sc": "asmr/Contact_Mic_L-moanin/phase2_sc.mp3",
+            "phase3_sc": "asmr/Contact_Mic_L-moanin/phase3_sc.mp3"
+          },
+          "has_sidechain": true
+        }
+      ]
+    },
+    {
+      "id": "mouth_sounds",
+      "label": "Mouth Sounds",
+      "clips": [
+        {
+          "id": "sm57-0",
+          "label": "SM57 (take 0)",
+          "files": {
+            "tap": "mouth_sounds/sm57-0/tap.mp3",
+            "phase1": "mouth_sounds/sm57-0/phase1.mp3",
+            "phase2": "mouth_sounds/sm57-0/phase2.mp3",
+            "phase3": "mouth_sounds/sm57-0/phase3.mp3",
+            "phase1_sc": "mouth_sounds/sm57-0/phase1_sc.mp3",
+            "phase2_sc": "mouth_sounds/sm57-0/phase2_sc.mp3",
+            "phase3_sc": "mouth_sounds/sm57-0/phase3_sc.mp3"
+          },
+          "has_sidechain": true
+        },
+        {
+          "id": "Shotgun-tapping_11",
+          "label": "Shotgun \u2014 tapping",
+          "files": {
+            "tap": "mouth_sounds/Shotgun-tapping_11/tap.mp3",
+            "phase1": "mouth_sounds/Shotgun-tapping_11/phase1.mp3",
+            "phase2": "mouth_sounds/Shotgun-tapping_11/phase2.mp3",
+            "phase3": "mouth_sounds/Shotgun-tapping_11/phase3.mp3",
+            "phase1_sc": "mouth_sounds/Shotgun-tapping_11/phase1_sc.mp3",
+            "phase2_sc": "mouth_sounds/Shotgun-tapping_11/phase2_sc.mp3",
+            "phase3_sc": "mouth_sounds/Shotgun-tapping_11/phase3_sc.mp3"
+          },
+          "has_sidechain": true
+        },
+        {
+          "id": "Contact_Mic_L-moanin",
+          "label": "Contact mic \u2014 Moanin'",
+          "files": {
+            "tap": "mouth_sounds/Contact_Mic_L-moanin/tap.mp3",
+            "phase1": "mouth_sounds/Contact_Mic_L-moanin/phase1.mp3",
+            "phase2": "mouth_sounds/Contact_Mic_L-moanin/phase2.mp3",
+            "phase3": "mouth_sounds/Contact_Mic_L-moanin/phase3.mp3",
+            "phase1_sc": "mouth_sounds/Contact_Mic_L-moanin/phase1_sc.mp3",
+            "phase2_sc": "mouth_sounds/Contact_Mic_L-moanin/phase2_sc.mp3",
+            "phase3_sc": "mouth_sounds/Contact_Mic_L-moanin/phase3_sc.mp3"
+          },
+          "has_sidechain": true
+        }
+      ]
+    },
+    {
+      "id": "vctk",
+      "label": "VCTK (speech)",
+      "clips": [
+        {
+          "id": "sm57-0",
+          "label": "SM57 (take 0)",
+          "files": {
+            "tap": "vctk/sm57-0/tap.mp3",
+            "phase1": "vctk/sm57-0/phase1.mp3",
+            "phase2": "vctk/sm57-0/phase2.mp3",
+            "phase3": "vctk/sm57-0/phase3.mp3",
+            "phase1_sc": "vctk/sm57-0/phase1_sc.mp3",
+            "phase2_sc": "vctk/sm57-0/phase2_sc.mp3",
+            "phase3_sc": "vctk/sm57-0/phase3_sc.mp3"
+          },
+          "has_sidechain": true
+        },
+        {
+          "id": "Shotgun-tapping_11",
+          "label": "Shotgun \u2014 tapping",
+          "files": {
+            "tap": "vctk/Shotgun-tapping_11/tap.mp3",
+            "phase1": "vctk/Shotgun-tapping_11/phase1.mp3",
+            "phase2": "vctk/Shotgun-tapping_11/phase2.mp3",
+            "phase3": "vctk/Shotgun-tapping_11/phase3.mp3",
+            "phase1_sc": "vctk/Shotgun-tapping_11/phase1_sc.mp3",
+            "phase2_sc": "vctk/Shotgun-tapping_11/phase2_sc.mp3",
+            "phase3_sc": "vctk/Shotgun-tapping_11/phase3_sc.mp3"
+          },
+          "has_sidechain": true
+        },
+        {
+          "id": "Contact_Mic_L-moanin",
+          "label": "Contact mic \u2014 Moanin'",
+          "files": {
+            "tap": "vctk/Contact_Mic_L-moanin/tap.mp3",
+            "phase1": "vctk/Contact_Mic_L-moanin/phase1.mp3",
+            "phase2": "vctk/Contact_Mic_L-moanin/phase2.mp3",
+            "phase3": "vctk/Contact_Mic_L-moanin/phase3.mp3",
+            "phase1_sc": "vctk/Contact_Mic_L-moanin/phase1_sc.mp3",
+            "phase2_sc": "vctk/Contact_Mic_L-moanin/phase2_sc.mp3",
+            "phase3_sc": "vctk/Contact_Mic_L-moanin/phase3_sc.mp3"
+          },
+          "has_sidechain": true
+        }
+      ]
+    },
+    {
+      "id": "tabla",
+      "label": "Tabla",
+      "clips": [
+        {
+          "id": "sm57-0",
+          "label": "SM57 (take 0)",
+          "files": {
+            "tap": "tabla/sm57-0/tap.mp3",
+            "phase1": "tabla/sm57-0/phase1.mp3",
+            "phase2": "tabla/sm57-0/phase2.mp3",
+            "phase3": "tabla/sm57-0/phase3.mp3",
+            "phase1_sc": "tabla/sm57-0/phase1_sc.mp3",
+            "phase2_sc": "tabla/sm57-0/phase2_sc.mp3",
+            "phase3_sc": "tabla/sm57-0/phase3_sc.mp3"
+          },
+          "has_sidechain": true
+        },
+        {
+          "id": "Shotgun-tapping_11",
+          "label": "Shotgun \u2014 tapping",
+          "files": {
+            "tap": "tabla/Shotgun-tapping_11/tap.mp3",
+            "phase1": "tabla/Shotgun-tapping_11/phase1.mp3",
+            "phase2": "tabla/Shotgun-tapping_11/phase2.mp3",
+            "phase3": "tabla/Shotgun-tapping_11/phase3.mp3",
+            "phase1_sc": "tabla/Shotgun-tapping_11/phase1_sc.mp3",
+            "phase2_sc": "tabla/Shotgun-tapping_11/phase2_sc.mp3",
+            "phase3_sc": "tabla/Shotgun-tapping_11/phase3_sc.mp3"
+          },
+          "has_sidechain": true
+        },
+        {
+          "id": "Contact_Mic_L-moanin",
+          "label": "Contact mic \u2014 Moanin'",
+          "files": {
+            "tap": "tabla/Contact_Mic_L-moanin/tap.mp3",
+            "phase1": "tabla/Contact_Mic_L-moanin/phase1.mp3",
+            "phase2": "tabla/Contact_Mic_L-moanin/phase2.mp3",
+            "phase3": "tabla/Contact_Mic_L-moanin/phase3.mp3",
+            "phase1_sc": "tabla/Contact_Mic_L-moanin/phase1_sc.mp3",
+            "phase2_sc": "tabla/Contact_Mic_L-moanin/phase2_sc.mp3",
+            "phase3_sc": "tabla/Contact_Mic_L-moanin/phase3_sc.mp3"
+          },
+          "has_sidechain": true
+        }
+      ]
     }
   ]
 }

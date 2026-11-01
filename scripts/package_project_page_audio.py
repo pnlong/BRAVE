@@ -48,6 +48,10 @@ DOMAIN_LABELS = {
     "fire_crackling": "Fire Crackling",
     "birds_chirping": "Birds Chirping",
     "rain_sounds": "Rain Sounds",
+    "asmr": "ASMR",
+    "mouth_sounds": "Mouth Sounds",
+    "vctk": "VCTK (speech)",
+    "tabla": "Tabla",
 }
 
 CLIP_LABELS = {

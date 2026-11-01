@@ -102,6 +102,51 @@ PHASE2_PRESETS: Dict[str, Dict[str, object]] = {
         "comb_fb_logits": [-2.0, -2.0, -2.0, -2.0],
         "ap_logits": [-2.0, -2.0],
     },
+    "asmr": {
+        "intent": "Close-mic intimacy, soft HF",
+        "eq_gains_db": [2.0, 1.0, 0.0, 1.0, 3.0, 2.0],
+        "wet_logit": -1.0,
+        "comb_fb_logits": [0.2, 0.2, 0.2, 0.2],
+        "ap_logits": [0.0, 0.0],
+    },
+    "mouth_sounds": {
+        "intent": "Dry, mid/HF articulation",
+        "eq_gains_db": [-1.0, 0.0, 2.0, 4.0, 5.0, 3.0],
+        "wet_logit": -3.5,
+        "comb_fb_logits": [-1.5, -1.5, -1.5, -1.5],
+        "ap_logits": [-1.0, -1.0],
+    },
+    "vctk": {
+        "intent": "Speech booth: gentle presence, little room",
+        "eq_gains_db": [1.0, 0.0, 1.0, 3.0, 2.0, -1.0],
+        "wet_logit": -2.5,
+        "comb_fb_logits": [-0.5, -0.5, -0.5, -0.5],
+        "ap_logits": [-0.5, -0.5],
+    },
+    "tabla": {
+        "intent": "Percussive attack, mid body, short room",
+        "eq_gains_db": [3.0, 2.0, 1.0, 0.0, -1.0, -2.0],
+        "wet_logit": -1.5,
+        "comb_fb_logits": [0.0, 0.0, 0.0, 0.0],
+        "ap_logits": [-0.5, -0.5],
+    },
+}
+
+# Domains whose datasets live outside yt_playlists/<domain>/.
+DOMAIN_ROOT_OVERRIDES: Dict[str, Path] = {
+    "vctk": BRAVE_STORAGE / "vctk",
+    "tabla": BRAVE_STORAGE / "tabla_ismir21",
+    "tabla_ismir21": BRAVE_STORAGE / "tabla_ismir21",
+}
+
+# Run-name prefixes when they differ from the page domain id.
+DOMAIN_Y_NAME_ALIASES: Dict[str, Tuple[str, ...]] = {
+    "tabla": ("tabla_ismir21", "tabla"),
+    "tabla_ismir21": ("tabla_ismir21", "tabla"),
+}
+DOMAIN_CYCLE_NAME_ALIASES: Dict[str, Tuple[str, ...]] = {
+    "tabla": ("tabla", "tabla_ismir21"),
+    "tabla_ismir21": ("tabla", "tabla_ismir21"),
 }
 
 
@@ -289,24 +334,29 @@ def rev_knob_vector(preset: Dict[str, object]) -> List[float]:
     return [wet, *comb, *ap]
 
 
-def _resolve_y_ckpt(playlists_root: Path, domain: str) -> Path:
-    candidates = [
-        playlists_root
-        / domain
-        / "runs"
-        / f"{domain}_foundation_y_70d386ede1"
-        / "epoch_1500000.ckpt",
-        playlists_root
-        / domain
-        / "runs"
-        / f"{domain}_foundation_y_42be05bb98"
-        / "epoch_1500000.ckpt",
-        playlists_root
-        / domain
-        / "runs"
-        / f"{domain}_run_8e1e614287"
-        / "epoch_1500000.ckpt",
-    ]
+def domain_data_root(playlists_root: Path, domain: str) -> Path:
+    return DOMAIN_ROOT_OVERRIDES.get(domain, playlists_root / domain)
+
+
+def _y_name_candidates(domain: str) -> Tuple[str, ...]:
+    return DOMAIN_Y_NAME_ALIASES.get(domain, (domain,))
+
+
+def _cycle_name_candidates(domain: str) -> Tuple[str, ...]:
+    return DOMAIN_CYCLE_NAME_ALIASES.get(domain, (domain,))
+
+
+def _resolve_y_ckpt(domain_root: Path, domain: str) -> Path:
+    hashes = ("70d386ede1", "42be05bb98")
+    candidates: List[Path] = []
+    for name in _y_name_candidates(domain):
+        for h in hashes:
+            candidates.append(
+                domain_root / "runs" / f"{name}_foundation_y_{h}" / "epoch_1500000.ckpt"
+            )
+        candidates.append(
+            domain_root / "runs" / f"{name}_run_8e1e614287" / "epoch_1500000.ckpt"
+        )
     for path in candidates:
         if path.is_file():
             return path
@@ -317,29 +367,29 @@ def _resolve_y_ckpt(playlists_root: Path, domain: str) -> Path:
 
 
 def _resolve_cycle_ckpt(
-    playlists_root: Path,
+    domain_root: Path,
     domain: str,
     preferred_hash: str,
     fallback_hashes: Sequence[str],
 ) -> Path:
     hashes = [preferred_hash, *[h for h in fallback_hashes if h != preferred_hash]]
-    patterns = [
-        "tap_fx_sc_{domain}_wf_cyc_mlp2_{hash}",
-        "tap_{domain}_wf_cyc_mlp2_{hash}",
-    ]
+    patterns = (
+        "tap_fx_sc_{name}_wf_cyc_mlp2_{hash}",
+        "tap_{name}_wf_cyc_mlp2_{hash}",
+    )
     tried: List[Path] = []
-    for h in hashes:
-        for pat in patterns:
-            path = (
-                playlists_root
-                / domain
-                / "runs"
-                / pat.format(domain=domain, hash=h)
-                / "cyclegan_latent.ckpt"
-            )
-            tried.append(path)
-            if path.is_file():
-                return path
+    for name in _cycle_name_candidates(domain):
+        for h in hashes:
+            for pat in patterns:
+                path = (
+                    domain_root
+                    / "runs"
+                    / pat.format(name=name, hash=h)
+                    / "cyclegan_latent.ckpt"
+                )
+                tried.append(path)
+                if path.is_file():
+                    return path
     raise FileNotFoundError(
         f"no CycleGAN ckpt for {domain}; tried: " + ", ".join(str(p) for p in tried)
     )
@@ -351,11 +401,12 @@ def domain_paths(
     cyclegan_hash: str,
     cyclegan_hash_fallback: Sequence[str] = (),
 ) -> Tuple[Path, Path, Path]:
-    y_ckpt = _resolve_y_ckpt(playlists_root, domain)
+    root = domain_data_root(playlists_root, domain)
+    y_ckpt = _resolve_y_ckpt(root, domain)
     cycle_ckpt = _resolve_cycle_ckpt(
-        playlists_root, domain, cyclegan_hash, cyclegan_hash_fallback
+        root, domain, cyclegan_hash, cyclegan_hash_fallback
     )
-    db_path = playlists_root / domain / "preprocessed"
+    db_path = root / "preprocessed"
     return y_ckpt, cycle_ckpt, db_path
 
 
