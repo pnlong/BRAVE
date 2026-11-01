@@ -182,10 +182,10 @@ def list_clip_dirs(
 
     def sort_key(p: Path) -> tuple:
         name = p.name.lower()
-        # SM57 → shotgun → contact on the page.
-        if name.startswith("sm57") or name in {"0", "1"}:
-            return (0, name)
+        # Shotgun first (page default), then SM57, then contact.
         if name.startswith("shotgun"):
+            return (0, name)
+        if name.startswith("sm57") or name in {"0", "1"}:
             return (1, name)
         return (2, name)
 

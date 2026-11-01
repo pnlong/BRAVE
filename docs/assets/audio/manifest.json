@@ -30,20 +30,6 @@
       "label": "Babbling Brook",
       "clips": [
         {
-          "id": "sm57-0",
-          "label": "SM57 (take 0)",
-          "files": {
-            "tap": "babbling_brook/sm57-0/tap.mp3",
-            "phase1": "babbling_brook/sm57-0/phase1.mp3",
-            "phase2": "babbling_brook/sm57-0/phase2.mp3",
-            "phase3": "babbling_brook/sm57-0/phase3.mp3",
-            "phase1_sc": "babbling_brook/sm57-0/phase1_sc.mp3",
-            "phase2_sc": "babbling_brook/sm57-0/phase2_sc.mp3",
-            "phase3_sc": "babbling_brook/sm57-0/phase3_sc.mp3"
-          },
-          "has_sidechain": true
-        },
-        {
           "id": "Shotgun-heavy_3",
           "label": "Shotgun \u2014 heavy",
           "files": {
@@ -54,6 +40,20 @@
             "phase1_sc": "babbling_brook/Shotgun-heavy_3/phase1_sc.mp3",
             "phase2_sc": "babbling_brook/Shotgun-heavy_3/phase2_sc.mp3",
             "phase3_sc": "babbling_brook/Shotgun-heavy_3/phase3_sc.mp3"
+          },
+          "has_sidechain": true
+        },
+        {
+          "id": "sm57-0",
+          "label": "SM57 (take 0)",
+          "files": {
+            "tap": "babbling_brook/sm57-0/tap.mp3",
+            "phase1": "babbling_brook/sm57-0/phase1.mp3",
+            "phase2": "babbling_brook/sm57-0/phase2.mp3",
+            "phase3": "babbling_brook/sm57-0/phase3.mp3",
+            "phase1_sc": "babbling_brook/sm57-0/phase1_sc.mp3",
+            "phase2_sc": "babbling_brook/sm57-0/phase2_sc.mp3",
+            "phase3_sc": "babbling_brook/sm57-0/phase3_sc.mp3"
           },
           "has_sidechain": true
         },
@@ -78,20 +78,6 @@
       "label": "Fire Crackling",
       "clips": [
         {
-          "id": "sm57-0",
-          "label": "SM57 (take 0)",
-          "files": {
-            "tap": "fire_crackling/sm57-0/tap.mp3",
-            "phase1": "fire_crackling/sm57-0/phase1.mp3",
-            "phase2": "fire_crackling/sm57-0/phase2.mp3",
-            "phase3": "fire_crackling/sm57-0/phase3.mp3",
-            "phase1_sc": "fire_crackling/sm57-0/phase1_sc.mp3",
-            "phase2_sc": "fire_crackling/sm57-0/phase2_sc.mp3",
-            "phase3_sc": "fire_crackling/sm57-0/phase3_sc.mp3"
-          },
-          "has_sidechain": true
-        },
-        {
           "id": "Shotgun-heavy_3",
           "label": "Shotgun \u2014 heavy",
           "files": {
@@ -102,6 +88,20 @@
             "phase1_sc": "fire_crackling/Shotgun-heavy_3/phase1_sc.mp3",
             "phase2_sc": "fire_crackling/Shotgun-heavy_3/phase2_sc.mp3",
             "phase3_sc": "fire_crackling/Shotgun-heavy_3/phase3_sc.mp3"
+          },
+          "has_sidechain": true
+        },
+        {
+          "id": "sm57-0",
+          "label": "SM57 (take 0)",
+          "files": {
+            "tap": "fire_crackling/sm57-0/tap.mp3",
+            "phase1": "fire_crackling/sm57-0/phase1.mp3",
+            "phase2": "fire_crackling/sm57-0/phase2.mp3",
+            "phase3": "fire_crackling/sm57-0/phase3.mp3",
+            "phase1_sc": "fire_crackling/sm57-0/phase1_sc.mp3",
+            "phase2_sc": "fire_crackling/sm57-0/phase2_sc.mp3",
+            "phase3_sc": "fire_crackling/sm57-0/phase3_sc.mp3"
           },
           "has_sidechain": true
         },
@@ -126,20 +126,6 @@
       "label": "Birds Chirping",
       "clips": [
         {
-          "id": "sm57-0",
-          "label": "SM57 (take 0)",
-          "files": {
-            "tap": "birds_chirping/sm57-0/tap.mp3",
-            "phase1": "birds_chirping/sm57-0/phase1.mp3",
-            "phase2": "birds_chirping/sm57-0/phase2.mp3",
-            "phase3": "birds_chirping/sm57-0/phase3.mp3",
-            "phase1_sc": "birds_chirping/sm57-0/phase1_sc.mp3",
-            "phase2_sc": "birds_chirping/sm57-0/phase2_sc.mp3",
-            "phase3_sc": "birds_chirping/sm57-0/phase3_sc.mp3"
-          },
-          "has_sidechain": true
-        },
-        {
           "id": "Shotgun-heavy_3",
           "label": "Shotgun \u2014 heavy",
           "files": {
@@ -150,6 +136,20 @@
             "phase1_sc": "birds_chirping/Shotgun-heavy_3/phase1_sc.mp3",
             "phase2_sc": "birds_chirping/Shotgun-heavy_3/phase2_sc.mp3",
             "phase3_sc": "birds_chirping/Shotgun-heavy_3/phase3_sc.mp3"
+          },
+          "has_sidechain": true
+        },
+        {
+          "id": "sm57-0",
+          "label": "SM57 (take 0)",
+          "files": {
+            "tap": "birds_chirping/sm57-0/tap.mp3",
+            "phase1": "birds_chirping/sm57-0/phase1.mp3",
+            "phase2": "birds_chirping/sm57-0/phase2.mp3",
+            "phase3": "birds_chirping/sm57-0/phase3.mp3",
+            "phase1_sc": "birds_chirping/sm57-0/phase1_sc.mp3",
+            "phase2_sc": "birds_chirping/sm57-0/phase2_sc.mp3",
+            "phase3_sc": "birds_chirping/sm57-0/phase3_sc.mp3"
           },
           "has_sidechain": true
         },
@@ -174,20 +174,6 @@
       "label": "Rain Sounds",
       "clips": [
         {
-          "id": "sm57-0",
-          "label": "SM57 (take 0)",
-          "files": {
-            "tap": "rain_sounds/sm57-0/tap.mp3",
-            "phase1": "rain_sounds/sm57-0/phase1.mp3",
-            "phase2": "rain_sounds/sm57-0/phase2.mp3",
-            "phase3": "rain_sounds/sm57-0/phase3.mp3",
-            "phase1_sc": "rain_sounds/sm57-0/phase1_sc.mp3",
-            "phase2_sc": "rain_sounds/sm57-0/phase2_sc.mp3",
-            "phase3_sc": "rain_sounds/sm57-0/phase3_sc.mp3"
-          },
-          "has_sidechain": true
-        },
-        {
           "id": "Shotgun-heavy_3",
           "label": "Shotgun \u2014 heavy",
           "files": {
@@ -198,6 +184,20 @@
             "phase1_sc": "rain_sounds/Shotgun-heavy_3/phase1_sc.mp3",
             "phase2_sc": "rain_sounds/Shotgun-heavy_3/phase2_sc.mp3",
             "phase3_sc": "rain_sounds/Shotgun-heavy_3/phase3_sc.mp3"
+          },
+          "has_sidechain": true
+        },
+        {
+          "id": "sm57-0",
+          "label": "SM57 (take 0)",
+          "files": {
+            "tap": "rain_sounds/sm57-0/tap.mp3",
+            "phase1": "rain_sounds/sm57-0/phase1.mp3",
+            "phase2": "rain_sounds/sm57-0/phase2.mp3",
+            "phase3": "rain_sounds/sm57-0/phase3.mp3",
+            "phase1_sc": "rain_sounds/sm57-0/phase1_sc.mp3",
+            "phase2_sc": "rain_sounds/sm57-0/phase2_sc.mp3",
+            "phase3_sc": "rain_sounds/sm57-0/phase3_sc.mp3"
           },
           "has_sidechain": true
         },
@@ -222,20 +222,6 @@
       "label": "ASMR",
       "clips": [
         {
-          "id": "sm57-0",
-          "label": "SM57 (take 0)",
-          "files": {
-            "tap": "asmr/sm57-0/tap.mp3",
-            "phase1": "asmr/sm57-0/phase1.mp3",
-            "phase2": "asmr/sm57-0/phase2.mp3",
-            "phase3": "asmr/sm57-0/phase3.mp3",
-            "phase1_sc": "asmr/sm57-0/phase1_sc.mp3",
-            "phase2_sc": "asmr/sm57-0/phase2_sc.mp3",
-            "phase3_sc": "asmr/sm57-0/phase3_sc.mp3"
-          },
-          "has_sidechain": true
-        },
-        {
           "id": "Shotgun-heavy_3",
           "label": "Shotgun \u2014 heavy",
           "files": {
@@ -246,6 +232,20 @@
             "phase1_sc": "asmr/Shotgun-heavy_3/phase1_sc.mp3",
             "phase2_sc": "asmr/Shotgun-heavy_3/phase2_sc.mp3",
             "phase3_sc": "asmr/Shotgun-heavy_3/phase3_sc.mp3"
+          },
+          "has_sidechain": true
+        },
+        {
+          "id": "sm57-0",
+          "label": "SM57 (take 0)",
+          "files": {
+            "tap": "asmr/sm57-0/tap.mp3",
+            "phase1": "asmr/sm57-0/phase1.mp3",
+            "phase2": "asmr/sm57-0/phase2.mp3",
+            "phase3": "asmr/sm57-0/phase3.mp3",
+            "phase1_sc": "asmr/sm57-0/phase1_sc.mp3",
+            "phase2_sc": "asmr/sm57-0/phase2_sc.mp3",
+            "phase3_sc": "asmr/sm57-0/phase3_sc.mp3"
           },
           "has_sidechain": true
         },
@@ -270,20 +270,6 @@
       "label": "Mouth Sounds",
       "clips": [
         {
-          "id": "sm57-0",
-          "label": "SM57 (take 0)",
-          "files": {
-            "tap": "mouth_sounds/sm57-0/tap.mp3",
-            "phase1": "mouth_sounds/sm57-0/phase1.mp3",
-            "phase2": "mouth_sounds/sm57-0/phase2.mp3",
-            "phase3": "mouth_sounds/sm57-0/phase3.mp3",
-            "phase1_sc": "mouth_sounds/sm57-0/phase1_sc.mp3",
-            "phase2_sc": "mouth_sounds/sm57-0/phase2_sc.mp3",
-            "phase3_sc": "mouth_sounds/sm57-0/phase3_sc.mp3"
-          },
-          "has_sidechain": true
-        },
-        {
           "id": "Shotgun-heavy_3",
           "label": "Shotgun \u2014 heavy",
           "files": {
@@ -294,6 +280,20 @@
             "phase1_sc": "mouth_sounds/Shotgun-heavy_3/phase1_sc.mp3",
             "phase2_sc": "mouth_sounds/Shotgun-heavy_3/phase2_sc.mp3",
             "phase3_sc": "mouth_sounds/Shotgun-heavy_3/phase3_sc.mp3"
+          },
+          "has_sidechain": true
+        },
+        {
+          "id": "sm57-0",
+          "label": "SM57 (take 0)",
+          "files": {
+            "tap": "mouth_sounds/sm57-0/tap.mp3",
+            "phase1": "mouth_sounds/sm57-0/phase1.mp3",
+            "phase2": "mouth_sounds/sm57-0/phase2.mp3",
+            "phase3": "mouth_sounds/sm57-0/phase3.mp3",
+            "phase1_sc": "mouth_sounds/sm57-0/phase1_sc.mp3",
+            "phase2_sc": "mouth_sounds/sm57-0/phase2_sc.mp3",
+            "phase3_sc": "mouth_sounds/sm57-0/phase3_sc.mp3"
           },
           "has_sidechain": true
         },
@@ -318,20 +318,6 @@
       "label": "VCTK (speech)",
       "clips": [
         {
-          "id": "sm57-0",
-          "label": "SM57 (take 0)",
-          "files": {
-            "tap": "vctk/sm57-0/tap.mp3",
-            "phase1": "vctk/sm57-0/phase1.mp3",
-            "phase2": "vctk/sm57-0/phase2.mp3",
-            "phase3": "vctk/sm57-0/phase3.mp3",
-            "phase1_sc": "vctk/sm57-0/phase1_sc.mp3",
-            "phase2_sc": "vctk/sm57-0/phase2_sc.mp3",
-            "phase3_sc": "vctk/sm57-0/phase3_sc.mp3"
-          },
-          "has_sidechain": true
-        },
-        {
           "id": "Shotgun-heavy_3",
           "label": "Shotgun \u2014 heavy",
           "files": {
@@ -342,6 +328,20 @@
             "phase1_sc": "vctk/Shotgun-heavy_3/phase1_sc.mp3",
             "phase2_sc": "vctk/Shotgun-heavy_3/phase2_sc.mp3",
             "phase3_sc": "vctk/Shotgun-heavy_3/phase3_sc.mp3"
+          },
+          "has_sidechain": true
+        },
+        {
+          "id": "sm57-0",
+          "label": "SM57 (take 0)",
+          "files": {
+            "tap": "vctk/sm57-0/tap.mp3",
+            "phase1": "vctk/sm57-0/phase1.mp3",
+            "phase2": "vctk/sm57-0/phase2.mp3",
+            "phase3": "vctk/sm57-0/phase3.mp3",
+            "phase1_sc": "vctk/sm57-0/phase1_sc.mp3",
+            "phase2_sc": "vctk/sm57-0/phase2_sc.mp3",
+            "phase3_sc": "vctk/sm57-0/phase3_sc.mp3"
           },
           "has_sidechain": true
         },
@@ -366,20 +366,6 @@
       "label": "Tabla",
       "clips": [
         {
-          "id": "sm57-0",
-          "label": "SM57 (take 0)",
-          "files": {
-            "tap": "tabla/sm57-0/tap.mp3",
-            "phase1": "tabla/sm57-0/phase1.mp3",
-            "phase2": "tabla/sm57-0/phase2.mp3",
-            "phase3": "tabla/sm57-0/phase3.mp3",
-            "phase1_sc": "tabla/sm57-0/phase1_sc.mp3",
-            "phase2_sc": "tabla/sm57-0/phase2_sc.mp3",
-            "phase3_sc": "tabla/sm57-0/phase3_sc.mp3"
-          },
-          "has_sidechain": true
-        },
-        {
           "id": "Shotgun-heavy_3",
           "label": "Shotgun \u2014 heavy",
           "files": {
@@ -390,6 +376,20 @@
             "phase1_sc": "tabla/Shotgun-heavy_3/phase1_sc.mp3",
             "phase2_sc": "tabla/Shotgun-heavy_3/phase2_sc.mp3",
             "phase3_sc": "tabla/Shotgun-heavy_3/phase3_sc.mp3"
+          },
+          "has_sidechain": true
+        },
+        {
+          "id": "sm57-0",
+          "label": "SM57 (take 0)",
+          "files": {
+            "tap": "tabla/sm57-0/tap.mp3",
+            "phase1": "tabla/sm57-0/phase1.mp3",
+            "phase2": "tabla/sm57-0/phase2.mp3",
+            "phase3": "tabla/sm57-0/phase3.mp3",
+            "phase1_sc": "tabla/sm57-0/phase1_sc.mp3",
+            "phase2_sc": "tabla/sm57-0/phase2_sc.mp3",
+            "phase3_sc": "tabla/sm57-0/phase3_sc.mp3"
           },
           "has_sidechain": true
         },

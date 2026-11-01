@@ -118,9 +118,16 @@
     setStatus(`${domain.label} · ${clip.label}${clipHasSc ? scNote : ""}`);
   }
 
+  function preferredClipId(domain) {
+    const shotgun = domain.clips.find((c) =>
+      String(c.id).toLowerCase().startsWith("shotgun")
+    );
+    return shotgun?.id || domain.clips[0]?.id;
+  }
+
   function onDomainChange() {
     const domain = currentDomain();
-    fillSelect(clipSelect, domain.clips, domain.clips[0]?.id);
+    fillSelect(clipSelect, domain.clips, preferredClipId(domain));
     renderPlayers();
   }
 
