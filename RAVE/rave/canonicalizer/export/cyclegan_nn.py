@@ -1,4 +1,8 @@
-"""nn~ export: Enc_X → W_xy → Dec_Y (CycleGAN X→Y timbre transfer)."""
+"""nn~ export for CycleGAN timbre transfer.
+
+``export_cyclegan_nn`` writes Enc_X → W_xy → Dec_Y.
+``export_cyclegan_yx_nn`` writes Enc_Y → W_yx → Dec_X from the same checkpoint.
+"""
 
 from __future__ import annotations
 
@@ -68,13 +72,13 @@ def _remove_weight_norm(module: nn.Module) -> None:
             nn.utils.remove_weight_norm(m)
 
 
-def load_cyclegan_xy_for_export(
+def load_cyclegan_pair_for_export(
     ckpt_path: Union[str, Path],
     *,
     n_channels: int = 1,
     streaming: bool = True,
 ):
-    """Load Enc_X, Dec_Y, and W_xy from a ``cyclegan_latent.ckpt``.
+    """Load both frozen backbones and both warps from ``cyclegan_latent.ckpt``.
 
     Joint geometry (``shared_backbone`` / ``geometry=joint``) loads the AE once
     and reuses it for Enc and Dec.
@@ -100,20 +104,43 @@ def load_cyclegan_xy_for_export(
     else:
         backbone_y = _load_backbone(
             manifest.backbone_y_config, manifest.backbone_y_ckpt, n_channels)
-    warp_xy, _warp_yx = build_cyclegan_warps(
+    warp_xy, warp_yx = build_cyclegan_warps(
         manifest,
         backbone_x=backbone_x,
         backbone_y=backbone_y,
         warp_xy_state=warp_xy_state,
         warp_yx_state=warp_yx_state,
     )
-    warp_xy.eval()
-    for p in warp_xy.parameters():
-        p.requires_grad = False
+    for warp in (warp_xy, warp_yx):
+        warp.eval()
+        for p in warp.parameters():
+            p.requires_grad = False
     _remove_weight_norm(backbone_x)
     if backbone_y is not backbone_x:
         _remove_weight_norm(backbone_y)
+    return backbone_x, backbone_y, warp_xy, warp_yx, manifest
+
+
+def load_cyclegan_xy_for_export(
+    ckpt_path: Union[str, Path],
+    *,
+    n_channels: int = 1,
+    streaming: bool = True,
+):
+    """Load Enc_X, Dec_Y, and W_xy from a ``cyclegan_latent.ckpt``."""
+    backbone_x, backbone_y, warp_xy, _warp_yx, manifest = load_cyclegan_pair_for_export(
+        ckpt_path, n_channels=n_channels, streaming=streaming)
     return backbone_x, backbone_y, warp_xy, manifest
+
+
+def scripted_cyclegan_yx(backbone_x, backbone_y, warp_yx) -> "ScriptedCycleGANXY":
+    """Enc_Y → W_yx → Dec_X.
+
+    ``ScriptedCycleGANXY`` is Enc(first) → warp → Dec(second). Passing the
+    Y backbone first and ``W_yx`` is the return graph; attribute names inside
+    the module stay ``pqmf_x`` / ``warp_xy`` and refer to the input side.
+    """
+    return ScriptedCycleGANXY(backbone_y, backbone_x, warp_yx)
 
 
 class ScriptedCycleGANXY(nn_tilde.Module):
@@ -234,27 +261,13 @@ class ScriptedCycleGANXY(nn_tilde.Module):
         return y
 
 
-def export_cyclegan_nn(
-    ckpt_path: Union[str, Path],
-    output_ts: Union[str, Path],
-    *,
-    n_channels: int = 1,
-    streaming: bool = True,
+def _write_scripted_cyclegan(
+    scripted: nn.Module,
+    ckpt_path: Path,
+    output_ts: Path,
+    manifest,
 ) -> Path:
-    """Write a streaming ``model.ts`` for CycleGAN X→Y transfer."""
-    ckpt_path = Path(ckpt_path)
-    output_ts = Path(output_ts)
     output_ts.parent.mkdir(parents=True, exist_ok=True)
-
-    backbone_x, backbone_y, warp_xy, manifest = load_cyclegan_xy_for_export(
-        ckpt_path, n_channels=n_channels, streaming=streaming)
-    geometry = getattr(manifest, "geometry", "separate")
-    _log.info(
-        "CycleGAN X→Y export geometry=%s shared_backbone=%s",
-        geometry,
-        getattr(manifest, "shared_backbone", False),
-    )
-    scripted = ScriptedCycleGANXY(backbone_x, backbone_y, warp_xy)
     x = torch.zeros(1, scripted.n_channels, 2**14)
     y = scripted(x)
     if y.shape[-1] == 0:
@@ -276,3 +289,45 @@ def export_cyclegan_nn(
         )
     _log.info("CycleGAN nn~ export: %s", output_ts)
     return output_ts
+
+
+def export_cyclegan_nn(
+    ckpt_path: Union[str, Path],
+    output_ts: Union[str, Path],
+    *,
+    n_channels: int = 1,
+    streaming: bool = True,
+) -> Path:
+    """Write a streaming ``model.ts`` for CycleGAN X→Y transfer."""
+    ckpt_path = Path(ckpt_path)
+    output_ts = Path(output_ts)
+    backbone_x, backbone_y, warp_xy, manifest = load_cyclegan_xy_for_export(
+        ckpt_path, n_channels=n_channels, streaming=streaming)
+    _log.info(
+        "CycleGAN X→Y export geometry=%s shared_backbone=%s",
+        getattr(manifest, "geometry", "separate"),
+        getattr(manifest, "shared_backbone", False),
+    )
+    scripted = ScriptedCycleGANXY(backbone_x, backbone_y, warp_xy)
+    return _write_scripted_cyclegan(scripted, ckpt_path, output_ts, manifest)
+
+
+def export_cyclegan_yx_nn(
+    ckpt_path: Union[str, Path],
+    output_ts: Union[str, Path],
+    *,
+    n_channels: int = 1,
+    streaming: bool = True,
+) -> Path:
+    """Write a streaming ``model.ts`` for CycleGAN Y→X transfer."""
+    ckpt_path = Path(ckpt_path)
+    output_ts = Path(output_ts)
+    backbone_x, backbone_y, _warp_xy, warp_yx, manifest = load_cyclegan_pair_for_export(
+        ckpt_path, n_channels=n_channels, streaming=streaming)
+    _log.info(
+        "CycleGAN Y→X export geometry=%s shared_backbone=%s",
+        getattr(manifest, "geometry", "separate"),
+        getattr(manifest, "shared_backbone", False),
+    )
+    scripted = scripted_cyclegan_yx(backbone_x, backbone_y, warp_yx)
+    return _write_scripted_cyclegan(scripted, ckpt_path, output_ts, manifest)

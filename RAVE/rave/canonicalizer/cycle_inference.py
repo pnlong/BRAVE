@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal, Tuple
+from typing import Literal, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -57,6 +57,27 @@ def _encode_mean(backbone: nn.Module, x: torch.Tensor) -> torch.Tensor:
     return z
 
 
+def _decode_with_attr(
+    backbone: nn.Module,
+    z: torch.Tensor,
+    attr_norm: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    if attr_norm is not None:
+        t = min(z.shape[-1], attr_norm.shape[-1])
+        z = torch.cat([z[..., :t], attr_norm[..., :t]], dim=1)
+    y_mb = backbone.decoder(z)
+    if backbone.output_mode == "pqmf":
+        from ..model import _pqmf_decode
+
+        return _pqmf_decode(
+            backbone.pqmf,
+            y_mb,
+            batch_size=z.shape[:-2],
+            n_channels=backbone.n_channels,
+        )
+    return y_mb
+
+
 @torch.no_grad()
 def transfer_x_to_y(
     x: torch.Tensor,
@@ -65,25 +86,19 @@ def transfer_x_to_y(
     warp_xy: nn.Module,
     *,
     mode: Literal["latent", "waveform"] = "latent",
+    attr_y: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
-    """Map domain-X waveform to domain-Y waveform."""
+    """Map domain-X waveform to domain-Y waveform.
+
+    ``attr_y`` is optional normalized Fader controls ``(B, D, T_lat)`` for
+    conditional Dec_Y; omit for unconditional Y.
+    """
     if mode == "waveform":
         x_warp = warp_xy(x)
         z = _encode_mean(backbone_y, x_warp)
     else:
         z = warp_xy(_encode_mean(backbone_x, x))
-    y_mb = backbone_y.decoder(z)
-    if backbone_y.output_mode == "pqmf":
-        from ..model import _pqmf_decode
-
-        y = _pqmf_decode(
-            backbone_y.pqmf,
-            y_mb,
-            batch_size=z.shape[:-2],
-            n_channels=backbone_y.n_channels,
-        )
-    else:
-        y = y_mb
+    y = _decode_with_attr(backbone_y, z, attr_norm=attr_y)
     return y[..., : x.shape[-1]]
 
 
@@ -95,25 +110,18 @@ def transfer_y_to_x(
     warp_yx: nn.Module,
     *,
     mode: Literal["latent", "waveform"] = "latent",
+    attr_x: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
-    """Map domain-Y waveform to domain-X waveform."""
+    """Map domain-Y waveform to domain-X waveform.
+
+    ``attr_x`` is optional normalized Fader controls for conditional Dec_X.
+    """
     if mode == "waveform":
         y_warp = warp_yx(y)
         z = _encode_mean(backbone_x, y_warp)
     else:
         z = warp_yx(_encode_mean(backbone_y, y))
-    x_mb = backbone_x.decoder(z)
-    if backbone_x.output_mode == "pqmf":
-        from ..model import _pqmf_decode
-
-        x = _pqmf_decode(
-            backbone_x.pqmf,
-            x_mb,
-            batch_size=z.shape[:-2],
-            n_channels=backbone_x.n_channels,
-        )
-    else:
-        x = x_mb
+    x = _decode_with_attr(backbone_x, z, attr_norm=attr_x)
     return x[..., : y.shape[-1]]
 
 

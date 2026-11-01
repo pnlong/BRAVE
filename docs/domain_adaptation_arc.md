@@ -9,6 +9,7 @@ flowchart LR
   zs[1_ZeroShot] --> manual[2_ManualEQReverb]
   manual --> separate[3_SeparateCycleGAN]
   separate --> joint[4_JointEmbedding]
+  joint --> cond[5_ConditionalCycleGAN]
 ```
 
 ## 1. Zero-shot BRAVE
@@ -60,4 +61,21 @@ Balanced joint AE train: [`scripts/submit_joint_train.sh`](../scripts/submit_joi
 
 ---
 
-**Reading order:** zero-shot Y BRAVE → listen with manual EQ/reverb → separate CycleGAN → joint AE + joint CycleGAN.
+## 5. Conditional CycleGAN (Fader controls)
+
+Full conditional matrix (foundation × CycleGAN geometry):
+
+| Foundation | CycleGAN |
+|------------|----------|
+| **Separate:** Fader on \(X\) and/or \(Y\) (\(c\in x\), \(c\in y\)) | Approach 2 — [`brave_cyclegan_conditional.gin`](../configs/brave_cyclegan_conditional.gin) |
+| **Joint:** one Fader on \(X\cup Y\) with schema \(c\in x\cup y\) + availability masks | Approach 3 — [`brave_cyclegan_conditional_joint.gin`](../configs/brave_cyclegan_conditional_joint.gin) |
+
+CycleGAN math is the same in both rows (A/B/C, bookkept return \(c\), \(L_\mathrm{inv}\), audio AC-GAN). Joint only adds `shared_backbone`, identity warp init, and native-vs-schema \(c\) bookkeeping. Empty attribute lists recover unconditional CycleGAN.
+
+- Method: [`cyclegan/conditional.md`](cyclegan/conditional.md) (§10 matrix + joint foundation)
+- Design checklist: [`cyclegan/conditional_cyclegan_plan.md`](cyclegan/conditional_cyclegan_plan.md)
+- Joint Fader train: [`configs/brave_fader_joint_tap_water.gin`](../configs/brave_fader_joint_tap_water.gin), [`scripts/submit_joint_fader_train.sh`](../scripts/submit_joint_fader_train.sh)
+
+---
+
+**Reading order:** zero-shot Y BRAVE → manual EQ/reverb → separate CycleGAN → joint AE + joint CycleGAN → conditional separate and/or conditional joint when domains have Fader attributes.

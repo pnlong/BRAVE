@@ -294,6 +294,19 @@ class CycleGANRampCallback(pl.Callback):
                     getattr(pl_module, "audio_polish_ramp_duration", 5000)),
             )
 
+        # L_inv ramp: only after GAN factor reaches 1, plus optional delay.
+        if getattr(pl_module, "lambda_inv", 0.0) > 0.0:
+            gan_done = int(pl_module.cycle_warmup_duration) + int(
+                pl_module.gan_ramp_duration)
+            inv_delay = gan_done + int(getattr(pl_module, "inv_delay", 0))
+            pl_module.inv_factor = compute_gan_ramp_factor(
+                trainer.global_step,
+                delay=inv_delay,
+                ramp_duration=int(getattr(pl_module, "inv_ramp_duration", 5000)),
+            )
+        else:
+            pl_module.inv_factor = 0.0
+
 
 class CycleGANExportCallback(pl.Callback):
     """Write inference ``cyclegan_*.ckpt`` whenever Lightning saves ``last.ckpt``."""

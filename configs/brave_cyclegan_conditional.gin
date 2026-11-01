@@ -1,0 +1,25 @@
+# Conditional CycleGAN (Approach 2 separate) — waveform cycle + audio AC-GAN.
+# First recipe: plain BRAVE X (tap) ↔ FaderRAVE Y (e.g. water_scene).
+#
+# Example:
+#   python RAVE/scripts/train_cyclegan.py \
+#     --config configs/brave_cyclegan_conditional.gin \
+#     --backbone_x_config configs/brave.gin --ckpt_x /path/tap.ckpt \
+#     --db_path_x /path/tap_lmdb \
+#     --backbone_y_config configs/brave_fader_*.gin --ckpt_y /path/water_fader.ckpt \
+#     --db_path_y /path/water_lmdb \
+#     --canonicalizer_type latent --name tap_water_cond
+
+include "brave_cyclegan_separate.gin"
+
+rave.canonicalizer.cycle_trainer.CycleGANTrainer:
+    cycle_domain = "waveform"
+    lambda_identity = 0.0
+    # Conditional extras (empty attr lists ⇒ terms are zero):
+    lambda_inv = 1.0
+    lambda_adv_cls = 1.0
+    lambda_d_cls = 1.0
+    swap_prob = 0.0
+    # Start L_inv only after gan_factor reaches 1 (warmup+ramp), plus this delay:
+    inv_delay = 0
+    inv_ramp_duration = 5000

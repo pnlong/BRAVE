@@ -49,8 +49,9 @@ class OodAudioDataset(data.Dataset):
 
         audio = torch.from_numpy(audio_np).float()
         if self._fader is not None:
-            attr = self._fader._loader.load(
+            loaded = self._fader._loader.load(
                 index, audio_np, sr=self._fader._loader.sr)
+            attr = loaded[0] if isinstance(loaded, tuple) else loaded
             return audio, torch.from_numpy(attr).float(), DOMAIN_OOD
         return audio, None, DOMAIN_OOD
 
@@ -105,20 +106,39 @@ class TaggedFaderDataset(data.Dataset):
         return len(self._fader)
 
     def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor, str]:
-        audio, attr = self._fader[index]
+        item = self._fader[index]
+        # FaderAttributeDataset returns (audio, attr, avail_mask).
+        audio, attr = item[0], item[1]
         return audio, attr, self.domain
 
 
 def canonicalizer_collate(
     batch: list,
 ) -> tuple[torch.Tensor, Optional[torch.Tensor], list[str]]:
-    """Collate mixed plain / Fader batches into (audio, attr|None, domains)."""
+    """Collate mixed plain / Fader batches into (audio, attr|None, domains).
+
+    When some items have attrs and others are ``None`` (e.g. plain X + Fader Y),
+    stack a dense attr tensor with zeros on unlabeled rows. Callers should mask
+    by domain before using labels.
+    """
     xs = torch.stack([b[0] for b in batch])
     domains = [b[2] if len(b) == 3 else b[1] for b in batch]
-    attrs = None
-    if len(batch[0]) == 3 and batch[0][1] is not None:
-        attrs = torch.stack([b[1] for b in batch])
-    return xs, attrs, domains
+    attr_items = []
+    for b in batch:
+        if len(b) == 3:
+            attr_items.append(b[1])
+        else:
+            attr_items.append(None)
+    if all(a is None for a in attr_items):
+        return xs, None, domains
+    template = next(a for a in attr_items if a is not None)
+    stacked = []
+    for a in attr_items:
+        if a is None:
+            stacked.append(torch.zeros_like(template))
+        else:
+            stacked.append(a)
+    return xs, torch.stack(stacked), domains
 
 
 def stratified_domain_counts(

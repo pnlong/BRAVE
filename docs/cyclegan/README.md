@@ -2,10 +2,43 @@
 
 Bidirectional CycleGAN for unpaired domain transfer (X = tap, Y = water or birdsong).
 
+**Conditional CycleGAN** (Fader `c` at decode, AC-GAN class heads, frozen `C_D` / `L_inv`): Method math in [`conditional.md`](conditional.md) (§10 full separate/joint matrix); design plan in [`conditional_cyclegan_plan.md`](conditional_cyclegan_plan.md).
+
+**Separate conditional** (two frozen codecs):
+
+```bash
+export PYTHONPATH="${PWD}/RAVE:${PYTHONPATH}"
+python RAVE/scripts/train_cyclegan.py \
+  --config configs/brave_cyclegan_conditional.gin \
+  --backbone_x_config configs/brave.gin --ckpt_x /path/tap.ckpt \
+  --db_path_x /path/tap_lmdb \
+  --backbone_y_config configs/brave_fader_texture.gin --ckpt_y /path/water_fader.ckpt \
+  --db_path_y /path/water_lmdb \
+  --canonicalizer_type latent --name tap_water_cond
+```
+
+Y must be a Fader **training** ckpt (with `latent_discriminator`) plus `attribute_stats.yaml` beside the LMDB. Plain X / plain Y still works (empty attribute lists ⇒ unconditional).
+
+**Joint conditional** (one joint Fader on \(X\cup Y\), then within-space warps). Train the foundation first ([`brave_fader_joint_tap_water.gin`](../../configs/brave_fader_joint_tap_water.gin) / [`submit_joint_fader_train.sh`](../../scripts/submit_joint_fader_train.sh)), then:
+
+```bash
+python RAVE/scripts/train_cyclegan.py \
+  --config configs/brave_cyclegan_conditional_joint.gin \
+  --backbone_x_config configs/brave_fader_joint_tap_water.gin \
+  --ckpt_x /path/joint_fader.ckpt \
+  --db_path_x /path/tap_lmdb --db_path_y /path/water_lmdb \
+  --native_attrs_x "" --native_attrs_y water_scene \
+  --canonicalizer_type latent --name tap_water_cond_joint
+```
+
+`--native_attrs_*` are the Case A/B/C / \(L_\mathrm{inv}\) lists; decode width stays the backbone schema (\(x\cup y\)).
+
 Implementation: [`RAVE/rave/canonicalizer/cycle_trainer.py`](../../RAVE/rave/canonicalizer/cycle_trainer.py).  
 Configs:
 - Approach 2 (separate codecs): [`configs/brave_cyclegan_separate.gin`](../../configs/brave_cyclegan_separate.gin) — [`brave_cyclegan.gin`](../../configs/brave_cyclegan.gin) is a back-compat include
 - Approach 3 (joint embedding): [`configs/brave_cyclegan_joint.gin`](../../configs/brave_cyclegan_joint.gin)
+- Conditional separate: [`configs/brave_cyclegan_conditional.gin`](../../configs/brave_cyclegan_conditional.gin)
+- Conditional joint: [`configs/brave_cyclegan_conditional_joint.gin`](../../configs/brave_cyclegan_conditional_joint.gin)
 
 Warp module: [`LatentCanonicalizer`](../canonicalizer/latent.md) (shared warp class; Stage-1 one-way training is shelved).  
 Design notes: [`scratchpaper/joint_embedding_cyclegan.md`](../../scratchpaper/joint_embedding_cyclegan.md).  

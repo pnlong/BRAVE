@@ -388,7 +388,11 @@ def _extract_chunk_features(index: int) -> np.ndarray:
             mono = mono[:n_signal]
         elif len(mono) < n_signal:
             mono = np.pad(mono, (0, n_signal - len(mono)))
-        return w["loader"].load(i, mono if mono.ndim == 1 else mono, sr=cfg["sr"])
+        loaded = w["loader"].load(
+            i, mono if mono.ndim == 1 else mono, sr=cfg["sr"])
+        if isinstance(loaded, tuple):
+            return loaded[0]
+        return loaded
     except Exception as exc:
         print(f"chunk {i} failed: {exc}")
         return np.zeros((w["n_attrs"], w["t_lat"]), dtype=np.float32)

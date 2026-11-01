@@ -285,6 +285,7 @@ class FaderRAVE(RAVE):
     def _prepare_attributes(
         self,
         attr_raw: torch.Tensor,
+        avail_mask: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Raw batch attributes -> (attr_norm, attr_cls).
@@ -294,6 +295,10 @@ class FaderRAVE(RAVE):
           attr_norm → decoder concat (continuous: min/max; discrete: index→float)
           attr_cls  → latent discriminator targets (continuous: quantile bins;
                        discrete: native class index, no re-bucketing)
+
+        When ``avail_mask`` is provided, missing channels (0) get **neutral**
+        attr_norm (0 in [-1,1]) so joint multi-domain batches decode cleanly;
+        attr_cls still holds a placeholder (CE must be masked separately).
 
         rave_mode zeros attr_norm only (decoder ablation); attr_cls unchanged.
         """
@@ -321,6 +326,13 @@ class FaderRAVE(RAVE):
                 n_cls = self.discrete_num_classes.get(name, 2)
                 attr_norm[:, i, :] = discrete_index_to_decoder_float(idx, n_cls)
 
+        if avail_mask is not None:
+            m = avail_mask.to(device=attr_norm.device, dtype=attr_norm.dtype)
+            if m.ndim == 2:
+                m = m.unsqueeze(-1).expand_as(attr_norm)
+            # Neutral decode controls for missing labels (0 in [-1, 1]).
+            attr_norm = attr_norm * m
+
         if self.rave_mode:
             # --- Ablation: decoder sees zero controls; latent disc still gets attr_cls ---
             attr_norm = torch.zeros_like(attr_norm)
@@ -331,11 +343,13 @@ class FaderRAVE(RAVE):
         attr_cls_pred: List[torch.Tensor],
         attr_cls: torch.Tensor,
         prefix: str,
+        avail_mask: Optional[torch.Tensor] = None,
     ) -> None:
         """Log mean attribute CE and accuracy to W&B."""
         from ..train_logging import log_train
 
-        ce = attribute_classification_loss(attr_cls_pred, attr_cls)
+        ce = attribute_classification_loss(
+            attr_cls_pred, attr_cls, avail_mask=avail_mask)
         per_acc = per_attribute_accuracies(
             attr_cls_pred, attr_cls, self.attribute_names)
         acc = sum(per_acc.values()) / max(len(per_acc), 1)
@@ -347,6 +361,7 @@ class FaderRAVE(RAVE):
         x_raw: torch.Tensor,
         attr_cls: torch.Tensor,
         lat_dis_opt: torch.optim.Optimizer,
+        avail_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """Train latent discriminator (+CE). Phase 1 only; updates lat_dis_opt."""
         # --- Generator frozen: classifier learns to read attributes from z ---
@@ -361,8 +376,10 @@ class FaderRAVE(RAVE):
 
         # --- +CE: improve attribute prediction from content latent ---
         attr_cls_pred = self.latent_discriminator(z)
-        latent_dis = attribute_classification_loss(attr_cls_pred, attr_cls)
-        self._log_aggregate_attribute_metrics(attr_cls_pred, attr_cls, "latent")
+        latent_dis = attribute_classification_loss(
+            attr_cls_pred, attr_cls, avail_mask=avail_mask)
+        self._log_aggregate_attribute_metrics(
+            attr_cls_pred, attr_cls, "latent", avail_mask=avail_mask)
 
         lat_dis_opt.zero_grad()
         latent_dis.backward()
@@ -374,15 +391,19 @@ class FaderRAVE(RAVE):
         Fader training step: latent adversary + conditional decode.
 
         Optimizer order: [gen_opt, dis_opt, lat_dis_opt].
+        Batch: (audio, attr) or (audio, attr, avail_mask) for joint Fader.
         """
         gen_opt, dis_opt, lat_dis_opt = self.optimizers()
 
-        # --- Unpack (audio, attr_raw) from FaderAttributeDataset ---
-        if isinstance(batch, (list, tuple)) and len(batch) == 2:
+        avail_mask = None
+        if isinstance(batch, (list, tuple)) and len(batch) == 3:
+            x_raw, attr_raw, avail_mask = batch
+        elif isinstance(batch, (list, tuple)) and len(batch) == 2:
             x_raw, attr_raw = batch
         else:
             raise ValueError(
-                "FaderRAVE expects batches (audio, attr). "
+                "FaderRAVE expects batches (audio, attr) or "
+                "(audio, attr, avail_mask). "
                 "Enable wrap_fader_dataset in gin config."
             )
 
@@ -394,20 +415,28 @@ class FaderRAVE(RAVE):
 
         x_raw = x_raw.to(self.device)
         attr_raw = attr_raw.to(self.device)
+        if avail_mask is not None:
+            avail_mask = avail_mask.to(self.device)
         # --- Split raw attrs into decoder float + latent CE integer targets ---
-        attr, attr_cls = self._prepare_attributes(attr_raw)
+        attr, attr_cls = self._prepare_attributes(attr_raw, avail_mask=avail_mask)
 
         from ..train_logging import log_train
 
         if self.rave_mode:
             log_train(self, "fader/rave_mode_active", 1.0)
+        if avail_mask is not None:
+            log_train(
+                self,
+                "fader/avail_frac",
+                avail_mask.float().mean(),
+            )
 
         # --- Phase 1 pre-step: train latent disc (+CE) before generator ---
         lat_dis_loss_dis = torch.tensor(0.0, device=self.device)
         if not self.warmed_up:
             for _ in range(self.n_lat_dis_steps):
                 lat_dis_loss_dis = lat_dis_loss_dis + self.lat_dis_step(
-                    x_raw, attr_cls, lat_dis_opt
+                    x_raw, attr_cls, lat_dis_opt, avail_mask=avail_mask
                 ) / self.n_lat_dis_steps
 
         x_raw.requires_grad = True
@@ -435,9 +464,10 @@ class FaderRAVE(RAVE):
         if not self.warmed_up:
             # --- Phase 1: encoder adversary via -CE on z ---
             attr_cls_pred = self.latent_discriminator(z)
-            lat_dis_loss = -attribute_classification_loss(attr_cls_pred, attr_cls)
+            lat_dis_loss = -attribute_classification_loss(
+                attr_cls_pred, attr_cls, avail_mask=avail_mask)
             self._log_aggregate_attribute_metrics(
-                attr_cls_pred, attr_cls, "latent_gen")
+                attr_cls_pred, attr_cls, "latent_gen", avail_mask=avail_mask)
         else:
             # --- Phase 2: latent adversarial finished; skip -CE (z detached, no encoder grad) ---
             log_train(self, "fader/latent_adversarial_active", 0.0)
@@ -575,9 +605,15 @@ class FaderRAVE(RAVE):
         """Validation with conditional decode; attrs required like training."""
         from .. import blocks
 
-        if not isinstance(batch, (list, tuple)) or len(batch) != 2:
+        avail_mask = None
+        if isinstance(batch, (list, tuple)) and len(batch) == 3:
+            x, attr_raw, avail_mask = batch
+        elif isinstance(batch, (list, tuple)) and len(batch) == 2:
+            x, attr_raw = batch
+        else:
             raise ValueError(
-                "FaderRAVE validation expects (audio, attr) batches. "
+                "FaderRAVE validation expects (audio, attr) or "
+                "(audio, attr, avail_mask) batches. "
                 "Enable wrap_fader_dataset in gin config."
             )
         if not self._attribute_stats_loaded:
@@ -586,10 +622,11 @@ class FaderRAVE(RAVE):
                 "call load_attribute_stats_from_file before validation."
             )
 
-        x, attr_raw = batch
         attr_raw = attr_raw.to(x.device)
+        if avail_mask is not None:
+            avail_mask = avail_mask.to(x.device)
         # --- Match training: conditional decode with attr_norm ---
-        attr, _ = self._prepare_attributes(attr_raw)
+        attr, _ = self._prepare_attributes(attr_raw, avail_mask=avail_mask)
 
         z = self.encode(x)
         if isinstance(self.encoder, blocks.VariationalEncoder):

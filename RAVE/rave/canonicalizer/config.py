@@ -264,6 +264,11 @@ class CycleGANManifest:
     # "separate" = Approach 2 dual codecs; "joint" = Approach 3 shared AE
     geometry: str = "separate"
     shared_backbone: bool = False
+    backbone_kind_x: str = "RAVE"
+    backbone_kind_y: str = "RAVE"
+    attribute_names_x: Optional[List[str]] = None
+    attribute_names_y: Optional[List[str]] = None
+    swap_prob: float = 0.0
 
     def to_dict(self) -> dict:
         out = {
@@ -281,6 +286,11 @@ class CycleGANManifest:
             "init_mode": self.init_mode,
             "geometry": self.geometry,
             "shared_backbone": self.shared_backbone,
+            "backbone_kind_x": self.backbone_kind_x,
+            "backbone_kind_y": self.backbone_kind_y,
+            "attribute_names_x": list(self.attribute_names_x or []),
+            "attribute_names_y": list(self.attribute_names_y or []),
+            "swap_prob": float(self.swap_prob),
         }
         if self.canonicalizer_type == "latent":
             out["latent_n_layers"] = self.latent_n_layers
@@ -312,6 +322,13 @@ class CycleGANManifest:
             init_mode=str(data.get("init_mode", "identity")),
             geometry=geometry,
             shared_backbone=shared or geometry == "joint",
+            backbone_kind_x=str(
+                data.get("backbone_kind_x", data.get("backbone_kind", "RAVE"))),
+            backbone_kind_y=str(
+                data.get("backbone_kind_y", data.get("backbone_kind", "RAVE"))),
+            attribute_names_x=list(data.get("attribute_names_x") or []),
+            attribute_names_y=list(data.get("attribute_names_y") or []),
+            swap_prob=float(data.get("swap_prob", 0.0)),
         )
 
 

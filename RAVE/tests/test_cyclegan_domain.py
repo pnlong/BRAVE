@@ -104,6 +104,30 @@ def test_cycle_domain_waveform_keeps_warmup_and_audio_gan():
     assert t._needs_train_decode() is True
 
 
+def test_decode_concats_attr_norm():
+    """Conditional decode widens z before Generator."""
+    t = _tiny_trainer(cycle_domain="waveform")
+    # Widen decoder to accept 8+1 channels
+    t.backbone_y.decoder = nn.Conv1d(9, 1, 1)
+    z = torch.randn(2, 8, 6)
+    attr = torch.randn(2, 1, 6)
+    y, y_mb = t._decode(t.backbone_y, z, attr_norm=attr)
+    assert y.shape[0] == 2
+    assert y_mb.shape[1] == 1
+
+
+def test_empty_attr_info_unconditional_forward():
+    t = _tiny_trainer(cycle_domain="waveform")
+    assert t.conditional_active is False
+    x = torch.randn(4, 1, 64)
+    x_mask = torch.tensor([True, True, False, False])
+    y_mask = ~x_mask
+    with torch.no_grad():
+        fwd = t._forward_batch(x, x_mask, y_mask, decode=True, attr_raw=None)
+    assert fwd["attr_cls_y_fwd"] is None
+    assert fwd["y_fake"].shape[0] == 2
+
+
 def test_cycle_domain_latent_ae_aware():
     t = _tiny_trainer(cycle_domain="latent", latent_cycle_mode="ae_aware")
     assert t.gan_domain == "latent"

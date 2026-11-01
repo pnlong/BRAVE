@@ -7,6 +7,9 @@ The dataset is intentionally dumb: it loads audio from the base RAVE dataset and
 delegates all attribute assembly to AttributeLoader.load(). Attribute names,
 kinds, and extraction logic live in providers.py + gin config — swap attributes
 without touching this file.
+
+Returns (audio, attr, avail_mask). Mask is all-ones for single-domain Fader;
+joint multi-domain training zeros mask rows for missing domain-local labels.
 """
 
 from __future__ import annotations
@@ -29,6 +32,7 @@ class FaderAttributeDataset(data.Dataset):
     Returns:
         audio: (C, T) float32 — same as base dataset
         attr: (D_total, T_lat) float32 — raw values (continuous floats + discrete indices)
+        avail_mask: (D_total, T_lat) float32 in {0, 1}
     """
 
     def __init__(
@@ -43,7 +47,7 @@ class FaderAttributeDataset(data.Dataset):
     def __len__(self) -> int:
         return len(self._base)
 
-    def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
+    def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         # --- Load + transform audio (includes RandomCrop when configured) ---
         audio = self._base[index]
         if isinstance(audio, torch.Tensor):
@@ -54,8 +58,18 @@ class FaderAttributeDataset(data.Dataset):
             audio_t = torch.from_numpy(audio_np).float()
 
         # --- Delegate all attribute assembly to injected loader ---
-        attr = self._loader.load(index, audio_np, sr=self._loader.sr)
-        return audio_t, torch.from_numpy(attr).float()
+        loaded = self._loader.load(index, audio_np, sr=self._loader.sr)
+        if isinstance(loaded, tuple):
+            attr, mask = loaded
+        else:
+            # Backward-compatible mock loaders that return attr only.
+            attr = loaded
+            mask = np.ones_like(attr, dtype=np.float32)
+        return (
+            audio_t,
+            torch.from_numpy(attr).float(),
+            torch.from_numpy(np.asarray(mask, dtype=np.float32)).float(),
+        )
 
 
 @gin.configurable

@@ -35,8 +35,10 @@ class _MockAudioDataset(torch.utils.data.Dataset):
 class _MockAttributeLoader:
     sr = 44100
 
-    def load(self, index: int, audio: np.ndarray, sr: int | None = None) -> np.ndarray:
-        return np.zeros((2, 32), dtype=np.float32)
+    def load(self, index: int, audio: np.ndarray, sr: int | None = None):
+        attr = np.zeros((2, 32), dtype=np.float32)
+        mask = np.ones_like(attr, dtype=np.float32)
+        return attr, mask
 
 
 def _make_fader_dataset() -> FaderAttributeDataset:

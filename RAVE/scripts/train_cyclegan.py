@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import sys
+from typing import Optional
 
 _RAVE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _BRAVE_ROOT = os.path.dirname(_RAVE_ROOT)
@@ -34,19 +35,25 @@ from rave.canonicalizer.callbacks import (
 )
 from rave.canonicalizer.config import (
     CycleGANManifest,
+    build_training_profile,
     resolve_cyclegan_lightning_ckpt,
     save_cyclegan_checkpoint,
 )
+from rave.canonicalizer.cycle_attributes import DomainAttrInfo
 from rave.canonicalizer.cycle_trainer import CycleGANTrainer
 from rave.canonicalizer.dataset import (
     DOMAIN_IN,
     DOMAIN_OOD,
     OodAudioDataset,
+    OodFaderDataset,
     TaggedAudioDataset,
+    TaggedFaderDataset,
     build_canonicalizer_dataloader,
     ddp_aligned_num_batches,
     ddp_batches_per_rank,
 )
+from rave.fader.dataset import FaderAttributeDataset
+from rave.fader.model import FaderRAVE
 from rave.canonicalizer.gin_setup import (
     build_in_domain_discriminator,
     build_latent_discriminator,
@@ -88,6 +95,18 @@ def parse_args():
         help="Domain-Y ckpt (separate only; joint defaults to X)",
     )
     p.add_argument("--db_path_y", required=True, help="Domain-Y LMDB (water)")
+    p.add_argument(
+        "--native_attrs_x",
+        default=None,
+        help="Comma-separated native attrs for domain X (joint Fader). "
+        "Empty string = no native X attrs. Default: all backbone attrs.",
+    )
+    p.add_argument(
+        "--native_attrs_y",
+        default=None,
+        help="Comma-separated native attrs for domain Y (joint Fader). "
+        "Empty string = no native Y attrs. Default: all backbone attrs.",
+    )
     p.add_argument(
         "--canonicalizer_type",
         choices=("waveform", "latent"),
@@ -182,13 +201,14 @@ def _peek_shared_backbone(cycle_cfg: str, overrides) -> bool:
         gin.clear_config()
 
 
-def _load_plain_lmdb_pair(
+def _load_domain_lmdb_pair(
     db_path: str,
     *,
     sr: int,
     n_signal: int,
     n_channels: int,
     domain: str,
+    is_fader: bool,
     split_percent: int = 98,
 ):
     train_base, val_base = rave.dataset.split_train_val(
@@ -199,23 +219,56 @@ def _load_plain_lmdb_pair(
         n_channels=n_channels,
     )
     train_base = rave.dataset.maybe_reject_silent(train_base)
+    if is_fader:
+        train_wrapped, val_wrapped = rave.training.wrap_training_datasets(
+            train_base,
+            val_base,
+            sampling_rate=sr,
+            n_signal=n_signal,
+            db_path=db_path,
+            fader=True,
+        )
+        if not isinstance(train_wrapped, FaderAttributeDataset):
+            raise TypeError(f"Expected FaderAttributeDataset for {db_path}")
+        return (
+            TaggedFaderDataset(train_wrapped, domain=domain),
+            TaggedFaderDataset(val_wrapped, domain=domain),
+        )
     return (
         TaggedAudioDataset(train_base, domain=domain),
         TaggedAudioDataset(val_base, domain=domain),
     )
 
 
-def _load_frozen_backbone(config_path: str, ckpt_path: str, n_channels: int):
+def _ood_from_tagged(ds):
+    if isinstance(ds, TaggedFaderDataset):
+        return OodFaderDataset(ds._fader)
+    return OodAudioDataset(ds._base)
+
+
+def _load_frozen_backbone(
+    config_path: str,
+    ckpt_path: str,
+    n_channels: int,
+    *,
+    db_path: str,
+):
+    profile = build_training_profile(config_path, db_path)
     configure_backbone_gin(config_path, n_channels)
-    model = rave.RAVE(n_channels=n_channels)
+    if profile.is_fader:
+        model = FaderRAVE(n_channels=n_channels)
+    else:
+        model = rave.RAVE(n_channels=n_channels)
     run = rave.core.search_for_run(ckpt_path)
     if run is None:
         raise FileNotFoundError(f"checkpoint not found: {ckpt_path}")
     model = model.load_from_checkpoint(run)
+    if profile.is_fader and profile.stats_path is not None:
+        model.load_attribute_stats_from_file(str(profile.stats_path))
     model.eval()
     for p in model.parameters():
         p.requires_grad = False
-    return model
+    return model, profile
 
 
 def main():
@@ -245,15 +298,51 @@ def main():
     n_channels = rave.dataset.get_training_channels(args.db_path_y, 0)
 
     if shared_backbone:
-        backbone_x = _load_frozen_backbone(backbone_x_cfg, args.ckpt_x, n_channels)
+        backbone_x, profile_x = _load_frozen_backbone(
+            backbone_x_cfg, args.ckpt_x, n_channels, db_path=args.db_path_x)
         backbone_y = backbone_x
+        profile_y = profile_x
         print(
             f"Joint geometry: shared backbone from {args.ckpt_x} "
             f"(config={backbone_x_cfg})"
         )
+        train_x, val_x = _load_domain_lmdb_pair(
+            args.db_path_x,
+            sr=backbone_x.sr,
+            n_signal=args.n_signal,
+            n_channels=n_channels,
+            domain=DOMAIN_OOD,
+            is_fader=profile_x.is_fader,
+        )
+        train_y, val_y = _load_domain_lmdb_pair(
+            args.db_path_y,
+            sr=backbone_y.sr,
+            n_signal=args.n_signal,
+            n_channels=n_channels,
+            domain=DOMAIN_IN,
+            is_fader=profile_y.is_fader,
+        )
     else:
-        backbone_x = _load_frozen_backbone(backbone_x_cfg, args.ckpt_x, n_channels)
-        backbone_y = _load_frozen_backbone(backbone_y_cfg, ckpt_y, n_channels)
+        backbone_x, profile_x = _load_frozen_backbone(
+            backbone_x_cfg, args.ckpt_x, n_channels, db_path=args.db_path_x)
+        train_x, val_x = _load_domain_lmdb_pair(
+            args.db_path_x,
+            sr=backbone_x.sr,
+            n_signal=args.n_signal,
+            n_channels=n_channels,
+            domain=DOMAIN_OOD,
+            is_fader=profile_x.is_fader,
+        )
+        backbone_y, profile_y = _load_frozen_backbone(
+            backbone_y_cfg, ckpt_y, n_channels, db_path=args.db_path_y)
+        train_y, val_y = _load_domain_lmdb_pair(
+            args.db_path_y,
+            sr=backbone_y.sr,
+            n_signal=args.n_signal,
+            n_channels=n_channels,
+            domain=DOMAIN_IN,
+            is_fader=profile_y.is_fader,
+        )
 
     configure_cyclegan_gin(cycle_cfg, n_channels, overrides=args.override)
     # Re-read after final parse (overrides may flip it)
@@ -333,18 +422,62 @@ def main():
         0.0,
     )
 
+    def _parse_native(flag: Optional[str]):
+        if flag is None:
+            return None  # use full backbone schema
+        names = [n.strip() for n in flag.split(",") if n.strip()]
+        return names  # may be empty list ⇒ unconditional native side
+
+    native_x = _parse_native(args.native_attrs_x)
+    native_y = _parse_native(args.native_attrs_y)
+    attr_info_x = DomainAttrInfo.from_backbone(
+        backbone_x,
+        db_path=args.db_path_x,
+        prior="uniform",
+        native_names=native_x,
+    )
+    attr_info_y = DomainAttrInfo.from_backbone(
+        backbone_y,
+        db_path=args.db_path_y,
+        prior="uniform",
+        native_names=native_y,
+    )
+    acgan_x = (
+        [attr_info_x.num_classes[n] for n in attr_info_x.names]
+        if attr_info_x.num_attributes > 0 else None
+    )
+    acgan_y = (
+        [attr_info_y.num_classes[n] for n in attr_info_y.names]
+        if attr_info_y.num_attributes > 0 else None
+    )
+
     disc_latent_x = None
     disc_latent_y = None
     if cycle_domain == "latent":
         disc_x = build_latent_discriminator(backbone_x.latent_size)
         disc_y = build_latent_discriminator(backbone_y.latent_size)
+        if acgan_x or acgan_y:
+            print(
+                "WARNING: conditional AC-GAN heads require cycle_domain=waveform; "
+                "latent D has no class heads."
+            )
     else:
-        disc_x = build_in_domain_discriminator(n_channels)
-        disc_y = build_in_domain_discriminator(n_channels)
+        disc_x = build_in_domain_discriminator(
+            n_channels, acgan_num_classes_per_attribute=acgan_x)
+        disc_y = build_in_domain_discriminator(
+            n_channels, acgan_num_classes_per_attribute=acgan_y)
         # Track B: waveform cycle + audio D + hybrid latent D
         if lambda_latent_gan > 0.0 and args.canonicalizer_type == "latent":
             disc_latent_x = build_latent_discriminator(backbone_x.latent_size)
             disc_latent_y = build_latent_discriminator(backbone_y.latent_size)
+
+    lambda_inv = _query_float(
+        (
+            "CycleGANTrainer.lambda_inv",
+            "rave.canonicalizer.cycle_trainer.CycleGANTrainer.lambda_inv",
+        ),
+        1.0 if (attr_info_x.num_attributes or attr_info_y.num_attributes) else 0.0,
+    )
 
     trainer_module = CycleGANTrainer(
         backbone_x=backbone_x,
@@ -357,6 +490,9 @@ def main():
         disc_latent_x=disc_latent_x,
         disc_latent_y=disc_latent_y,
         shared_backbone=shared_backbone,
+        attr_info_x=attr_info_x,
+        attr_info_y=attr_info_y,
+        lambda_inv=lambda_inv,
     )
 
     gin_snapshot = gin.config_str()
@@ -402,29 +538,16 @@ def main():
         f"hybrid_latent_gan={trainer_module.hybrid_latent_gan}, "
         f"audio_polish_start={trainer_module.audio_polish_start_step}, "
         f"warp_init={warp_init_mode}, "
-        f"lambda_identity={trainer_module.lambda_identity}",
-    )
-
-    train_x, val_x = _load_plain_lmdb_pair(
-        args.db_path_x,
-        sr=backbone_x.sr,
-        n_signal=args.n_signal,
-        n_channels=n_channels,
-        domain=DOMAIN_OOD,
-    )
-    train_y, val_y = _load_plain_lmdb_pair(
-        args.db_path_y,
-        sr=backbone_y.sr,
-        n_signal=args.n_signal,
-        n_channels=n_channels,
-        domain=DOMAIN_IN,
+        f"lambda_identity={trainer_module.lambda_identity}, "
+        f"attrs_x={attr_info_x.names}, attrs_y={attr_info_y.names}, "
+        f"lambda_inv={trainer_module.lambda_inv}",
     )
 
     num_workers = 0 if sys.platform == "darwin" else args.workers
 
     loader = build_canonicalizer_dataloader(
         in_domain_dataset=train_y,
-        ood_dataset=OodAudioDataset(train_x._base),
+        ood_dataset=_ood_from_tagged(train_x),
         batch_size=1 if args.smoke_test else args.batch,
         shuffle=True,
         drop_last=True,
@@ -432,7 +555,7 @@ def main():
     )
     val_loader = build_canonicalizer_dataloader(
         in_domain_dataset=val_y,
-        ood_dataset=OodAudioDataset(val_x._base),
+        ood_dataset=_ood_from_tagged(val_x),
         batch_size=1 if args.smoke_test else args.batch,
         shuffle=False,
         drop_last=False,
@@ -474,6 +597,9 @@ def main():
         db_path_x=str(Path(args.db_path_x).resolve()),
         db_path_y=str(Path(args.db_path_y).resolve()),
         use_reverb=getattr(warp_xy, "use_reverb", False),
+        backbone_kind=(
+            "FaderRAVE" if profile_x.is_fader or profile_y.is_fader else "RAVE"
+        ),
         latent_n_layers=int(getattr(warp_xy, "n_layers", 1)),
         latent_hidden_size=getattr(warp_xy, "hidden_size", None)
         if args.canonicalizer_type == "latent" else None,
@@ -482,6 +608,11 @@ def main():
         init_mode=warp_init_mode,
         geometry=geometry,
         shared_backbone=shared_backbone,
+        backbone_kind_x="FaderRAVE" if profile_x.is_fader else "RAVE",
+        backbone_kind_y="FaderRAVE" if profile_y.is_fader else "RAVE",
+        attribute_names_x=list(attr_info_x.names),
+        attribute_names_y=list(attr_info_y.names),
+        swap_prob=float(trainer_module.swap_prob),
     )
 
     ckpt_callback_kwargs = dict(

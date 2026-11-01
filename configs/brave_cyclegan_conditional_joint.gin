@@ -1,0 +1,25 @@
+# Conditional CycleGAN — Approach 3 joint embedding + Fader attrs.
+# Freeze one joint Fader (schema x∪y); within-space warps; identity init.
+# Pass --native_attrs_x / --native_attrs_y for Case A/B/C + L_inv heads
+# (decode width stays backbone schema).
+#
+# Example:
+#   python RAVE/scripts/train_cyclegan.py \
+#     --config configs/brave_cyclegan_conditional_joint.gin \
+#     --backbone_x_config configs/brave_fader_joint_tap_water.gin \
+#     --ckpt_x /path/joint_fader.ckpt \
+#     --db_path_x /path/tap_lmdb --db_path_y /path/water_lmdb \
+#     --native_attrs_x "" --native_attrs_y water_scene \
+#     --canonicalizer_type latent --name tap_water_cond_joint
+
+include "brave_cyclegan_joint.gin"
+
+rave.canonicalizer.cycle_trainer.CycleGANTrainer:
+    cycle_domain = "waveform"
+    lambda_identity = 0.5
+    lambda_inv = 1.0
+    lambda_adv_cls = 1.0
+    lambda_d_cls = 1.0
+    swap_prob = 0.0
+    inv_delay = 0
+    inv_ramp_duration = 5000

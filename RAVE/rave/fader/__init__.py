@@ -24,6 +24,7 @@ __all__ = [
     "latent_length_from_config",
     "load_attribute_stats",
     "save_attribute_stats",
+    "merge_attribute_stats",
     "ordered_attributes",
     "resolve_stats_path",
 ]
@@ -36,6 +37,7 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "ordered_attributes": (".attributes", "ordered_attributes"),
     "resolve_stats_path": (".attributes", "resolve_stats_path"),
     "save_attribute_stats": (".attributes", "save_attribute_stats"),
+    "merge_attribute_stats": (".attributes", "merge_attribute_stats"),
     "LambdaWarmupCallback": (".callbacks", "LambdaWarmupCallback"),
     "FaderAttributeDataset": (".dataset", "FaderAttributeDataset"),
     "wrap_fader_dataset": (".dataset", "wrap_fader_dataset"),
@@ -68,6 +70,7 @@ if TYPE_CHECKING:
         ordered_attributes,
         resolve_stats_path,
         save_attribute_stats,
+        merge_attribute_stats,
     )
     from .callbacks import LambdaWarmupCallback
     from .dataset import FaderAttributeDataset, wrap_fader_dataset

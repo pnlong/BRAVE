@@ -447,11 +447,13 @@ def _iter_dual_batch_indices(
 
 
 class StratifiedDualAudioIterableDataset(data.IterableDataset):
-    """Yield audio batches with a fixed X/Y count per batch (joint AE training).
+    """Yield batches with a fixed X/Y count per batch (joint AE training).
 
     Indices ``0..len_x-1`` come from ``dataset_x``; the rest from ``dataset_y``.
-    Each yielded item is a float tensor ``(B, C, T)`` — same contract as a plain
-    RAVE ``DataLoader`` batch.
+
+    Yields:
+      - plain RAVE: ``(B, C, T)`` audio tensor
+      - Fader: ``(audio, attr, avail_mask)`` each stacked on batch dim
     """
 
     def __init__(
@@ -491,6 +493,27 @@ class StratifiedDualAudioIterableDataset(data.IterableDataset):
     def __len__(self) -> int:
         return self._num_batches
 
+    @staticmethod
+    def _stack_items(items):
+        first = items[0]
+        if isinstance(first, (tuple, list)):
+            n = len(first)
+            cols = []
+            for j in range(n):
+                col = []
+                for item in items:
+                    v = item[j]
+                    col.append(v if isinstance(v, torch.Tensor) else torch.as_tensor(v))
+                cols.append(torch.stack(col, dim=0))
+            return tuple(cols)
+        tensors = []
+        for item in items:
+            if isinstance(item, torch.Tensor):
+                tensors.append(item)
+            else:
+                tensors.append(torch.as_tensor(item))
+        return torch.stack(tensors, dim=0)
+
     def __iter__(self):
         for batch_indices in _iter_dual_batch_indices(
             self._len_x,
@@ -502,13 +525,7 @@ class StratifiedDualAudioIterableDataset(data.IterableDataset):
             generator=self.generator,
         ):
             items = [self._getitem(i) for i in batch_indices]
-            tensors = []
-            for item in items:
-                if isinstance(item, torch.Tensor):
-                    tensors.append(item)
-                else:
-                    tensors.append(torch.as_tensor(item))
-            yield torch.stack(tensors, dim=0)
+            yield self._stack_items(items)
 
 
 def build_stratified_dual_dataloader(

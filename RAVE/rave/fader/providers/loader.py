@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Optional, Sequence
+from typing import Dict, Optional, Sequence, Tuple
 
 import gin
 import numpy as np
@@ -17,9 +17,11 @@ from .sidecar import SidecarAttributeProvider
 
 class AttributeLoader:
     """
-    Gin-built facade: dataset calls load(index, audio) -> (D_total, T_lat).
+    Gin-built facade: dataset calls load(index, audio) -> (attr, avail_mask).
 
-    Composes continuous + discrete providers internally.
+    ``attr`` is (D_total, T_lat) float32.
+    ``avail_mask`` is (D_total, T_lat) float32 in {0, 1} — 0 means the label is
+    missing for this sample (joint multi-domain Fader); CE must be masked off.
     """
 
     def __init__(
@@ -56,21 +58,37 @@ class AttributeLoader:
         index: int,
         audio: np.ndarray,
         sr: Optional[int] = None,
-    ) -> np.ndarray:
+    ) -> Tuple[np.ndarray, np.ndarray]:
         sr = sr or self.sr
         t_lat = self.latent_length
         parts = []
+        mask_parts = []
 
         if self.continuous_attributes:
             if self._sidecar is not None and not self._continuous:
                 cont = self._sidecar.load_continuous(
                     self.continuous_attributes, index, t_lat)
+                cont_mask = np.stack(
+                    [
+                        np.full(
+                            t_lat,
+                            1.0 if self._sidecar.has_value(n, index) else 0.0,
+                            dtype=np.float32,
+                        )
+                        for n in self.continuous_attributes
+                    ],
+                    axis=0,
+                )
             elif self._continuous is not None:
                 cont = self._continuous.load(index, audio, sr, t_lat)
+                # Audio descriptors are always available on both domains.
+                cont_mask = np.ones_like(cont, dtype=np.float32)
             else:
                 cont = np.zeros((len(self.continuous_attributes), t_lat),
                                 dtype=np.float32)
+                cont_mask = np.zeros_like(cont, dtype=np.float32)
             parts.append(cont)
+            mask_parts.append(cont_mask)
 
         if self.discrete_attributes:
             if self._sidecar is not None and (
@@ -78,16 +96,33 @@ class AttributeLoader:
                     or isinstance(self._discrete, NullDiscreteProvider)):
                 disc = self._sidecar.load_discrete(
                     self.discrete_attributes, index, t_lat)
+                disc_mask = np.stack(
+                    [
+                        np.full(
+                            t_lat,
+                            1.0 if self._sidecar.has_value(n, index) else 0.0,
+                            dtype=np.float32,
+                        )
+                        for n in self.discrete_attributes
+                    ],
+                    axis=0,
+                )
             elif self._discrete is not None:
                 disc = self._discrete.load(index, audio, sr, t_lat)
+                disc_mask = np.ones_like(disc, dtype=np.float32)
             else:
                 disc = np.zeros((len(self.discrete_attributes), t_lat),
                                 dtype=np.float32)
+                disc_mask = np.zeros_like(disc, dtype=np.float32)
             parts.append(disc)
+            mask_parts.append(disc_mask)
 
         if not parts:
-            return np.zeros((0, t_lat), dtype=np.float32)
-        return np.concatenate(parts, axis=0).astype(np.float32)
+            empty = np.zeros((0, t_lat), dtype=np.float32)
+            return empty, empty
+        attr = np.concatenate(parts, axis=0).astype(np.float32)
+        mask = np.concatenate(mask_parts, axis=0).astype(np.float32)
+        return attr, mask
 
 
 @gin.configurable

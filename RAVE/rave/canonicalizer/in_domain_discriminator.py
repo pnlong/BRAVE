@@ -21,6 +21,10 @@ class InDomainAudioDiscriminator(nn.Module):
     When ``num_attributes > 0``, adds a projection term to each scale logit from
     pooled attribute conditioning (``attr_cls`` by default). ``num_attributes=0``
     recovers the plain audio-only MSD (plain BRAVE).
+
+    When ``acgan_num_classes_per_attribute`` is set, adds auxiliary AC-GAN class
+    heads on pooled penultimate features of the first scale (CycleGAN
+    conditional path). Projection cGAN and AC-GAN are independent.
     """
 
     def __init__(
@@ -31,6 +35,7 @@ class InDomainAudioDiscriminator(nn.Module):
         num_classes_per_attribute: Optional[Sequence[int]] = None,
         embed_dim: int = 32,
         condition_on: ConditionKey = "attr_cls",
+        acgan_num_classes_per_attribute: Optional[Sequence[int]] = None,
     ) -> None:
         super().__init__()
         self.net = discriminator(n_channels=n_channels)
@@ -59,6 +64,22 @@ class InDomainAudioDiscriminator(nn.Module):
                 nn.init.zeros_(proj.weight)
                 nn.init.zeros_(proj.bias)
 
+        self.acgan_num_classes: List[int] = list(
+            acgan_num_classes_per_attribute or [])
+        self.class_heads: Optional[nn.ModuleList] = None
+        if self.acgan_num_classes:
+            with torch.no_grad():
+                dummy = torch.zeros(1, n_channels, 2048)
+                feats = self.net(dummy)
+                if len(feats[0]) < 2:
+                    raise ValueError(
+                        "MSD scale needs a penultimate feature for AC-GAN heads")
+                feat_dim = int(feats[0][-2].shape[1])
+            self.class_heads = nn.ModuleList([
+                nn.Linear(feat_dim, int(n_cls))
+                for n_cls in self.acgan_num_classes
+            ])
+
     def forward(
         self,
         x: torch.Tensor,
@@ -80,6 +101,17 @@ class InDomainAudioDiscriminator(nn.Module):
             layers[-1] = logit + proj(cond).view(-1, 1, 1)
             out.append(layers)
         return out
+
+    def class_logits(
+        self,
+        features: List[List[torch.Tensor]],
+    ) -> Optional[List[torch.Tensor]]:
+        """AC-GAN logits from first-scale penultimate features, or None."""
+        if self.class_heads is None or not features:
+            return None
+        h = features[0][-2]
+        pooled = h.mean(dim=-1)
+        return [head(pooled) for head in self.class_heads]
 
     @staticmethod
     def gan_losses(
@@ -184,6 +216,7 @@ def build_in_domain_discriminator(
     *,
     num_attributes: int = 0,
     num_classes_per_attribute: Optional[Sequence[int]] = None,
+    acgan_num_classes_per_attribute: Optional[Sequence[int]] = None,
 ) -> InDomainAudioDiscriminator:
     """Construct MSD from gin bindings in ``brave_canonicalizer.gin``."""
     require_gin_binding(f"{_MSD_SCOPE}.n_discriminators")
@@ -193,6 +226,7 @@ def build_in_domain_discriminator(
         n_channels=n_channels,
         num_attributes=num_attributes,
         num_classes_per_attribute=num_classes_per_attribute,
+        acgan_num_classes_per_attribute=acgan_num_classes_per_attribute,
     )
 
 

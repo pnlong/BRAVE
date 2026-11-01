@@ -309,6 +309,7 @@ def main(argv):
         n_signal=FLAGS.n_signal,
         smoke_test=FLAGS.smoke_test,
         rave_root=_RAVE_ROOT,
+        db_path_y=db_path_y,
     )
 
     # get data-loader

@@ -105,3 +105,44 @@ def test_scripted_cyclegan_xy_forward():
     y_on = mod(torch.zeros_like(x))
     # Zeros in + sidechain on should duck vs loud input with sidechain off
     assert y_on.abs().mean() <= y_off.abs().mean() + 1e-4
+
+
+def test_scripted_cyclegan_yx_swaps_ends():
+    import rave.blocks
+    from rave.canonicalizer.export.cyclegan_nn import scripted_cyclegan_yx
+    from rave.canonicalizer.latent_canonicalizer import LatentCanonicalizer
+
+    class _InnerEnc(nn.Module):
+        def __init__(self, n_channels=1):
+            super().__init__()
+            self.n_channels = n_channels
+
+        def forward(self, x):
+            return torch.cat([x[:, :1], x[:, :1]], dim=1)
+
+    class _Dec(nn.Module):
+        def forward(self, z):
+            return z[:, :1, :]
+
+    class _Backbone(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.encoder = rave.blocks.VariationalEncoder(
+                encoder=_InnerEnc, n_channels=1)
+            self.decoder = _Dec()
+            self.pqmf = None
+            self.n_channels = 1
+            self.latent_size = 1
+            self.input_mode = "raw"
+            self.output_mode = "raw"
+            self.sr = 44100
+
+    bb_x = _Backbone()
+    bb_y = _Backbone()
+    warp = LatentCanonicalizer(latent_size=1, init_mode="random")
+    mod = scripted_cyclegan_yx(bb_x, bb_y, warp)
+    assert mod.encoder is bb_y.encoder
+    assert mod.decoder is bb_x.decoder
+    assert mod.warp_xy is warp
+    y = mod(torch.randn(1, 1, 2048))
+    assert y.shape[1] == 1

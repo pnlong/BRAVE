@@ -277,6 +277,7 @@ def attribute_classification_loss(
     attr_cls_pred: Union[torch.Tensor, List[torch.Tensor]],
     attr_cls: torch.Tensor,
     num_classes_per_attribute: Optional[Sequence[int]] = None,
+    avail_mask: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """
     Cross-entropy for latent discriminator (+CE in lat_dis_step, -CE on gen).
@@ -285,23 +286,63 @@ def attribute_classification_loss(
         attr_cls_pred: (B, D, C, T_lat) stacked OR list of (B, C_i, T_lat) per head
         attr_cls: (B, D, T_lat) integer targets
         num_classes_per_attribute: optional per-head class counts
+        avail_mask: optional (B, D, T_lat) or (B, D) in {0,1}; zero = skip CE
+            (joint Fader: missing domain-local labels)
 
     Returns:
-        scalar CE loss (mean over attributes)
+        scalar CE loss (mean over available attribute heads; 0 if none available)
     """
+    def _head_weight(i: int) -> Optional[torch.Tensor]:
+        if avail_mask is None:
+            return None
+        m = avail_mask[:, i]
+        if m.ndim == 2:
+            # (B, T) → mean over time then batch; keep as weight for CE reduction
+            return m
+        return m  # (B,)
+
     if isinstance(attr_cls_pred, list):
-        # --- Per-head CE when heads have different num_classes ---
         losses = []
         for i, pred in enumerate(attr_cls_pred):
             target = attr_cls[:, i, :]
-            losses.append(F.cross_entropy(pred, target))
+            w = _head_weight(i)
+            if w is not None:
+                if w.ndim == 1:
+                    w = w.view(-1, 1).expand_as(target).float()
+                else:
+                    w = w.float()
+                if float(w.sum()) <= 0.0:
+                    continue
+                # Per-element CE then mask-mean (ignore missing labels).
+                ce = F.cross_entropy(pred, target, reduction="none")  # (B, T)
+                losses.append((ce * w).sum() / w.sum().clamp_min(1e-8))
+            else:
+                losses.append(F.cross_entropy(pred, target))
+        if not losses:
+            return attr_cls.new_zeros(())
         return sum(losses) / max(len(losses), 1)
 
     b, d, c, t = attr_cls_pred.shape
-    # --- Stacked logits path (legacy equal-class heads) ---
-    pred = attr_cls_pred.reshape(b * d, c, t)
-    target = attr_cls.reshape(b * d, t)
-    return F.cross_entropy(pred, target)
+    if avail_mask is None:
+        pred = attr_cls_pred.reshape(b * d, c, t)
+        target = attr_cls.reshape(b * d, t)
+        return F.cross_entropy(pred, target)
+    losses = []
+    for i in range(d):
+        w = _head_weight(i)
+        if w is None:
+            continue
+        if w.ndim == 1:
+            w = w.view(-1, 1).expand(b, t).float()
+        else:
+            w = w.float()
+        if float(w.sum()) <= 0.0:
+            continue
+        ce = F.cross_entropy(attr_cls_pred[:, i], attr_cls[:, i], reduction="none")
+        losses.append((ce * w).sum() / w.sum().clamp_min(1e-8))
+    if not losses:
+        return attr_cls.new_zeros(())
+    return sum(losses) / max(len(losses), 1)
 
 
 def per_attribute_ce_losses(
@@ -507,3 +548,78 @@ def validate_discrete_sidecar(
                 f"Rebuild the sidecar with texture_only (default) or raise "
                 f"NUM_TEXTURE_CLASSES in brave_fader_texture.gin."
             )
+
+
+def merge_attribute_stats(
+    stats_x: Dict,
+    stats_y: Dict,
+    *,
+    prefer_names: Optional[Sequence[str]] = None,
+) -> Dict:
+    """
+    Merge two attribute_stats.yaml payloads for joint Fader training.
+
+    Continuous min/max are pooled; continuous bin edges are rebuilt as linspace
+    over the pooled range (quantile bins from a single domain are not merged).
+    Discrete class counts take the max of the two. Attribute name order follows
+    ``prefer_names`` or ``stats_y`` then any extras from ``stats_x``.
+    """
+    names_y = list(stats_y.get("attribute_names") or [])
+    names_x = list(stats_x.get("attribute_names") or [])
+    if prefer_names is not None:
+        names = list(prefer_names)
+    else:
+        names = list(names_y)
+        for n in names_x:
+            if n not in names:
+                names.append(n)
+    kinds = {}
+    kinds.update(stats_x.get("attribute_kinds") or {})
+    kinds.update(stats_y.get("attribute_kinds") or {})
+    cont = [n for n in names if kinds.get(n, "continuous") == "continuous"]
+    disc = [n for n in names if kinds.get(n) == "discrete"]
+
+    min_max: Dict[str, Tuple[float, float]] = {}
+    for src in (stats_x, stats_y):
+        for k, (lo, hi) in (src.get("min_max_features") or {}).items():
+            if k not in min_max:
+                min_max[k] = (float(lo), float(hi))
+            else:
+                plo, phi = min_max[k]
+                min_max[k] = (min(plo, float(lo)), max(phi, float(hi)))
+
+    nb_bins = int(stats_y.get("nb_bins") or stats_x.get("nb_bins") or 16)
+    bin_values = np.zeros((len(names), nb_bins), dtype=np.float32)
+    for i, name in enumerate(names):
+        if kinds.get(name) == "discrete":
+            continue
+        lo, hi = min_max.get(name, (0.0, 1.0))
+        if hi <= lo:
+            hi = lo + 1e-6
+        bin_values[i] = np.linspace(lo, hi, nb_bins, dtype=np.float32)
+
+    discrete_num_classes: Dict[str, int] = {}
+    for src in (stats_x, stats_y):
+        for k, v in (src.get("discrete_num_classes") or {}).items():
+            discrete_num_classes[k] = max(int(v), discrete_num_classes.get(k, 0))
+
+    discrete_class_labels = {}
+    discrete_class_labels.update(stats_x.get("discrete_class_labels") or {})
+    discrete_class_labels.update(stats_y.get("discrete_class_labels") or {})
+
+    return {
+        "version": max(int(stats_x.get("version", 1)), int(stats_y.get("version", 1))),
+        "continuous_attributes": cont,
+        "discrete_attributes": disc,
+        "attribute_names": names,
+        "attribute_kinds": {n: kinds.get(n, "continuous") for n in names},
+        "nb_bins": nb_bins,
+        "latent_length": int(
+            stats_y.get("latent_length") or stats_x.get("latent_length") or 0),
+        "sr": int(stats_y.get("sr") or stats_x.get("sr") or 44100),
+        "min_max_features": min_max,
+        "bin_values": bin_values,
+        "discrete_num_classes": discrete_num_classes,
+        "discrete_class_labels": discrete_class_labels,
+        "split": {"merged_from": ["db_path_x", "db_path_y"]},
+    }

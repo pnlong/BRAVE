@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Sequence, Union
+from typing import Dict, Optional, Sequence, Union
 
 import gin
 import numpy as np
@@ -16,6 +16,8 @@ class SidecarAttributeProvider:
     Loads per-sample attribute values from attribute_sidecar.yaml.
 
     Supports continuous scalars/trajectories and discrete class indices.
+    Missing keys are reported via ``has_value`` so joint Fader training can
+    mask CE on unavailable domain-local labels.
     """
 
     def __init__(
@@ -41,6 +43,17 @@ class SidecarAttributeProvider:
 
     def _lookup_key(self, index: int) -> str:
         return f"{index:08d}"
+
+    def has_value(self, name: str, index: int) -> bool:
+        """True when the sidecar defines ``name`` for this LMDB index."""
+        attr_def = self._schema.get(name)
+        if not attr_def:
+            return False
+        values = attr_def.get("values", {})
+        if not values:
+            return False
+        key = self._lookup_key(index)
+        return key in values or str(index) in values
 
     def _get_value(self, name: str, index: int) -> Union[float, int, list]:
         attr_def = self._schema.get(name, {})
