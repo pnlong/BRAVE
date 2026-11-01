@@ -482,6 +482,12 @@ def main(argv):
 
     if probe_failures:
         print(f"ffprobe failed on {probe_failures} file(s).")
+    if FLAGS.channels == 1:
+        n_downmix = sum(p.channels > 1 for p in probes)
+        if n_downmix:
+            print(
+                f"mono downmix: averaging all input channels on {n_downmix} file(s)"
+            )
 
     n_seconds = 0.0
     denoise = build_denoise_config()

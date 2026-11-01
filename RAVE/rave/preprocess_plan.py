@@ -157,6 +157,21 @@ def _channel_map(input_channels: int, channels: int) -> List[int]:
     return (math.ceil(channels / input_channels) * list(range(input_channels)))[:channels]
 
 
+def _output_channel_filters(input_channels: int, channels: int) -> List[str]:
+    """One ffmpeg filter_complex graph per stored channel.
+
+    A mono target averages every input channel. Otherwise each stored channel
+    is one mapped input, repeating inputs when the file has fewer channels.
+    """
+    if channels == 1 and input_channels > 1:
+        terms = '+'.join(f'c{i}' for i in range(input_channels))
+        return [f'pan=mono|c0<{terms}']
+    return [
+        'channelmap=%d-0' % src
+        for src in _channel_map(input_channels, channels)
+    ]
+
+
 def decode_path_pcm(
     path: str,
     sr: int,
@@ -166,15 +181,14 @@ def decode_path_pcm(
     pcen: PcenConfig = PcenConfig.disabled(),
 ) -> np.ndarray:
     """Decode file to shape (channels, n_samples) float32 in [-1, 1]."""
-    channel_map = _channel_map(input_channels, channels)
     channel_data = []
-    for i in channel_map:
+    for channel_filter in _output_channel_filters(input_channels, channels):
         proc = subprocess.Popen(
             [
                 'ffmpeg', '-hide_banner', '-loglevel', 'panic', '-i', path,
                 '-ar', str(sr),
                 '-f', 's16le',
-                '-filter_complex', 'channelmap=%d-0' % i,
+                '-filter_complex', channel_filter,
                 '-',
             ],
             stdout=subprocess.PIPE,
@@ -281,15 +295,14 @@ def iter_long_file_chunks(
             offset += chunk_samples
         return
 
-    channel_map = _channel_map(input_channels, channels)
     processes = []
-    for i in range(channels):
+    for channel_filter in _output_channel_filters(input_channels, channels):
         proc = subprocess.Popen(
             [
                 'ffmpeg', '-hide_banner', '-loglevel', 'panic', '-i', path,
                 '-ar', str(sr),
                 '-f', 's16le',
-                '-filter_complex', 'channelmap=%d-0' % channel_map[i],
+                '-filter_complex', channel_filter,
                 '-',
             ],
             stdout=subprocess.PIPE,
