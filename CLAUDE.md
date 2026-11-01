@@ -8,6 +8,8 @@ BRAVE is a PyTorch implementation of a low-latency audio variational autoencoder
 
 Vendored RAVE lives in `RAVE/`. Run its scripts with `PYTHONPATH` set to that directory (scripts also insert the RAVE root on `sys.path`). Training logs to Weights & Biases.
 
+**Project page (GitHub Pages):** static site in [`docs/`](docs/) — enable Pages from branch `/docs`. Listening demos + narrative seed: [`docs/index.html`](docs/index.html), [`docs/narrative.md`](docs/narrative.md).
+
 ## Setup
 
 ```bash

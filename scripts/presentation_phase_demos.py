@@ -124,7 +124,8 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=(
             BRAVE_STORAGE / "tap_samples" / "runs"
-            / "tap_uncond_run_8e1e614287" / "epoch_1500000.ckpt"
+            / "tap_foundation_x_shotgun_contact_70d386ede1"
+            / "epoch_1500000.ckpt"
         ),
     )
     p.add_argument(
@@ -134,8 +135,23 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--cyclegan-hash",
-        default="48072c314a",
-        help="Suffix of tap_<domain>_wf_cyc_mlp2_<hash> runs",
+        default="53579718a4",
+        help="Preferred suffix of tap_fx_sc_<domain>_wf_cyc_mlp2_<hash> runs",
+    )
+    p.add_argument(
+        "--cyclegan-hash-fallback",
+        nargs="+",
+        default=["ee873ef0df", "48072c314a"],
+        help="Tried in order when preferred hash is missing for a domain",
+    )
+    p.add_argument(
+        "--tap-names",
+        nargs="+",
+        default=None,
+        help=(
+            "Optional basename filters (substring match). "
+            "Example: sm57-0 moanin"
+        ),
     )
     p.add_argument("--gpu", action="store_true")
     p.add_argument("--silence-sec", type=float, default=0.0)
@@ -159,10 +175,17 @@ def parse_args() -> argparse.Namespace:
         default=32,
         help="Number of in-domain LMDB crops to encode for PCA",
     )
+    p.add_argument(
+        "--skip-pca",
+        action="store_true",
+        help="Skip in-domain LMDB PCA plots (faster for page packaging)",
+    )
     return p.parse_args()
 
 
-def discover_tap_files(tap_dir: Path) -> List[Path]:
+def discover_tap_files(
+    tap_dir: Path, *, name_filters: Sequence[str] | None = None
+) -> List[Path]:
     files: List[Path] = []
     for name in ("sm57-0.wav", "sm57-1.wav", "0.wav", "1.wav"):
         p = tap_dir / name
@@ -170,6 +193,13 @@ def discover_tap_files(tap_dir: Path) -> List[Path]:
             files.append(p)
     for p in sorted(tap_dir.glob("Contact Mic L-*.unnormalized.wav")):
         files.append(p)
+    if name_filters:
+        keys = [k.lower() for k in name_filters]
+        files = [
+            p
+            for p in files
+            if any(k in p.name.lower() or k in da.clip_stem(p).lower() for k in keys)
+        ]
     if not files:
         raise FileNotFoundError(f"no tap clips found under {tap_dir}")
     return files
@@ -205,18 +235,71 @@ def rev_knob_vector(preset: Dict[str, object]) -> List[float]:
     return [wet, *comb, *ap]
 
 
+def _resolve_y_ckpt(playlists_root: Path, domain: str) -> Path:
+    candidates = [
+        playlists_root
+        / domain
+        / "runs"
+        / f"{domain}_foundation_y_70d386ede1"
+        / "epoch_1500000.ckpt",
+        playlists_root
+        / domain
+        / "runs"
+        / f"{domain}_foundation_y_42be05bb98"
+        / "epoch_1500000.ckpt",
+        playlists_root
+        / domain
+        / "runs"
+        / f"{domain}_run_8e1e614287"
+        / "epoch_1500000.ckpt",
+    ]
+    for path in candidates:
+        if path.is_file():
+            return path
+    raise FileNotFoundError(
+        f"no Y backbone for {domain}; tried: "
+        + ", ".join(str(p) for p in candidates)
+    )
+
+
+def _resolve_cycle_ckpt(
+    playlists_root: Path,
+    domain: str,
+    preferred_hash: str,
+    fallback_hashes: Sequence[str],
+) -> Path:
+    hashes = [preferred_hash, *[h for h in fallback_hashes if h != preferred_hash]]
+    patterns = [
+        "tap_fx_sc_{domain}_wf_cyc_mlp2_{hash}",
+        "tap_{domain}_wf_cyc_mlp2_{hash}",
+    ]
+    tried: List[Path] = []
+    for h in hashes:
+        for pat in patterns:
+            path = (
+                playlists_root
+                / domain
+                / "runs"
+                / pat.format(domain=domain, hash=h)
+                / "cyclegan_latent.ckpt"
+            )
+            tried.append(path)
+            if path.is_file():
+                return path
+    raise FileNotFoundError(
+        f"no CycleGAN ckpt for {domain}; tried: " + ", ".join(str(p) for p in tried)
+    )
+
+
 def domain_paths(
     playlists_root: Path,
     domain: str,
     cyclegan_hash: str,
+    cyclegan_hash_fallback: Sequence[str] = (),
 ) -> Tuple[Path, Path, Path]:
-    y_ckpt = (
-        playlists_root / domain / "runs"
-        / f"{domain}_run_8e1e614287" / "epoch_1500000.ckpt"
-    )
-    cycle_ckpt = (
-        playlists_root / domain / "runs"
-        / f"tap_{domain}_wf_cyc_mlp2_{cyclegan_hash}" / "cyclegan_latent.ckpt"
+    y_ckpt = _resolve_y_ckpt(playlists_root, domain)
+    cycle_ckpt = _resolve_cycle_ckpt(
+        playlists_root, domain, cyclegan_hash, cyclegan_hash_fallback
     )
     db_path = playlists_root / domain / "preprocessed"
     return y_ckpt, cycle_ckpt, db_path
@@ -315,7 +398,10 @@ def process_domain(
         raise KeyError(f"no phase-2 preset for domain {domain!r}")
     preset = PHASE2_PRESETS[domain]
     y_ckpt, cycle_ckpt, db_path = domain_paths(
-        args.playlists_root, domain, args.cyclegan_hash
+        args.playlists_root,
+        domain,
+        args.cyclegan_hash,
+        args.cyclegan_hash_fallback,
     )
     for path, label in (
         (y_ckpt, "Y backbone"),
@@ -434,31 +520,32 @@ def process_domain(
             segment_sec=args.segment_sec,
         )
 
-    print(f"  sampling in-domain latents from {db_path}")
-    in_pts = da.collect_in_domain_points(
-        backbone_y,
-        db_path,
-        n_signal=args.n_signal,
-        n_crops=args.y_crops,
-        max_points=args.pca_frames,
-        device=device,
-    )
-    ood1 = np.concatenate(ood_p1, axis=0)
-    ood2 = np.concatenate(ood_p2, axis=0)
-    ood3 = np.concatenate(ood_p3, axis=0)
+    if not args.skip_pca:
+        print(f"  sampling in-domain latents from {db_path}")
+        in_pts = da.collect_in_domain_points(
+            backbone_y,
+            db_path,
+            n_signal=args.n_signal,
+            n_crops=args.y_crops,
+            max_points=args.pca_frames,
+            device=device,
+        )
+        ood1 = np.concatenate(ood_p1, axis=0)
+        ood2 = np.concatenate(ood_p2, axis=0)
+        ood3 = np.concatenate(ood_p3, axis=0)
 
-    da.write_domain_phase_pca_plots(
-        out_domain,
-        in_pts=in_pts,
-        ood_by_phase=[
-            (1, ood1, "Enc_Y(tap)"),
-            (2, ood2, "Enc_Y(EQ+reverb(tap))"),
-            (3, ood3, "W_xy(Enc_X(tap))"),
-        ],
-        title_prefix=da.domain_display_name(domain),
-    )
-    for phase in (1, 2, 3):
-        print(f"  wrote pca_phase{phase}.png")
+        da.write_domain_phase_pca_plots(
+            out_domain,
+            in_pts=in_pts,
+            ood_by_phase=[
+                (1, ood1, "Enc_Y(tap)"),
+                (2, ood2, "Enc_Y(EQ+reverb(tap))"),
+                (3, ood3, "W_xy(Enc_X(tap))"),
+            ],
+            title_prefix=da.domain_display_name(domain),
+        )
+        for phase in (1, 2, 3):
+            print(f"  wrote pca_phase{phase}.png")
 
     del backbone_y, warp_xy, _warp_yx, eq, reverb
     if device.type == "cuda":
@@ -468,7 +555,7 @@ def process_domain(
 def main() -> None:
     args = parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
-    tap_files = discover_tap_files(args.tap_dir)
+    tap_files = discover_tap_files(args.tap_dir, name_filters=args.tap_names)
     print("Tap clips:")
     for t in tap_files:
         print(f"  {t}")

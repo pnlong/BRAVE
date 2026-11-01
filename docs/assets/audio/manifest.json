@@ -1,0 +1,127 @@
+{
+  "version": 1,
+  "tracks": [
+    {
+      "id": "tap",
+      "label": "Tap (input)"
+    },
+    {
+      "id": "phase1",
+      "label": "Zero-shot"
+    },
+    {
+      "id": "phase2",
+      "label": "EQ + reverb"
+    },
+    {
+      "id": "phase3",
+      "label": "CycleGAN"
+    }
+  ],
+  "domains": [
+    {
+      "id": "babbling_brook",
+      "label": "Babbling Brook",
+      "clips": [
+        {
+          "id": "sm57-0",
+          "label": "SM57 (take 0)",
+          "files": {
+            "tap": "babbling_brook/sm57-0/tap.mp3",
+            "phase1": "babbling_brook/sm57-0/phase1.mp3",
+            "phase2": "babbling_brook/sm57-0/phase2.mp3",
+            "phase3": "babbling_brook/sm57-0/phase3.mp3"
+          }
+        },
+        {
+          "id": "Contact_Mic_L-moanin",
+          "label": "Contact mic \u2014 Moanin'",
+          "files": {
+            "tap": "babbling_brook/Contact_Mic_L-moanin/tap.mp3",
+            "phase1": "babbling_brook/Contact_Mic_L-moanin/phase1.mp3",
+            "phase2": "babbling_brook/Contact_Mic_L-moanin/phase2.mp3",
+            "phase3": "babbling_brook/Contact_Mic_L-moanin/phase3.mp3"
+          }
+        }
+      ]
+    },
+    {
+      "id": "fire_crackling",
+      "label": "Fire Crackling",
+      "clips": [
+        {
+          "id": "sm57-0",
+          "label": "SM57 (take 0)",
+          "files": {
+            "tap": "fire_crackling/sm57-0/tap.mp3",
+            "phase1": "fire_crackling/sm57-0/phase1.mp3",
+            "phase2": "fire_crackling/sm57-0/phase2.mp3",
+            "phase3": "fire_crackling/sm57-0/phase3.mp3"
+          }
+        },
+        {
+          "id": "Contact_Mic_L-moanin",
+          "label": "Contact mic \u2014 Moanin'",
+          "files": {
+            "tap": "fire_crackling/Contact_Mic_L-moanin/tap.mp3",
+            "phase1": "fire_crackling/Contact_Mic_L-moanin/phase1.mp3",
+            "phase2": "fire_crackling/Contact_Mic_L-moanin/phase2.mp3",
+            "phase3": "fire_crackling/Contact_Mic_L-moanin/phase3.mp3"
+          }
+        }
+      ]
+    },
+    {
+      "id": "birds_chirping",
+      "label": "Birds Chirping",
+      "clips": [
+        {
+          "id": "sm57-0",
+          "label": "SM57 (take 0)",
+          "files": {
+            "tap": "birds_chirping/sm57-0/tap.mp3",
+            "phase1": "birds_chirping/sm57-0/phase1.mp3",
+            "phase2": "birds_chirping/sm57-0/phase2.mp3",
+            "phase3": "birds_chirping/sm57-0/phase3.mp3"
+          }
+        },
+        {
+          "id": "Contact_Mic_L-moanin",
+          "label": "Contact mic \u2014 Moanin'",
+          "files": {
+            "tap": "birds_chirping/Contact_Mic_L-moanin/tap.mp3",
+            "phase1": "birds_chirping/Contact_Mic_L-moanin/phase1.mp3",
+            "phase2": "birds_chirping/Contact_Mic_L-moanin/phase2.mp3",
+            "phase3": "birds_chirping/Contact_Mic_L-moanin/phase3.mp3"
+          }
+        }
+      ]
+    },
+    {
+      "id": "rain_sounds",
+      "label": "Rain Sounds",
+      "clips": [
+        {
+          "id": "sm57-0",
+          "label": "SM57 (take 0)",
+          "files": {
+            "tap": "rain_sounds/sm57-0/tap.mp3",
+            "phase1": "rain_sounds/sm57-0/phase1.mp3",
+            "phase2": "rain_sounds/sm57-0/phase2.mp3",
+            "phase3": "rain_sounds/sm57-0/phase3.mp3"
+          }
+        },
+        {
+          "id": "Contact_Mic_L-moanin",
+          "label": "Contact mic \u2014 Moanin'",
+          "files": {
+            "tap": "rain_sounds/Contact_Mic_L-moanin/tap.mp3",
+            "phase1": "rain_sounds/Contact_Mic_L-moanin/phase1.mp3",
+            "phase2": "rain_sounds/Contact_Mic_L-moanin/phase2.mp3",
+            "phase3": "rain_sounds/Contact_Mic_L-moanin/phase3.mp3"
+          }
+        }
+      ]
+    }
+  ]
+}

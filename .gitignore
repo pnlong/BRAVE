@@ -146,6 +146,10 @@ venv.bak/
 # mkdocs documentation
 /site
 
+# Project page: keep compressed MP3s in docs/, never commit WAVs there
+docs/**/*.wav
+docs/**/*.WAV
+
 # mypy
 .mypy_cache/
 .dmypy.json

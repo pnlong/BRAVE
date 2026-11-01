@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BRAVE — tap to timbre</title>
+    <meta
+      name="description"
+      content="Low-latency BRAVE audio models and tap-driven domain adaptation: zero-shot, manual EQ/reverb, and CycleGAN transfer."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Source+Sans+3:wght@400;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="assets/css/style.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="wrap">
+        <h1 class="brand">BRAVE</h1>
+        <p class="lede">
+          Low-latency neural audio codecs for instrumental performance — and a
+          path from body-tap input to out-of-domain timbres like water, fire,
+          rain, and birdsong.
+        </p>
+      </div>
+    </header>
+
+    <main>
+      <section class="section" id="approach">
+        <div class="wrap">
+          <h2>Approach</h2>
+          <p class="section-intro">
+            Start from a target-domain BRAVE model. Playing tap audio into it
+            directly is the status quo — and usually fails. We compare three
+            ways of adapting the same tap input toward a chosen timbre.
+          </p>
+
+          <div class="phases">
+            <article class="phase" data-phase="1">
+              <h3>1 · Zero-shot</h3>
+              <p>
+                Train BRAVE only on the target domain (for example babbling
+                brook). At inference, feed tap straight into that model: encode,
+                then decode. No adapter. Out-of-domain taps often land off the
+                target manifold — wrong timbre, ringing, or collapsed texture.
+              </p>
+              <p class="path">tap → Enc<sub>Y</sub> → Dec<sub>Y</sub></p>
+            </article>
+
+            <article class="phase" data-phase="2">
+              <h3>2 · Manual EQ + reverb</h3>
+              <p>
+                Keep the same frozen target model, but preprocess the tap with
+                hand-tuned EQ and a short reverb so its spectrum and room cue
+                look closer to in-domain audio. Interpretable and fast to try —
+                brittle across mics, players, and gain.
+              </p>
+              <p class="path">
+                tap → EQ / reverb → Enc<sub>Y</sub> → Dec<sub>Y</sub>
+              </p>
+            </article>
+
+            <article class="phase" data-phase="3">
+              <h3>3 · Separate CycleGAN</h3>
+              <p>
+                Train a tap encoder as well. Learn a latent warp from tap space
+                into the target latent space, then decode with the target
+                generator. No hand DSP at inference — the model learns the
+                transfer.
+              </p>
+              <p class="path">
+                tap → Enc<sub>X</sub> → W<sub>xy</sub> → Dec<sub>Y</sub>
+              </p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="examples">
+        <div class="wrap">
+          <h2>Examples</h2>
+          <p class="section-intro">
+            Same tap clip on every row. Listen to the raw input, then the three
+            transforms side by side. Pick a target domain and an input take.
+          </p>
+
+          <div class="controls">
+            <div class="control">
+              <label for="domain-select">Target domain</label>
+              <select id="domain-select" aria-label="Target domain"></select>
+            </div>
+            <div class="control">
+              <label for="clip-select">Tap input</label>
+              <select id="clip-select" aria-label="Tap input clip"></select>
+            </div>
+          </div>
+
+          <div id="players" class="players" aria-live="polite"></div>
+          <p id="demo-status" class="hint"></p>
+          <p class="hint">
+            Playing one clip pauses the others. Peak-normalized MP3s for fair
+            A/B listening — not a claim about training loudness.
+          </p>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="wrap">
+        <p>
+          Project page for
+          <a href="https://github.com/pnlong/BRAVE">BRAVE</a>
+          — early listening demos, not a paper site.
+        </p>
+      </div>
+    </footer>
+
+    <script src="assets/js/player.js" defer></script>
+  </body>
+</html>
