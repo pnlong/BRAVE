@@ -44,16 +44,16 @@
           "has_sidechain": true
         },
         {
-          "id": "Shotgun-tapping_11",
-          "label": "Shotgun \u2014 tapping",
+          "id": "Shotgun-heavy_3",
+          "label": "Shotgun \u2014 heavy",
           "files": {
-            "tap": "babbling_brook/Shotgun-tapping_11/tap.mp3",
-            "phase1": "babbling_brook/Shotgun-tapping_11/phase1.mp3",
-            "phase2": "babbling_brook/Shotgun-tapping_11/phase2.mp3",
-            "phase3": "babbling_brook/Shotgun-tapping_11/phase3.mp3",
-            "phase1_sc": "babbling_brook/Shotgun-tapping_11/phase1_sc.mp3",
-            "phase2_sc": "babbling_brook/Shotgun-tapping_11/phase2_sc.mp3",
-            "phase3_sc": "babbling_brook/Shotgun-tapping_11/phase3_sc.mp3"
+            "tap": "babbling_brook/Shotgun-heavy_3/tap.mp3",
+            "phase1": "babbling_brook/Shotgun-heavy_3/phase1.mp3",
+            "phase2": "babbling_brook/Shotgun-heavy_3/phase2.mp3",
+            "phase3": "babbling_brook/Shotgun-heavy_3/phase3.mp3",
+            "phase1_sc": "babbling_brook/Shotgun-heavy_3/phase1_sc.mp3",
+            "phase2_sc": "babbling_brook/Shotgun-heavy_3/phase2_sc.mp3",
+            "phase3_sc": "babbling_brook/Shotgun-heavy_3/phase3_sc.mp3"
           },
           "has_sidechain": true
         },
@@ -92,16 +92,16 @@
           "has_sidechain": true
         },
         {
-          "id": "Shotgun-tapping_11",
-          "label": "Shotgun \u2014 tapping",
+          "id": "Shotgun-heavy_3",
+          "label": "Shotgun \u2014 heavy",
           "files": {
-            "tap": "fire_crackling/Shotgun-tapping_11/tap.mp3",
-            "phase1": "fire_crackling/Shotgun-tapping_11/phase1.mp3",
-            "phase2": "fire_crackling/Shotgun-tapping_11/phase2.mp3",
-            "phase3": "fire_crackling/Shotgun-tapping_11/phase3.mp3",
-            "phase1_sc": "fire_crackling/Shotgun-tapping_11/phase1_sc.mp3",
-            "phase2_sc": "fire_crackling/Shotgun-tapping_11/phase2_sc.mp3",
-            "phase3_sc": "fire_crackling/Shotgun-tapping_11/phase3_sc.mp3"
+            "tap": "fire_crackling/Shotgun-heavy_3/tap.mp3",
+            "phase1": "fire_crackling/Shotgun-heavy_3/phase1.mp3",
+            "phase2": "fire_crackling/Shotgun-heavy_3/phase2.mp3",
+            "phase3": "fire_crackling/Shotgun-heavy_3/phase3.mp3",
+            "phase1_sc": "fire_crackling/Shotgun-heavy_3/phase1_sc.mp3",
+            "phase2_sc": "fire_crackling/Shotgun-heavy_3/phase2_sc.mp3",
+            "phase3_sc": "fire_crackling/Shotgun-heavy_3/phase3_sc.mp3"
           },
           "has_sidechain": true
         },
@@ -140,16 +140,16 @@
           "has_sidechain": true
         },
         {
-          "id": "Shotgun-tapping_11",
-          "label": "Shotgun \u2014 tapping",
+          "id": "Shotgun-heavy_3",
+          "label": "Shotgun \u2014 heavy",
           "files": {
-            "tap": "birds_chirping/Shotgun-tapping_11/tap.mp3",
-            "phase1": "birds_chirping/Shotgun-tapping_11/phase1.mp3",
-            "phase2": "birds_chirping/Shotgun-tapping_11/phase2.mp3",
-            "phase3": "birds_chirping/Shotgun-tapping_11/phase3.mp3",
-            "phase1_sc": "birds_chirping/Shotgun-tapping_11/phase1_sc.mp3",
-            "phase2_sc": "birds_chirping/Shotgun-tapping_11/phase2_sc.mp3",
-            "phase3_sc": "birds_chirping/Shotgun-tapping_11/phase3_sc.mp3"
+            "tap": "birds_chirping/Shotgun-heavy_3/tap.mp3",
+            "phase1": "birds_chirping/Shotgun-heavy_3/phase1.mp3",
+            "phase2": "birds_chirping/Shotgun-heavy_3/phase2.mp3",
+            "phase3": "birds_chirping/Shotgun-heavy_3/phase3.mp3",
+            "phase1_sc": "birds_chirping/Shotgun-heavy_3/phase1_sc.mp3",
+            "phase2_sc": "birds_chirping/Shotgun-heavy_3/phase2_sc.mp3",
+            "phase3_sc": "birds_chirping/Shotgun-heavy_3/phase3_sc.mp3"
           },
           "has_sidechain": true
         },
@@ -188,16 +188,16 @@
           "has_sidechain": true
         },
         {
-          "id": "Shotgun-tapping_11",
-          "label": "Shotgun \u2014 tapping",
+          "id": "Shotgun-heavy_3",
+          "label": "Shotgun \u2014 heavy",
           "files": {
-            "tap": "rain_sounds/Shotgun-tapping_11/tap.mp3",
-            "phase1": "rain_sounds/Shotgun-tapping_11/phase1.mp3",
-            "phase2": "rain_sounds/Shotgun-tapping_11/phase2.mp3",
-            "phase3": "rain_sounds/Shotgun-tapping_11/phase3.mp3",
-            "phase1_sc": "rain_sounds/Shotgun-tapping_11/phase1_sc.mp3",
-            "phase2_sc": "rain_sounds/Shotgun-tapping_11/phase2_sc.mp3",
-            "phase3_sc": "rain_sounds/Shotgun-tapping_11/phase3_sc.mp3"
+            "tap": "rain_sounds/Shotgun-heavy_3/tap.mp3",
+            "phase1": "rain_sounds/Shotgun-heavy_3/phase1.mp3",
+            "phase2": "rain_sounds/Shotgun-heavy_3/phase2.mp3",
+            "phase3": "rain_sounds/Shotgun-heavy_3/phase3.mp3",
+            "phase1_sc": "rain_sounds/Shotgun-heavy_3/phase1_sc.mp3",
+            "phase2_sc": "rain_sounds/Shotgun-heavy_3/phase2_sc.mp3",
+            "phase3_sc": "rain_sounds/Shotgun-heavy_3/phase3_sc.mp3"
           },
           "has_sidechain": true
         },
@@ -236,16 +236,16 @@
           "has_sidechain": true
         },
         {
-          "id": "Shotgun-tapping_11",
-          "label": "Shotgun \u2014 tapping",
+          "id": "Shotgun-heavy_3",
+          "label": "Shotgun \u2014 heavy",
           "files": {
-            "tap": "asmr/Shotgun-tapping_11/tap.mp3",
-            "phase1": "asmr/Shotgun-tapping_11/phase1.mp3",
-            "phase2": "asmr/Shotgun-tapping_11/phase2.mp3",
-            "phase3": "asmr/Shotgun-tapping_11/phase3.mp3",
-            "phase1_sc": "asmr/Shotgun-tapping_11/phase1_sc.mp3",
-            "phase2_sc": "asmr/Shotgun-tapping_11/phase2_sc.mp3",
-            "phase3_sc": "asmr/Shotgun-tapping_11/phase3_sc.mp3"
+            "tap": "asmr/Shotgun-heavy_3/tap.mp3",
+            "phase1": "asmr/Shotgun-heavy_3/phase1.mp3",
+            "phase2": "asmr/Shotgun-heavy_3/phase2.mp3",
+            "phase3": "asmr/Shotgun-heavy_3/phase3.mp3",
+            "phase1_sc": "asmr/Shotgun-heavy_3/phase1_sc.mp3",
+            "phase2_sc": "asmr/Shotgun-heavy_3/phase2_sc.mp3",
+            "phase3_sc": "asmr/Shotgun-heavy_3/phase3_sc.mp3"
           },
           "has_sidechain": true
         },
@@ -284,16 +284,16 @@
           "has_sidechain": true
         },
         {
-          "id": "Shotgun-tapping_11",
-          "label": "Shotgun \u2014 tapping",
+          "id": "Shotgun-heavy_3",
+          "label": "Shotgun \u2014 heavy",
           "files": {
-            "tap": "mouth_sounds/Shotgun-tapping_11/tap.mp3",
-            "phase1": "mouth_sounds/Shotgun-tapping_11/phase1.mp3",
-            "phase2": "mouth_sounds/Shotgun-tapping_11/phase2.mp3",
-            "phase3": "mouth_sounds/Shotgun-tapping_11/phase3.mp3",
-            "phase1_sc": "mouth_sounds/Shotgun-tapping_11/phase1_sc.mp3",
-            "phase2_sc": "mouth_sounds/Shotgun-tapping_11/phase2_sc.mp3",
-            "phase3_sc": "mouth_sounds/Shotgun-tapping_11/phase3_sc.mp3"
+            "tap": "mouth_sounds/Shotgun-heavy_3/tap.mp3",
+            "phase1": "mouth_sounds/Shotgun-heavy_3/phase1.mp3",
+            "phase2": "mouth_sounds/Shotgun-heavy_3/phase2.mp3",
+            "phase3": "mouth_sounds/Shotgun-heavy_3/phase3.mp3",
+            "phase1_sc": "mouth_sounds/Shotgun-heavy_3/phase1_sc.mp3",
+            "phase2_sc": "mouth_sounds/Shotgun-heavy_3/phase2_sc.mp3",
+            "phase3_sc": "mouth_sounds/Shotgun-heavy_3/phase3_sc.mp3"
           },
           "has_sidechain": true
         },
@@ -332,16 +332,16 @@
           "has_sidechain": true
         },
         {
-          "id": "Shotgun-tapping_11",
-          "label": "Shotgun \u2014 tapping",
+          "id": "Shotgun-heavy_3",
+          "label": "Shotgun \u2014 heavy",
           "files": {
-            "tap": "vctk/Shotgun-tapping_11/tap.mp3",
-            "phase1": "vctk/Shotgun-tapping_11/phase1.mp3",
-            "phase2": "vctk/Shotgun-tapping_11/phase2.mp3",
-            "phase3": "vctk/Shotgun-tapping_11/phase3.mp3",
-            "phase1_sc": "vctk/Shotgun-tapping_11/phase1_sc.mp3",
-            "phase2_sc": "vctk/Shotgun-tapping_11/phase2_sc.mp3",
-            "phase3_sc": "vctk/Shotgun-tapping_11/phase3_sc.mp3"
+            "tap": "vctk/Shotgun-heavy_3/tap.mp3",
+            "phase1": "vctk/Shotgun-heavy_3/phase1.mp3",
+            "phase2": "vctk/Shotgun-heavy_3/phase2.mp3",
+            "phase3": "vctk/Shotgun-heavy_3/phase3.mp3",
+            "phase1_sc": "vctk/Shotgun-heavy_3/phase1_sc.mp3",
+            "phase2_sc": "vctk/Shotgun-heavy_3/phase2_sc.mp3",
+            "phase3_sc": "vctk/Shotgun-heavy_3/phase3_sc.mp3"
           },
           "has_sidechain": true
         },
@@ -380,16 +380,16 @@
           "has_sidechain": true
         },
         {
-          "id": "Shotgun-tapping_11",
-          "label": "Shotgun \u2014 tapping",
+          "id": "Shotgun-heavy_3",
+          "label": "Shotgun \u2014 heavy",
           "files": {
-            "tap": "tabla/Shotgun-tapping_11/tap.mp3",
-            "phase1": "tabla/Shotgun-tapping_11/phase1.mp3",
-            "phase2": "tabla/Shotgun-tapping_11/phase2.mp3",
-            "phase3": "tabla/Shotgun-tapping_11/phase3.mp3",
-            "phase1_sc": "tabla/Shotgun-tapping_11/phase1_sc.mp3",
-            "phase2_sc": "tabla/Shotgun-tapping_11/phase2_sc.mp3",
-            "phase3_sc": "tabla/Shotgun-tapping_11/phase3_sc.mp3"
+            "tap": "tabla/Shotgun-heavy_3/tap.mp3",
+            "phase1": "tabla/Shotgun-heavy_3/phase1.mp3",
+            "phase2": "tabla/Shotgun-heavy_3/phase2.mp3",
+            "phase3": "tabla/Shotgun-heavy_3/phase3.mp3",
+            "phase1_sc": "tabla/Shotgun-heavy_3/phase1_sc.mp3",
+            "phase2_sc": "tabla/Shotgun-heavy_3/phase2_sc.mp3",
+            "phase3_sc": "tabla/Shotgun-heavy_3/phase3_sc.mp3"
           },
           "has_sidechain": true
         },

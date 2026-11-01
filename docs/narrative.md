@@ -112,7 +112,7 @@ export BRAVE_STORAGE=/data/hai-res/$USER/BRAVE-data
 python scripts/presentation_phase_demos.py \
   --domains babbling_brook fire_crackling birds_chirping rain_sounds \
             asmr mouth_sounds vctk tabla \
-  --tap-names sm57-0 moanin Shotgun-tapping_11 \
+  --tap-names sm57-0 moanin Shotgun-heavy_3 \
   --gpu --segment-sec 3 --max-sec 12 --skip-pca --sidechain \
   --out-dir "$BRAVE_STORAGE/presentation_demos_v2"
 
@@ -121,8 +121,9 @@ python scripts/package_project_page_audio.py \
   --out docs/assets/audio \
   --domains babbling_brook fire_crackling birds_chirping rain_sounds \
             asmr mouth_sounds vctk tabla \
-  --clips sm57-0 Shotgun-tapping_11 Contact_Mic_L-moanin
+  --clips sm57-0 Shotgun-heavy_3 Contact_Mic_L-moanin
 ```
+
 
 
 

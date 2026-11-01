@@ -60,6 +60,7 @@ CLIP_LABELS = {
     "Contact_Mic_L-moanin": "Contact mic — Moanin'",
     "moanin-Contact_Mic_L": "Contact mic — Moanin'",
     "Shotgun-tapping_11": "Shotgun — tapping",
+    "Shotgun-heavy_3": "Shotgun — heavy",
 }
 
 
