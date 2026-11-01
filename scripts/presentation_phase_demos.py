@@ -5,6 +5,9 @@ Phase 1: tap → Enc_Y → Dec_Y (zero-shot)
 Phase 2: tap → EQ+reverb(preset) → Enc_Y → Dec_Y
 Phase 3: tap → Enc_X → W_xy → Dec_Y (CycleGAN)
 
+Optional CausalLoudnessSidechain on phase 1/2/3 outputs (tap envelope
+ducks Y). Stems are written both raw and ``*_sc`` when sidechain is on.
+
 Demo WAVs interleave fixed-length segments back-to-back (no gap):
   phase1: tap0 || recon0 || tap1 || recon1 || …
   phase2: tap0 || eq0 || recon0 || tap1 || eq1 || recon1 || …
@@ -36,6 +39,7 @@ from rave.canonicalizer.cycle_inference import (  # noqa: E402
     load_cyclegan_warps_from_checkpoint,
     transfer_x_to_y,
 )
+from rave.canonicalizer.silence_gate import CausalLoudnessSidechain  # noqa: E402
 from rave.canonicalizer.viz import latent_frames_to_points  # noqa: E402
 from rave.dsp import BiquadBank, CausalReverb  # noqa: E402
 
@@ -180,7 +184,45 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Skip in-domain LMDB PCA plots (faster for page packaging)",
     )
+    p.add_argument(
+        "--sidechain",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Apply CausalLoudnessSidechain to CycleGAN output using the tap "
+            "envelope (matches BraveRT / nn~ default on)"
+        ),
+    )
+    p.add_argument(
+        "--sidechain-hop",
+        type=int,
+        default=0,
+        help="Sidechain hop in samples (0 = infer from Enc_X: T // z_frames)",
+    )
     return p.parse_args()
+
+
+def infer_encode_hop(backbone, x: torch.Tensor) -> int:
+    """Audio samples per latent frame (BRAVE PQMF×ratios → typically 128)."""
+    z = da.encode_mean(backbone, x)
+    hop = int(x.shape[-1] // max(1, z.shape[-1]))
+    return max(1, hop)
+
+
+@torch.no_grad()
+def apply_loudness_sidechain(
+    x: torch.Tensor,
+    y: torch.Tensor,
+    *,
+    hop: int,
+    device: torch.device,
+) -> torch.Tensor:
+    """x, y: (C, T) → sidechained y (C, T). Resets envelope each call."""
+    sc = CausalLoudnessSidechain(hop=hop).to(device)
+    sc.eval()
+    sc.reset()
+    out = sc(x.unsqueeze(0), y.unsqueeze(0))
+    return out[0]
 
 
 def discover_tap_files(
@@ -193,6 +235,18 @@ def discover_tap_files(
             files.append(p)
     for p in sorted(tap_dir.glob("Contact Mic L-*.unnormalized.wav")):
         files.append(p)
+    for p in sorted(tap_dir.glob("Shotgun-*.wav")):
+        files.append(p)
+    # De-dupe while preserving order (audio_subset may symlink shotgun takes).
+    seen: set[str] = set()
+    unique: List[Path] = []
+    for p in files:
+        key = str(p.resolve()) if p.exists() else str(p)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(p)
+    files = unique
     if name_filters:
         keys = [k.lower() for k in name_filters]
         files = [
@@ -319,8 +373,16 @@ def process_tap_segments(
     rev_knobs: Sequence[float],
     silence_sec: float,
     sr: int,
+    sidechain: bool = True,
+    sidechain_hop: int = 0,
+    device: torch.device | None = None,
 ):
-    """Interleaved demos + concat stems + pooled latents."""
+    """Interleaved demos + concat stems + pooled latents.
+
+    When ``sidechain`` is True, also returns sidechained phase-1/2/3 stems
+    (tap envelope ducks each reconstruction). Interleaved phase demos use the
+    sidechained outputs when available.
+    """
     p1_parts: List[torch.Tensor] = []
     p2_parts: List[torch.Tensor] = []
     p3_parts: List[torch.Tensor] = []
@@ -329,9 +391,15 @@ def process_tap_segments(
     y1_stem: List[torch.Tensor] = []
     y2_stem: List[torch.Tensor] = []
     y3_stem: List[torch.Tensor] = []
+    y1_sc_stem: List[torch.Tensor] = []
+    y2_sc_stem: List[torch.Tensor] = []
+    y3_sc_stem: List[torch.Tensor] = []
     z1_list: List[torch.Tensor] = []
     z2_list: List[torch.Tensor] = []
     zxy_list: List[torch.Tensor] = []
+    hop: int | None = sidechain_hop if sidechain_hop > 0 else None
+    if device is None:
+        device = next(backbone_x.parameters()).device
 
     for seg in tap_segs:
         x = da.peak_normalize(seg)
@@ -359,14 +427,34 @@ def process_tap_segments(
         z_x = da.encode_mean(backbone_x, x)
         z_xy = warp_xy(z_x)
 
-        p1_parts.extend([x, y1])
-        p2_parts.extend([x, x_eq, y2])
-        p3_parts.extend([x, y3])
+        if sidechain:
+            if hop is None:
+                hop = infer_encode_hop(backbone_x, x)
+            y1_sc = da.peak_normalize(
+                apply_loudness_sidechain(x, y1, hop=hop, device=device)
+            )
+            y2_sc = da.peak_normalize(
+                apply_loudness_sidechain(x, y2, hop=hop, device=device)
+            )
+            y3_sc = da.peak_normalize(
+                apply_loudness_sidechain(x, y3, hop=hop, device=device)
+            )
+        else:
+            y1_sc = y1
+            y2_sc = y2
+            y3_sc = y3
+
+        p1_parts.extend([x, y1_sc if sidechain else y1])
+        p2_parts.extend([x, x_eq, y2_sc if sidechain else y2])
+        p3_parts.extend([x, y3_sc if sidechain else y3])
         tap_stem.append(x)
         eq_stem.append(x_eq)
         y1_stem.append(y1)
         y2_stem.append(y2)
         y3_stem.append(y3)
+        y1_sc_stem.append(y1_sc)
+        y2_sc_stem.append(y2_sc)
+        y3_sc_stem.append(y3_sc)
         z1_list.append(z1)
         z2_list.append(z2)
         zxy_list.append(z_xy)
@@ -380,6 +468,9 @@ def process_tap_segments(
         torch.cat(y1_stem, dim=-1),
         torch.cat(y2_stem, dim=-1),
         torch.cat(y3_stem, dim=-1),
+        torch.cat(y1_sc_stem, dim=-1),
+        torch.cat(y2_sc_stem, dim=-1),
+        torch.cat(y3_sc_stem, dim=-1),
         torch.cat(z1_list, dim=-1),
         torch.cat(z2_list, dim=-1),
         torch.cat(zxy_list, dim=-1),
@@ -414,7 +505,10 @@ def process_domain(
     print(f"\n===== {domain} =====")
     print(f"  Y: {y_ckpt}")
     print(f"  CycleGAN: {cycle_ckpt}")
-    print(f"  segment_sec={args.segment_sec} max_sec={args.max_sec}")
+    print(
+        f"  segment_sec={args.segment_sec} max_sec={args.max_sec} "
+        f"sidechain={args.sidechain}"
+    )
 
     backbone_y = load_model(y_ckpt, use_gpu=args.gpu)
     warp_xy, _warp_yx, manifest = load_cyclegan_warps_from_checkpoint(
@@ -451,6 +545,8 @@ def process_domain(
                 "segment_sec": args.segment_sec,
                 "max_sec": args.max_sec,
                 "silence_sec": args.silence_sec,
+                "cyclegan_sidechain": bool(args.sidechain),
+                "sidechain_hop": int(args.sidechain_hop) or "infer",
             },
             indent=2,
         )
@@ -474,6 +570,7 @@ def process_domain(
         (
             demo1, demo2, demo3,
             stem_tap, stem_eq, stem_y1, stem_y2, stem_y3,
+            stem_y1_sc, stem_y2_sc, stem_y3_sc,
             z1_all, z2_all, zxy_all,
         ) = process_tap_segments(
             tap_segs,
@@ -487,6 +584,9 @@ def process_domain(
             rev_knobs=rev_knobs,
             silence_sec=args.silence_sec,
             sr=sr,
+            sidechain=bool(args.sidechain),
+            sidechain_hop=int(args.sidechain_hop),
+            device=device,
         )
 
         ood_p1.append(latent_frames_to_points(z1_all, max_points=256))
@@ -502,6 +602,10 @@ def process_domain(
         save_audio(stems_dir / "02_phase1_recon.wav", stem_y1, sr)
         save_audio(stems_dir / "03_phase2_recon.wav", stem_y2, sr)
         save_audio(stems_dir / "04_cyclegan.wav", stem_y3, sr)
+        if args.sidechain:
+            save_audio(stems_dir / "02_phase1_recon_sc.wav", stem_y1_sc, sr)
+            save_audio(stems_dir / "03_phase2_recon_sc.wav", stem_y2_sc, sr)
+            save_audio(stems_dir / "04_cyclegan_sc.wav", stem_y3_sc, sr)
 
         save_audio(clip_dir / "phase1_demo.wav", demo1, sr)
         save_audio(clip_dir / "phase2_demo.wav", demo2, sr)
@@ -512,9 +616,9 @@ def process_domain(
             clip_dir,
             stem_tap=stem_tap,
             stem_eq=stem_eq,
-            stem_y1=stem_y1,
-            stem_y2=stem_y2,
-            stem_y3=stem_y3,
+            stem_y1=stem_y1_sc if args.sidechain else stem_y1,
+            stem_y2=stem_y2_sc if args.sidechain else stem_y2,
+            stem_y3=stem_y3_sc if args.sidechain else stem_y3,
             title_prefix=dn,
             sr=sr,
             segment_sec=args.segment_sec,

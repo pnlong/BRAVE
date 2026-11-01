@@ -5,11 +5,14 @@
   const clipSelect = document.getElementById("clip-select");
   const playersRoot = document.getElementById("players");
   const statusEl = document.getElementById("demo-status");
+  const sidechainToggle = document.getElementById("sidechain-toggle");
+  const sidechainControl = document.getElementById("sidechain-control");
 
   /** @type {any} */
   let manifest = null;
   /** @type {HTMLAudioElement[]} */
   let audios = [];
+  let sidechainOn = true;
 
   function setStatus(msg) {
     if (statusEl) statusEl.textContent = msg || "";
@@ -44,6 +47,13 @@
     });
   }
 
+  function fileForTrack(clip, track) {
+    if (track.sidechain && sidechainOn && clip.files[`${track.id}_sc`]) {
+      return clip.files[`${track.id}_sc`];
+    }
+    return clip.files[track.id];
+  }
+
   function renderPlayers() {
     const domain = currentDomain();
     if (!domain || !domain.clips.length) {
@@ -56,11 +66,19 @@
       clipSelect.value = clip.id;
     }
 
+    const clipHasSc = Boolean(clip.has_sidechain);
+    if (sidechainControl) {
+      sidechainControl.hidden = !(manifest.sidechain_available && clipHasSc);
+    }
+    // Prefer the toggle state when SC stems exist; otherwise force raw.
+    const useSc = Boolean(sidechainToggle && sidechainToggle.checked && clipHasSc);
+    sidechainOn = useSc;
+
     playersRoot.innerHTML = "";
     audios = [];
 
     manifest.tracks.forEach((track) => {
-      const file = clip.files[track.id];
+      const file = fileForTrack(clip, track);
       if (!file) return;
 
       const card = document.createElement("article");
@@ -76,7 +94,10 @@
 
       const tag = document.createElement("span");
       tag.className = "tag";
-      tag.textContent = domain.label;
+      tag.textContent =
+        track.sidechain && sidechainOn && clip.files[`${track.id}_sc`]
+          ? "sidechain on"
+          : domain.label;
 
       label.append(name, tag);
 
@@ -84,6 +105,7 @@
       audio.controls = true;
       audio.preload = "metadata";
       audio.src = AUDIO_BASE + file;
+      audio.dataset.trackId = track.id;
       audio.addEventListener("play", () => pauseOthers(audio));
 
       card.append(label, audio);
@@ -91,12 +113,19 @@
       audios.push(audio);
     });
 
-    setStatus(`${domain.label} · ${clip.label}`);
+    const scNote =
+      sidechainOn && clipHasSc ? " · loudness sidechain on" : " · sidechain off";
+    setStatus(`${domain.label} · ${clip.label}${clipHasSc ? scNote : ""}`);
   }
 
   function onDomainChange() {
     const domain = currentDomain();
     fillSelect(clipSelect, domain.clips, domain.clips[0]?.id);
+    renderPlayers();
+  }
+
+  function onSidechainToggle() {
+    sidechainOn = Boolean(sidechainToggle && sidechainToggle.checked);
     renderPlayers();
   }
 
@@ -114,6 +143,12 @@
     if (!manifest.domains?.length) {
       setStatus("Manifest has no domains.");
       return;
+    }
+
+    sidechainOn = manifest.sidechain_default !== false;
+    if (sidechainToggle) {
+      sidechainToggle.checked = sidechainOn;
+      sidechainToggle.addEventListener("change", onSidechainToggle);
     }
 
     fillSelect(domainSelect, manifest.domains, "babbling_brook");

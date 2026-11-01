@@ -5,13 +5,14 @@ Reads WAV stems from presentation_phase_demos output::
 
     <src>/<domain>/<clip>/stems/
       00_tap.wav
-      02_phase1_recon.wav
-      03_phase2_recon.wav
-      04_cyclegan.wav
+      02_phase1_recon.wav / 02_phase1_recon_sc.wav
+      03_phase2_recon.wav / 03_phase2_recon_sc.wav
+      04_cyclegan.wav / 04_cyclegan_sc.wav
 
 Writes::
 
     <out>/<domain>/<clip>/{tap,phase1,phase2,phase3}.mp3
+    <out>/<domain>/<clip>/{phase1,phase2,phase3}_sc.mp3
     <out>/manifest.json
 """
 
@@ -35,6 +36,13 @@ STEM_MAP = {
     "phase3": "04_cyclegan.wav",
 }
 
+# Optional loudness-sidechain variants (tap envelope ducks the reconstruction).
+SC_STEM_MAP = {
+    "phase1_sc": "02_phase1_recon_sc.wav",
+    "phase2_sc": "03_phase2_recon_sc.wav",
+    "phase3_sc": "04_cyclegan_sc.wav",
+}
+
 DOMAIN_LABELS = {
     "babbling_brook": "Babbling Brook",
     "fire_crackling": "Fire Crackling",
@@ -47,6 +55,7 @@ CLIP_LABELS = {
     "0": "SM57 (take 0)",
     "Contact_Mic_L-moanin": "Contact mic — Moanin'",
     "moanin-Contact_Mic_L": "Contact mic — Moanin'",
+    "Shotgun-tapping_11": "Shotgun — tapping",
 }
 
 
@@ -139,6 +148,10 @@ def clip_label(stem: str) -> str:
         return CLIP_LABELS[stem]
     if "moanin" in stem.lower():
         return "Contact mic — Moanin'"
+    lower = stem.lower()
+    if lower.startswith("shotgun"):
+        rest = stem.split("-", 1)[-1].replace("_", " ")
+        return f"Shotgun — {rest}"
     if stem.startswith("sm57") or stem in {"0", "1"}:
         return f"SM57 ({stem})"
     return stem.replace("_", " ")
@@ -164,10 +177,12 @@ def list_clip_dirs(
 
     def sort_key(p: Path) -> tuple:
         name = p.name.lower()
-        # Prefer SM57 / numeric takes before contact-mic takes on the page.
+        # SM57 → shotgun → contact on the page.
         if name.startswith("sm57") or name in {"0", "1"}:
             return (0, name)
-        return (1, name)
+        if name.startswith("shotgun"):
+            return (1, name)
+        return (2, name)
 
     return sorted(clips, key=sort_key)
 
@@ -194,22 +209,27 @@ def package_domain(
             continue
 
         rel_files: Dict[str, str] = {}
-        for key, wav_name in STEM_MAP.items():
+        for key, wav_name in {**STEM_MAP, **SC_STEM_MAP}.items():
+            src_wav = stems_dir / wav_name
+            if key in SC_STEM_MAP and not src_wav.is_file():
+                continue
             dest = out_root / domain / clip_dir.name / f"{key}.mp3"
             print(f"  encode {domain}/{clip_dir.name}/{key}.mp3")
             wav_to_mp3(
-                stems_dir / wav_name,
+                src_wav,
                 dest,
                 bitrate=bitrate,
                 peak_db=peak_db,
             )
             rel_files[key] = f"{domain}/{clip_dir.name}/{key}.mp3"
 
+        has_sc = all(k in rel_files for k in SC_STEM_MAP)
         clip_entries.append(
             {
                 "id": clip_dir.name,
                 "label": clip_label(clip_dir.name),
                 "files": rel_files,
+                "has_sidechain": has_sc,
             }
         )
 
@@ -252,13 +272,20 @@ def main() -> None:
         if entry["clips"]:
             manifest_domains.append(entry)
 
+    any_sc = any(
+        c.get("has_sidechain")
+        for d in manifest_domains
+        for c in d.get("clips", [])
+    )
     manifest = {
-        "version": 1,
+        "version": 2,
+        "sidechain_default": True,
+        "sidechain_available": any_sc,
         "tracks": [
-            {"id": "tap", "label": "Tap (input)"},
-            {"id": "phase1", "label": "Zero-shot"},
-            {"id": "phase2", "label": "EQ + reverb"},
-            {"id": "phase3", "label": "CycleGAN"},
+            {"id": "tap", "label": "Tap (input)", "sidechain": False},
+            {"id": "phase1", "label": "Zero-shot", "sidechain": True},
+            {"id": "phase2", "label": "EQ + reverb", "sidechain": True},
+            {"id": "phase3", "label": "CycleGAN", "sidechain": True},
         ],
         "domains": manifest_domains,
     }

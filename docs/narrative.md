@@ -50,6 +50,10 @@ warps \(W_{xy}\), \(W_{yx}\):
 Cross-space warps, random init, cycle + GAN. This is what the project-page
 “CycleGAN” demos use (`tap_fx_sc_*` / separate geometry).
 
+**Loudness sidechain:** page demos write both raw and `*_sc` stems for phases
+1–3 (`CausalLoudnessSidechain`: tap envelope ducks Y). The site toggle
+defaults on (BraveRT / nn~ default).
+
 **Write-up TODO — math to expand:**
 
 - Cycle objectives in waveform vs latent domain (`cycle_domain`)
@@ -107,14 +111,15 @@ export BRAVE_STORAGE=/data/hai-res/$USER/BRAVE-data
 
 python scripts/presentation_phase_demos.py \
   --domains babbling_brook fire_crackling birds_chirping rain_sounds \
-  --tap-names sm57-0 moanin \
-  --gpu --segment-sec 3 --max-sec 12 --skip-pca \
+  --tap-names sm57-0 moanin Shotgun-tapping_11 \
+  --gpu --segment-sec 3 --max-sec 12 --skip-pca --sidechain \
   --out-dir "$BRAVE_STORAGE/presentation_demos_v2"
 
 python scripts/package_project_page_audio.py \
   --src "$BRAVE_STORAGE/presentation_demos_v2" \
   --out docs/assets/audio \
-  --clips sm57-0 Contact_Mic_L-moanin
+  --clips sm57-0 Shotgun-tapping_11 Contact_Mic_L-moanin
 ```
+
 
 GitHub Pages serves [`index.html`](index.html) from this `docs/` folder.

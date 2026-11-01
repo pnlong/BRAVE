@@ -170,6 +170,99 @@ img {
   padding: 0.55rem 2rem 0.55rem 0.7rem;
 }
 
+.control-toggle {
+  justify-content: flex-end;
+  min-width: 11rem;
+  flex: 0 0 auto;
+}
+
+.toggle-label {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.switch input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.slider {
+  position: relative;
+  width: 2.6rem;
+  height: 1.45rem;
+  background: #b7ae9d;
+  border-radius: 999px;
+  transition: background 0.15s ease;
+  flex-shrink: 0;
+}
+
+.slider::after {
+  content: "";
+  position: absolute;
+  top: 0.18rem;
+  left: 0.18rem;
+  width: 1.1rem;
+  height: 1.1rem;
+  border-radius: 50%;
+  background: #fffdf8;
+  box-shadow: 0 1px 2px rgba(28, 26, 22, 0.25);
+  transition: transform 0.15s ease;
+}
+
+.switch input:checked + .slider {
+  background: var(--accent);
+}
+
+.switch input:checked + .slider::after {
+  transform: translateX(1.15rem);
+}
+
+.switch input:focus-visible + .slider {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.switch-state {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--ink);
+  min-width: 1.6rem;
+}
+
+.switch-state::before {
+  content: attr(data-off);
+}
+
+.switch input:checked ~ .switch-state::before {
+  content: attr(data-on);
+}
+
+.sidechain-note {
+  margin: 0 0 1.1rem;
+  padding: 0.85rem 1rem;
+  background: var(--accent-soft);
+  border: 1px solid #b7d5cb;
+  color: var(--ink);
+  font-size: 0.95rem;
+}
+
+.sidechain-note strong {
+  font-weight: 700;
+}
+
 .players {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

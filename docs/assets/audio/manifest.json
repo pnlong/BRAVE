@@ -1,21 +1,27 @@
 {
-  "version": 1,
+  "version": 2,
+  "sidechain_default": true,
+  "sidechain_available": true,
   "tracks": [
     {
       "id": "tap",
-      "label": "Tap (input)"
+      "label": "Tap (input)",
+      "sidechain": false
     },
     {
       "id": "phase1",
-      "label": "Zero-shot"
+      "label": "Zero-shot",
+      "sidechain": true
     },
     {
       "id": "phase2",
-      "label": "EQ + reverb"
+      "label": "EQ + reverb",
+      "sidechain": true
     },
     {
       "id": "phase3",
-      "label": "CycleGAN"
+      "label": "CycleGAN",
+      "sidechain": true
     }
   ],
   "domains": [
@@ -30,8 +36,26 @@
             "tap": "babbling_brook/sm57-0/tap.mp3",
             "phase1": "babbling_brook/sm57-0/phase1.mp3",
             "phase2": "babbling_brook/sm57-0/phase2.mp3",
-            "phase3": "babbling_brook/sm57-0/phase3.mp3"
-          }
+            "phase3": "babbling_brook/sm57-0/phase3.mp3",
+            "phase1_sc": "babbling_brook/sm57-0/phase1_sc.mp3",
+            "phase2_sc": "babbling_brook/sm57-0/phase2_sc.mp3",
+            "phase3_sc": "babbling_brook/sm57-0/phase3_sc.mp3"
+          },
+          "has_sidechain": true
+        },
+        {
+          "id": "Shotgun-tapping_11",
+          "label": "Shotgun \u2014 tapping",
+          "files": {
+            "tap": "babbling_brook/Shotgun-tapping_11/tap.mp3",
+            "phase1": "babbling_brook/Shotgun-tapping_11/phase1.mp3",
+            "phase2": "babbling_brook/Shotgun-tapping_11/phase2.mp3",
+            "phase3": "babbling_brook/Shotgun-tapping_11/phase3.mp3",
+            "phase1_sc": "babbling_brook/Shotgun-tapping_11/phase1_sc.mp3",
+            "phase2_sc": "babbling_brook/Shotgun-tapping_11/phase2_sc.mp3",
+            "phase3_sc": "babbling_brook/Shotgun-tapping_11/phase3_sc.mp3"
+          },
+          "has_sidechain": true
         },
         {
           "id": "Contact_Mic_L-moanin",
@@ -40,8 +64,12 @@
             "tap": "babbling_brook/Contact_Mic_L-moanin/tap.mp3",
             "phase1": "babbling_brook/Contact_Mic_L-moanin/phase1.mp3",
             "phase2": "babbling_brook/Contact_Mic_L-moanin/phase2.mp3",
-            "phase3": "babbling_brook/Contact_Mic_L-moanin/phase3.mp3"
-          }
+            "phase3": "babbling_brook/Contact_Mic_L-moanin/phase3.mp3",
+            "phase1_sc": "babbling_brook/Contact_Mic_L-moanin/phase1_sc.mp3",
+            "phase2_sc": "babbling_brook/Contact_Mic_L-moanin/phase2_sc.mp3",
+            "phase3_sc": "babbling_brook/Contact_Mic_L-moanin/phase3_sc.mp3"
+          },
+          "has_sidechain": true
         }
       ]
     },
@@ -56,8 +84,26 @@
             "tap": "fire_crackling/sm57-0/tap.mp3",
             "phase1": "fire_crackling/sm57-0/phase1.mp3",
             "phase2": "fire_crackling/sm57-0/phase2.mp3",
-            "phase3": "fire_crackling/sm57-0/phase3.mp3"
-          }
+            "phase3": "fire_crackling/sm57-0/phase3.mp3",
+            "phase1_sc": "fire_crackling/sm57-0/phase1_sc.mp3",
+            "phase2_sc": "fire_crackling/sm57-0/phase2_sc.mp3",
+            "phase3_sc": "fire_crackling/sm57-0/phase3_sc.mp3"
+          },
+          "has_sidechain": true
+        },
+        {
+          "id": "Shotgun-tapping_11",
+          "label": "Shotgun \u2014 tapping",
+          "files": {
+            "tap": "fire_crackling/Shotgun-tapping_11/tap.mp3",
+            "phase1": "fire_crackling/Shotgun-tapping_11/phase1.mp3",
+            "phase2": "fire_crackling/Shotgun-tapping_11/phase2.mp3",
+            "phase3": "fire_crackling/Shotgun-tapping_11/phase3.mp3",
+            "phase1_sc": "fire_crackling/Shotgun-tapping_11/phase1_sc.mp3",
+            "phase2_sc": "fire_crackling/Shotgun-tapping_11/phase2_sc.mp3",
+            "phase3_sc": "fire_crackling/Shotgun-tapping_11/phase3_sc.mp3"
+          },
+          "has_sidechain": true
         },
         {
           "id": "Contact_Mic_L-moanin",
@@ -66,8 +112,12 @@
             "tap": "fire_crackling/Contact_Mic_L-moanin/tap.mp3",
             "phase1": "fire_crackling/Contact_Mic_L-moanin/phase1.mp3",
             "phase2": "fire_crackling/Contact_Mic_L-moanin/phase2.mp3",
-            "phase3": "fire_crackling/Contact_Mic_L-moanin/phase3.mp3"
-          }
+            "phase3": "fire_crackling/Contact_Mic_L-moanin/phase3.mp3",
+            "phase1_sc": "fire_crackling/Contact_Mic_L-moanin/phase1_sc.mp3",
+            "phase2_sc": "fire_crackling/Contact_Mic_L-moanin/phase2_sc.mp3",
+            "phase3_sc": "fire_crackling/Contact_Mic_L-moanin/phase3_sc.mp3"
+          },
+          "has_sidechain": true
         }
       ]
     },
@@ -82,8 +132,26 @@
             "tap": "birds_chirping/sm57-0/tap.mp3",
             "phase1": "birds_chirping/sm57-0/phase1.mp3",
             "phase2": "birds_chirping/sm57-0/phase2.mp3",
-            "phase3": "birds_chirping/sm57-0/phase3.mp3"
-          }
+            "phase3": "birds_chirping/sm57-0/phase3.mp3",
+            "phase1_sc": "birds_chirping/sm57-0/phase1_sc.mp3",
+            "phase2_sc": "birds_chirping/sm57-0/phase2_sc.mp3",
+            "phase3_sc": "birds_chirping/sm57-0/phase3_sc.mp3"
+          },
+          "has_sidechain": true
+        },
+        {
+          "id": "Shotgun-tapping_11",
+          "label": "Shotgun \u2014 tapping",
+          "files": {
+            "tap": "birds_chirping/Shotgun-tapping_11/tap.mp3",
+            "phase1": "birds_chirping/Shotgun-tapping_11/phase1.mp3",
+            "phase2": "birds_chirping/Shotgun-tapping_11/phase2.mp3",
+            "phase3": "birds_chirping/Shotgun-tapping_11/phase3.mp3",
+            "phase1_sc": "birds_chirping/Shotgun-tapping_11/phase1_sc.mp3",
+            "phase2_sc": "birds_chirping/Shotgun-tapping_11/phase2_sc.mp3",
+            "phase3_sc": "birds_chirping/Shotgun-tapping_11/phase3_sc.mp3"
+          },
+          "has_sidechain": true
         },
         {
           "id": "Contact_Mic_L-moanin",
@@ -92,8 +160,12 @@
             "tap": "birds_chirping/Contact_Mic_L-moanin/tap.mp3",
             "phase1": "birds_chirping/Contact_Mic_L-moanin/phase1.mp3",
             "phase2": "birds_chirping/Contact_Mic_L-moanin/phase2.mp3",
-            "phase3": "birds_chirping/Contact_Mic_L-moanin/phase3.mp3"
-          }
+            "phase3": "birds_chirping/Contact_Mic_L-moanin/phase3.mp3",
+            "phase1_sc": "birds_chirping/Contact_Mic_L-moanin/phase1_sc.mp3",
+            "phase2_sc": "birds_chirping/Contact_Mic_L-moanin/phase2_sc.mp3",
+            "phase3_sc": "birds_chirping/Contact_Mic_L-moanin/phase3_sc.mp3"
+          },
+          "has_sidechain": true
         }
       ]
     },
@@ -108,8 +180,26 @@
             "tap": "rain_sounds/sm57-0/tap.mp3",
             "phase1": "rain_sounds/sm57-0/phase1.mp3",
             "phase2": "rain_sounds/sm57-0/phase2.mp3",
-            "phase3": "rain_sounds/sm57-0/phase3.mp3"
-          }
+            "phase3": "rain_sounds/sm57-0/phase3.mp3",
+            "phase1_sc": "rain_sounds/sm57-0/phase1_sc.mp3",
+            "phase2_sc": "rain_sounds/sm57-0/phase2_sc.mp3",
+            "phase3_sc": "rain_sounds/sm57-0/phase3_sc.mp3"
+          },
+          "has_sidechain": true
+        },
+        {
+          "id": "Shotgun-tapping_11",
+          "label": "Shotgun \u2014 tapping",
+          "files": {
+            "tap": "rain_sounds/Shotgun-tapping_11/tap.mp3",
+            "phase1": "rain_sounds/Shotgun-tapping_11/phase1.mp3",
+            "phase2": "rain_sounds/Shotgun-tapping_11/phase2.mp3",
+            "phase3": "rain_sounds/Shotgun-tapping_11/phase3.mp3",
+            "phase1_sc": "rain_sounds/Shotgun-tapping_11/phase1_sc.mp3",
+            "phase2_sc": "rain_sounds/Shotgun-tapping_11/phase2_sc.mp3",
+            "phase3_sc": "rain_sounds/Shotgun-tapping_11/phase3_sc.mp3"
+          },
+          "has_sidechain": true
         },
         {
           "id": "Contact_Mic_L-moanin",
@@ -118,8 +208,12 @@
             "tap": "rain_sounds/Contact_Mic_L-moanin/tap.mp3",
             "phase1": "rain_sounds/Contact_Mic_L-moanin/phase1.mp3",
             "phase2": "rain_sounds/Contact_Mic_L-moanin/phase2.mp3",
-            "phase3": "rain_sounds/Contact_Mic_L-moanin/phase3.mp3"
-          }
+            "phase3": "rain_sounds/Contact_Mic_L-moanin/phase3.mp3",
+            "phase1_sc": "rain_sounds/Contact_Mic_L-moanin/phase1_sc.mp3",
+            "phase2_sc": "rain_sounds/Contact_Mic_L-moanin/phase2_sc.mp3",
+            "phase3_sc": "rain_sounds/Contact_Mic_L-moanin/phase3_sc.mp3"
+          },
+          "has_sidechain": true
         }
       ]
     }

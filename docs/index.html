@@ -84,7 +84,8 @@
           <h2>Examples</h2>
           <p class="section-intro">
             Same tap clip on every row. Listen to the raw input, then the three
-            transforms side by side. Pick a target domain and an input take.
+            transforms side by side. Pick a target domain and an input take
+            (SM57, shotgun, or contact mic).
           </p>
 
           <div class="controls">
@@ -96,7 +97,29 @@
               <label for="clip-select">Tap input</label>
               <select id="clip-select" aria-label="Tap input clip"></select>
             </div>
+            <div class="control control-toggle" id="sidechain-control">
+              <span class="toggle-label" id="sidechain-label">
+                Loudness sidechain
+              </span>
+              <label class="switch" for="sidechain-toggle">
+                <input
+                  type="checkbox"
+                  id="sidechain-toggle"
+                  checked
+                  aria-labelledby="sidechain-label"
+                />
+                <span class="slider" aria-hidden="true"></span>
+                <span class="switch-state" data-on="On" data-off="Off"></span>
+              </label>
+            </div>
           </div>
+
+          <p class="sidechain-note">
+            <strong>Loudness sidechain</strong> (default on, as in the realtime
+            host) scales each reconstruction by a causal envelope of the tap, so
+            quiet gaps stay quiet instead of filling with model hiss. Toggle it
+            off to hear the raw model output.
+          </p>
 
           <div id="players" class="players" aria-live="polite"></div>
           <p id="demo-status" class="hint"></p>
