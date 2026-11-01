@@ -47,7 +47,12 @@ flags.DEFINE_string(
 )
 flags.DEFINE_string("db_path", default=None, help="LMDB path (Fader stats lookup)")
 flags.DEFINE_string("stats_path", default=None, help="attribute_stats.yaml (Fader)")
-flags.DEFINE_enum("host", "nn", ["nn", "ts", "h5"], help="Export target")
+flags.DEFINE_enum(
+    "host",
+    "nn",
+    ["nn", "ts", "h5", "brave_rt"],
+    help="Export target (brave_rt = open C++/JUCE bundle under brave_rt/)",
+)
 flags.DEFINE_string(
     "canonicalizer",
     default="auto",
@@ -115,6 +120,38 @@ def _export_h5(model_path: str, output_dir: Path) -> Path:
     return h5_path
 
 
+def _export_brave_rt(
+    model_path: str,
+    output_dir: Path,
+    *,
+    direction: str = "xy",
+    db_path: str | None = None,
+    stats_path: str | None = None,
+) -> Path:
+    """Vanilla BRAVE or CycleGAN → brave_rt bundle (npy_weights + brave_rt.json)."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        sys.executable,
+        str(_BRAVE_ROOT / "brave_rt" / "python" / "export_brave_rt.py"),
+        f"--model={model_path}",
+        f"--output_dir={output_dir}",
+        f"--direction={direction}",
+    ]
+    if db_path:
+        cmd.append(f"--db_path={db_path}")
+    if stats_path:
+        cmd.append(f"--stats_path={stats_path}")
+    logging.info("running: %s", " ".join(cmd))
+    env = dict(**{k: v for k, v in __import__("os").environ.items()})
+    # Ensure RAVE + brave_rt/python on path for child
+    rave = str(_RAVE_ROOT)
+    brpy = str(_BRAVE_ROOT / "brave_rt" / "python")
+    prev = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = f"{rave}:{brpy}:{prev}" if prev else f"{rave}:{brpy}"
+    subprocess.run(cmd, check=True, cwd=str(_BRAVE_ROOT), env=env)
+    return output_dir
+
+
 def main(argv):
     del argv
     model_path = FLAGS.model
@@ -136,8 +173,16 @@ def main(argv):
 
     if cyclegan_ckpt:
         if FLAGS.host == "h5":
-            logging.error("CycleGAN export is nn~/TorchScript only (--host nn or ts)")
+            logging.error("CycleGAN export is nn~/TorchScript/brave_rt only (--host nn|ts|brave_rt)")
             sys.exit(1)
+        if FLAGS.host == "brave_rt":
+            logging.info("CycleGAN brave_rt export from %s", cyclegan_ckpt)
+            out = _export_brave_rt(
+                cyclegan_ckpt, output_dir, direction="xy",
+                db_path=FLAGS.db_path, stats_path=FLAGS.stats_path,
+            )
+            logging.info("brave_rt CycleGAN bundle: %s", out)
+            return
         logging.info(
             "CycleGAN X→Y export from %s", cyclegan_ckpt)
         ts_path = output_dir / "model.ts"
@@ -169,6 +214,14 @@ def main(argv):
     if FLAGS.host == "h5":
         out = _export_h5(model_path, output_dir)
         logging.info("plugin export: %s", out)
+        return
+
+    if FLAGS.host == "brave_rt":
+        out = _export_brave_rt(
+            model_path, output_dir,
+            db_path=FLAGS.db_path, stats_path=FLAGS.stats_path,
+        )
+        logging.info("brave_rt bundle: %s", out)
         return
 
     ts_path = output_dir / "model.ts"

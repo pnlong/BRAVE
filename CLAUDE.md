@@ -56,6 +56,28 @@ python scripts/export_model.py --model path/to/model.ckpt --host h5 --output_dir
 # or: python ./scripts/export_brave_plugin.py --model path/to/model.ckpt --output_path ./exported_model.h5
 ```
 
+**Export BraveRT bundle** (open C++/JUCE host — see [`brave_rt/README.md`](brave_rt/README.md)):
+```bash
+# Vanilla BRAVE AE
+python scripts/export_model.py --model path/to/vanilla_run --host brave_rt \
+  --output_dir brave_rt/testdata/bundles/my_run
+
+# FaderRAVE (knobs + optional extract; needs attribute_stats.yaml)
+python scripts/export_model.py --model path/to/fader_run --host brave_rt \
+  --stats_path /path/to/attribute_stats.yaml \
+  --output_dir brave_rt/testdata/bundles/my_fader
+
+# Unconditional CycleGAN (Enc_X → W_xy → Dec_Y + sidechain metadata)
+python scripts/export_model.py --model path/to/cyclegan_run_or_ckpt --host brave_rt \
+  --output_dir brave_rt/testdata/bundles/my_cyclegan
+
+# Optional Y→X (same exporter):
+PYTHONPATH="${PWD}/RAVE:${PWD}/brave_rt/python:${PYTHONPATH}" \
+  python brave_rt/python/export_brave_rt.py --model path/to/cyclegan_latent.ckpt \
+  --output_dir brave_rt/testdata/bundles/my_cyclegan_yx --direction yx
+```
+Engine smoke (Linux): `bash brave_rt/ci/run_engine_smoke.sh`
+
 ## Fader Networks training
 
 Fader training uses standalone `configs/brave_fader.gin` (includes base `brave.gin`). Providers live in `RAVE/rave/fader/providers/`. See [`scratchpaper/fader_future_work.md`](scratchpaper/fader_future_work.md) and [`docs/fader_host_controls.md`](docs/fader_host_controls.md).
@@ -69,11 +91,29 @@ python RAVE/scripts/precompute_descriptors.py \
 **Train FaderRAVE:**
 ```bash
 python RAVE/scripts/train.py --name brave_fader_run \
-  --config configs/brave_fader.gin \
-  --db_path /path/to/lmdb --batch 8 --gpu -1
+ --config configs/brave_fader_texture.gin \
+ --db_path /path/to/lmdb --batch 8 --gpu -1
 ```
 
 Writes `attribute_stats.yaml` beside the LMDB. Swap continuous/discrete attributes via gin lists + `attribute_sidecar.yaml` without editing dataset code.
+
+**Joint conditional Fader** (schema \(x\cup y\), availability masks; then conditional joint CycleGAN):
+```bash
+# Precompute on each LMDB, then stratified dual-LMDB train:
+python RAVE/scripts/train.py --config configs/brave_fader_joint_tap_water.gin \
+  --db_path_x /path/tap_lmdb --db_path_y /path/water_lmdb \
+  --name joint_fader_tap_water --batch 8
+# or: bash scripts/submit_joint_fader_train.sh
+
+python RAVE/scripts/train_cyclegan.py \
+  --config configs/brave_cyclegan_conditional_joint.gin \
+  --backbone_x_config configs/brave_fader_joint_tap_water.gin \
+  --ckpt_x /path/joint_fader.ckpt \
+  --db_path_x /path/tap_lmdb --db_path_y /path/water_lmdb \
+  --native_attrs_x "" --native_attrs_y water_scene \
+  --canonicalizer_type latent --name tap_water_cond_joint
+```
+See [`docs/cyclegan/conditional.md`](docs/cyclegan/conditional.md) §10.
 
 **Fader inference (latent exploration):**
 ```bash

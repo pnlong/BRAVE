@@ -1,0 +1,85 @@
+{
+  "attr_mode_default": 1,
+  "domains": {
+    "y": {
+      "id": "y",
+      "display_name": "water"
+    }
+  },
+  "attributes": [
+    {
+      "name": "centroid",
+      "label": "Centroid",
+      "kind": "continuous",
+      "control": "knob",
+      "applies_to_output": true,
+      "domain": "both",
+      "min": -614.6640014648438,
+      "max": 10338.2392578125,
+      "default": 4861.787628173828
+    },
+    {
+      "name": "rms",
+      "label": "Rms",
+      "kind": "continuous",
+      "control": "knob",
+      "applies_to_output": true,
+      "domain": "both",
+      "min": -0.03281066194176674,
+      "max": 0.9517190456390381,
+      "default": 0.4594541918486357
+    },
+    {
+      "name": "bandwidth",
+      "label": "Bandwidth",
+      "kind": "continuous",
+      "control": "knob",
+      "applies_to_output": true,
+      "domain": "both",
+      "min": 65.97186279296875,
+      "max": 5237.4765625,
+      "default": 2651.7242126464844
+    },
+    {
+      "name": "sharpness",
+      "label": "Sharpness",
+      "kind": "continuous",
+      "control": "knob",
+      "applies_to_output": true,
+      "domain": "both",
+      "min": -6.426615238189697,
+      "max": 166.07159423828125,
+      "default": 79.82248950004578
+    },
+    {
+      "name": "booming",
+      "label": "Booming",
+      "kind": "continuous",
+      "control": "knob",
+      "applies_to_output": true,
+      "domain": "both",
+      "min": -6.065116882324219,
+      "max": 102.25454711914062,
+      "default": 48.0947151184082
+    },
+    {
+      "name": "water_scene",
+      "label": "Water scene",
+      "kind": "discrete",
+      "control": "menu",
+      "applies_to_output": true,
+      "domain": "both",
+      "num_classes": 3,
+      "class_labels": [
+        "other",
+        "storm",
+        "coastal"
+      ],
+      "default": 0
+    }
+  ],
+  "model_type": "fader",
+  "content_latent_size": 128,
+  "num_attributes": 6,
+  "decoder_latent_size": 134
+}

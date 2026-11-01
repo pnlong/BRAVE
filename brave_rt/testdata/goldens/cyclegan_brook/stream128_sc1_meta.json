@@ -1,0 +1,7 @@
+{
+  "ts": "/data/hai-res/p1long/BRAVE/brave_rt/testdata/bundles/tap_babbling_brook_cyc/model.ts",
+  "input": "/data/hai-res/p1long/BRAVE-data/presentation_demos/babbling_brook/0/stems/00_tap.wav",
+  "sidechain": true,
+  "block": 128,
+  "n_samples": 176384
+}

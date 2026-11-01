@@ -1,0 +1,16 @@
+{
+  "format_version": 1,
+  "model_type": "brave",
+  "sample_rate": 44100,
+  "n_channels": 1,
+  "n_band": 16,
+  "latent_size": 128,
+  "capacity": 32,
+  "ratios": [2, 2, 2, 1],
+  "compression_ratio": 128,
+  "pqmf_attenuation_db": 40,
+  "deterministic_encode": true,
+  "use_noise": false,
+  "dilations_list": [[3, 1], [9, 1], [27, 1], [36, 1]],
+  "residual_kernel_sizes": [3]
+}

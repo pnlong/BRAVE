@@ -1,0 +1,15 @@
+{
+  "bundle": "brave_rt/testdata/bundles/water_fader_scene",
+  "run": "/data/hai-res/p1long/BRAVE-data/fsd50k_brave/water/runs/water_fader_scene_96d85428b0",
+  "input": "brave_rt/testdata/goldens/tap_foundation_x_shotgun_contact_70d/full_x.wav",
+  "block": 128,
+  "attr_raw": {
+    "water_scene": 0,
+    "continuous": "stats_midpoints"
+  },
+  "aligned_samples": 396800,
+  "max_abs_aligned": 9.5367431640625e-07,
+  "snr_db_aligned": 118.08819770812988,
+  "note": "Full-length compare includes partial final host block (C++ fifo underflow); gate on aligned_samples.",
+  "oracle": "fader_mean_oracle.py streaming cached_conv"
+}

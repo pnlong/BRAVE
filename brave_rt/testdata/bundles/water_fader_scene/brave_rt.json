@@ -1,0 +1,126 @@
+{
+  "format_version": 1,
+  "model_type": "fader",
+  "sample_rate": 44100,
+  "n_channels": 1,
+  "n_band": 16,
+  "latent_size": 128,
+  "capacity": 32,
+  "ratios": [
+    2,
+    2,
+    2,
+    1
+  ],
+  "compression_ratio": 128,
+  "pqmf_attenuation_db": 40,
+  "deterministic_encode": true,
+  "use_noise": false,
+  "dilations_list": [
+    [
+      3,
+      1
+    ],
+    [
+      9,
+      1
+    ],
+    [
+      27,
+      1
+    ],
+    [
+      36,
+      1
+    ]
+  ],
+  "residual_kernel_sizes": [
+    3
+  ],
+  "host_controls": {
+    "attr_mode_default": 1,
+    "domains": {
+      "y": {
+        "id": "y",
+        "display_name": "water"
+      }
+    },
+    "attributes": [
+      {
+        "name": "centroid",
+        "label": "Centroid",
+        "kind": "continuous",
+        "control": "knob",
+        "applies_to_output": true,
+        "domain": "both",
+        "min": -614.6640014648438,
+        "max": 10338.2392578125,
+        "default": 4861.787628173828
+      },
+      {
+        "name": "rms",
+        "label": "Rms",
+        "kind": "continuous",
+        "control": "knob",
+        "applies_to_output": true,
+        "domain": "both",
+        "min": -0.03281066194176674,
+        "max": 0.9517190456390381,
+        "default": 0.4594541918486357
+      },
+      {
+        "name": "bandwidth",
+        "label": "Bandwidth",
+        "kind": "continuous",
+        "control": "knob",
+        "applies_to_output": true,
+        "domain": "both",
+        "min": 65.97186279296875,
+        "max": 5237.4765625,
+        "default": 2651.7242126464844
+      },
+      {
+        "name": "sharpness",
+        "label": "Sharpness",
+        "kind": "continuous",
+        "control": "knob",
+        "applies_to_output": true,
+        "domain": "both",
+        "min": -6.426615238189697,
+        "max": 166.07159423828125,
+        "default": 79.82248950004578
+      },
+      {
+        "name": "booming",
+        "label": "Booming",
+        "kind": "continuous",
+        "control": "knob",
+        "applies_to_output": true,
+        "domain": "both",
+        "min": -6.065116882324219,
+        "max": 102.25454711914062,
+        "default": 48.0947151184082
+      },
+      {
+        "name": "water_scene",
+        "label": "Water scene",
+        "kind": "discrete",
+        "control": "menu",
+        "applies_to_output": true,
+        "domain": "both",
+        "num_classes": 3,
+        "class_labels": [
+          "other",
+          "storm",
+          "coastal"
+        ],
+        "default": 0
+      }
+    ]
+  },
+  "source_checkpoint": "/data/hai-res/p1long/BRAVE-data/fsd50k_brave/water/runs/water_fader_scene_96d85428b0",
+  "content_latent_size": 128,
+  "num_attributes": 6,
+  "decoder_latent_size": 134,
+  "attribute_stats": "attribute_stats.yaml"
+}

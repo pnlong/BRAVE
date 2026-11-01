@@ -1,0 +1,3 @@
+build*/
+*.log
+cmake_cfg.log

@@ -1,0 +1,16 @@
+{
+  "model": "/data/hai-res/p1long/BRAVE-data/fsd50k_brave/water/runs/water_fader_scene_96d85428b0",
+  "stats": "/data/hai-res/p1long/BRAVE-data/fsd50k_brave/water/preprocessed/attribute_stats.yaml",
+  "input": "/data/hai-res/p1long/BRAVE/brave_rt/testdata/goldens/tap_foundation_x_shotgun_contact_70d/full_x.wav",
+  "block": 128,
+  "attr_raw": {
+    "centroid": 4861.787628173828,
+    "rms": 0.4594541918486357,
+    "bandwidth": 2651.7242126464844,
+    "sharpness": 79.82248950004578,
+    "booming": 48.0947151184082,
+    "water_scene": 0.0
+  },
+  "oracle": "fader_mean_encode_stream_cached",
+  "samples": 396900
+}

@@ -1,0 +1,25 @@
+# Local builds / artefacts
+cpp/**/build*/
+cpp/**/BraveRT_artefacts/
+cpp/**/*.log
+cpp/**/*.o
+cpp/**/*.a
+**/__pycache__/
+*.pyc
+
+# Packaged Mac/Linux zips (rebuild with dist scripts)
+dist/*.zip
+dist/BraveRT_mac_dist/
+
+# Trim vendored JUCE (not needed to build the plugin)
+third_party/JUCE/examples/
+third_party/JUCE/extras/Projucer/
+third_party/JUCE/.git/
+third_party/JUCE/.github/
+
+# Optional local scratch
+*.user
+.DS_Store
+
+# Local Linux cross/sysroot deps (not part of the host)
+third_party/linux_sysroot/

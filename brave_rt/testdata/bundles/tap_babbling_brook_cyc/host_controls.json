@@ -1,0 +1,21 @@
+{
+  "attr_mode_default": 1,
+  "domains": {
+    "x": {
+      "id": "x",
+      "display_name": "tap"
+    },
+    "y": {
+      "id": "y",
+      "display_name": "babbling_brook"
+    }
+  },
+  "attributes": [],
+  "model_type": "cyclegan_xy",
+  "domain_display": {
+    "x": "tap",
+    "y": "babbling_brook"
+  },
+  "display_name": "tap -> babbling_brook",
+  "note": "Unconditional CycleGAN — no conditioning features in this bundle (Stage 7 UI would show an empty-attributes message)."
+}

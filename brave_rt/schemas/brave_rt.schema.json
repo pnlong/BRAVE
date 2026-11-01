@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://brave.local/schemas/brave_rt.schema.json",
+  "title": "BraveRT bundle manifest",
+  "type": "object",
+  "required": [
+    "format_version",
+    "model_type",
+    "sample_rate",
+    "n_channels",
+    "n_band",
+    "latent_size",
+    "capacity",
+    "ratios",
+    "compression_ratio",
+    "pqmf_attenuation_db",
+    "deterministic_encode"
+  ],
+  "properties": {
+    "format_version": { "type": "integer", "const": 1 },
+    "model_type": {
+      "type": "string",
+      "enum": ["brave", "cyclegan_xy", "cyclegan_yx"]
+    },
+    "sample_rate": { "type": "integer", "const": 44100 },
+    "n_channels": { "type": "integer", "minimum": 1 },
+    "n_band": { "type": "integer", "const": 16 },
+    "latent_size": { "type": "integer", "const": 128 },
+    "capacity": { "type": "integer", "const": 32 },
+    "ratios": {
+      "type": "array",
+      "items": { "type": "integer" },
+      "minItems": 4,
+      "maxItems": 4
+    },
+    "compression_ratio": { "type": "integer", "const": 128 },
+    "pqmf_attenuation_db": { "type": "number" },
+    "deterministic_encode": { "type": "boolean", "const": true },
+    "use_noise": { "type": "boolean" },
+    "dilations_list": { "type": "array" },
+    "residual_kernel_sizes": { "type": "array" },
+    "geometry": { "type": "string", "enum": ["separate", "joint"] },
+    "shared_backbone": { "type": "boolean" },
+    "init_mode": { "type": "string", "enum": ["random", "identity"] },
+    "latent_n_layers": { "type": "integer" },
+    "latent_hidden_size": { "type": "integer" },
+    "encode_hop": { "type": "integer" },
+    "sidechain": { "type": "object" },
+    "weight_prefixes": { "type": "object" },
+    "key_map": {
+      "type": "object",
+      "description": "Optional map from stable BraveRT keys to original PyTorch state_dict keys"
+    }
+  },
+  "additionalProperties": true
+}

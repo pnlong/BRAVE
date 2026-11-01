@@ -1,0 +1,8 @@
+{
+  "model": "/data/hai-res/p1long/BRAVE-data/tap_samples/runs/tap_foundation_x_shotgun_contact_70d386ede1",
+  "input": "/data/hai-res/p1long/BRAVE-data/presentation_demos/babbling_brook/0/stems/00_tap.wav",
+  "sr": 44100,
+  "block": 128,
+  "full_samples": 396900,
+  "oracle": "mean_encode_no_pca"
+}

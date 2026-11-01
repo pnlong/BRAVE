@@ -1,0 +1,16 @@
+{
+  "canonicalizer_type": "latent",
+  "backbone_x_config": "/data/hai-res/p1long/BRAVE/configs/brave.gin",
+  "backbone_x_ckpt": "/data/scratch-fast/p1long/BRAVE/tap_samples/runs/tap_uncond_run_8e1e614287/epoch_1500000.ckpt",
+  "backbone_y_config": "/data/hai-res/p1long/BRAVE/configs/brave.gin",
+  "backbone_y_ckpt": "/data/scratch-fast/p1long/BRAVE/yt_playlists/babbling_brook/runs/babbling_brook_run_8e1e614287/epoch_1500000.ckpt",
+  "db_path_x": "/data/scratch-fast/p1long/BRAVE/tap_samples/preprocessed_normalized_clean",
+  "db_path_y": "/data/scratch-fast/p1long/BRAVE/yt_playlists/babbling_brook/preprocessed",
+  "use_reverb": false,
+  "backbone_kind": "RAVE",
+  "cycle_domain": "waveform",
+  "latent_cycle_mode": "ae_aware",
+  "init_mode": "random",
+  "latent_n_layers": 2,
+  "latent_hidden_size": 128
+}
